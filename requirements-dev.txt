@@ -1,0 +1,4 @@
+# Lint and pre-commit tooling, pinned so the host and CI run the same versions.
+ruff==0.16.5
+pre-commit==4.6.2
+mypy==2.3.1

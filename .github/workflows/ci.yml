@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Both ends: 3.11 is the floor — the base image's own python, and the
+        # least the host may have (pyproject requires-python); 3.14 is the
+        # newest, where a removal or deprecation shows first.
+        python-version: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install lint tooling
+        run: pip install -r requirements-dev.txt
+
+      # The hooks, at the versions .pre-commit-config.yaml pins — the same
+      # list `just lint` runs, so CI cannot check something the hook does not,
+      # or the same thing at another version: the runner's own shellcheck is
+      # a version behind the pinned one and reported what it does not.
+      - name: pre-commit hooks
+        run: pre-commit run --all-files --show-diff-on-failure
+
+      - name: mypy
+        run: mypy
+
+      - name: bash-guard selftest
+        run: python3 image/bash-guard.py --selftest
+
+      - name: claude-usage selftest
+        run: python3 image/claude-usage.py --selftest
+
+      - name: session-cost selftest
+        run: python3 image/session-cost.py --selftest
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The three per-installation files are untracked, so a checkout has
+      # none. Made from their committed examples, which is what `just setup`
+      # does on a real installation — and it proves the examples themselves
+      # are what the build can read.
+      - name: the per-installation files, from their examples
+        run: |
+          for name in vault-exempt secret-shapes community; do
+            cp "image/config/$name.example.txt" "image/config/$name.txt"
+          done
+
+      # Generic values only — this proves the image builds and its own
+      # selftests pass (image/Dockerfile runs them as RUN steps), not that
+      # any particular agent's configuration is correct.
+      - name: docker build image/
+        run: |
+          docker build image/ \
+            --build-arg AGENT_USER=agent \
+            --build-arg AGENT_HOME=/home/agent \
+            --build-arg AGENT_REPO_DIR=/home/agent/agent \
+            --build-arg AGENT_NAME=agent \
+            --build-arg AGENT_DOMAIN= \
+            --build-arg OPERATOR_NAME=Operator \
+            --build-arg OPERATOR_GITHUB_HANDLE= \
+            --build-arg AGENT_TRANSCRIPT_RETENTION_DAYS=30

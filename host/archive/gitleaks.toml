@@ -1,0 +1,49 @@
+# What gitleaks is told, so that all three readers refuse the same thing.
+#
+# READ THIS BEFORE CHANGING IT. gitleaks is the second opinion in `just
+# collect`'s gate and reads shapes the pattern floor beside it does not;
+# nothing here should make it weaker at finding keys. It changes one default
+# rule and adds one allowlist entry.
+#
+# The rule: a key is a header and a body. gitleaks' own `private-key` matches
+# BEGIN...END with nothing between, and that pair is what a program holds in
+# order to rebuild a PEM. The regex below is bash-guard.py's, character for
+# character, so the two cannot drift. Re-declaring the default rule by its own
+# id is the only spelling that works: RE2 has no lookahead, so an allowlist
+# cannot express "this span has no body", and `[extend] disabledRules` is
+# ignored in silence by this version.
+#
+# Both ways of getting it wrong are silent, and a rule with an id and no regex
+# makes gitleaks panic -- which `--exit-code 1` reports as a finding, so a
+# crash and a leak are the same number. `just verify` proves this config
+# against the gitleaks that is actually installed.
+# see docs/archive.md#what-gitleaks-is-told
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "private-key"
+description = "Private key block: armour with a base64 body behind it"
+regex = '''-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY( BLOCK)?-----[^A-Za-z0-9+/=]{0,12}[A-Za-z0-9+/]{32,}'''
+keywords = ["-----begin"]
+
+# A value that is nothing but hex is not a secret this gate stops on. EVM
+# addresses and 32-byte digests are public by construction and fill the tool
+# output the agent reads, and every one of them is a keyword bound to a
+# high-entropy value — which is exactly what `generic-api-key` is. A gate that
+# fires on every ordinary collection is a gate that gets switched off.
+#
+# What it gives up: a real credential that is pure hex and bound to a keyword
+# now passes gitleaks. The pattern floor still covers every prefix written down
+# there (`feed=`, whose token is bare hex, is anchored on the parameter and is
+# unaffected), and so does the verbatim comparison against what the volume
+# holds. What is left uncovered is a hex credential, of a service nobody has
+# met, that the volume does not hold.
+#
+# Written against the match — the separator, the optional quote, the value, the
+# end — because `regexTarget` is ignored in silence by this build, so an
+# anchored regex against the secret alone allowlists nothing and says nothing.
+# see docs/archive.md#a-value-that-is-nothing-but-hex
+[allowlist]
+regexes = ['''[:=][ \t]*['"`]?(?:0x)?[A-Fa-f0-9]{32,}['"`]?$''']

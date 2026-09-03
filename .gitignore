@@ -1,0 +1,27 @@
+# Never. The token belongs in the shell that runs compose, or in a file
+# outside this repository.
+.env
+
+# Tool caches.
+.mypy_cache/
+__pycache__/
+.ruff_cache/
+
+# Lint/pre-commit tooling, installed by `just setup` from requirements-dev.txt.
+.venv/
+
+# Drafts written while working something out with the operator.
+/draft/
+# the deployed checkout — a git worktree of the `deployed` branch, moved by `just deploy`
+/deployed/
+# the archive clone — made by `just setup-archive`, or pointed elsewhere with AGENT_ARCHIVE
+/archive/
+# the drift audit's clone, anchors, reports and log — made by `just drift-audit`, or pointed elsewhere with RUNNER_MONITOR
+/monitor/
+
+# per-installation configuration — untracked, one committed <name>.example.txt each,
+# created by `just setup` and carried to the deployed checkout by `just deploy`
+# see docs/configuration.md#the-three-files-that-are-yours
+/image/config/vault-exempt.txt
+/image/config/secret-shapes.txt
+/image/config/community.txt

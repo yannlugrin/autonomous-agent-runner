@@ -1,0 +1,41 @@
+# Vault entries that are NOT credentials. One per line, with a note:
+#
+#     <vault key>   # why it is not a credential
+#
+# The note is required, in the same spelling and for the same reason `vault put`
+# and `just collect --approve` require one.
+#
+# WHY THIS FILE EXISTS. The vault decides what a secret is, because the keys are
+# not known to the image — that is what a vault you can add to without touching
+# the image means. The cost is that an identifier stored beside a token is
+# treated as a credential by both checks: it holds transcripts back from the
+# archive and it refuses commits, for no reason. A line here says: this entry is
+# an identifier, not a credential. It may appear in a commit and it may reach
+# the archive.
+#
+# WHY HERE AND NOT IN THE VAULT'S OWN NOTE FIELD. A key the agent may write is a
+# key whose note the agent may write, and then the confined agent decides which
+# of its own secrets the checks ignore. This file is in the operator's
+# repository, which the agent reads and never writes — the same reason the guard
+# and the backup live there.
+#
+# WHAT IT DOES NOT SWITCH OFF. It removes the entry from the verbatim comparison
+# only — the layer that says "this is the byte string the vault is holding".
+# Every shape rule still runs over the same text on both sides, so an entry
+# rotated into something with a credential's shape — a `ghp_`, an `sk-ant-`, a
+# PEM body — is caught anyway. An exemption cannot make a real token invisible;
+# it can only stop an identifier being mistaken for one.
+#
+# Read by two things that cannot see each other: `image/bash-guard.py`, from the
+# copy baked into the image, and `host/archive/read-volume.sh` (through `just
+# collect`), from this file in the checkout. One list, because two would drift
+# and the one that drifted would be the one nobody edited.
+#
+# EDITING IT IS A BOUNDARY CHANGE under rule 3 of CLAUDE.md. It is small, and so
+# is every change that undoes a boundary.
+# see docs/vault.md#an-identifier-held-five-transcripts
+#
+# `just setup` copies this file to `image/config/vault-exempt.txt`, which is untracked:
+# what your vault holds is yours and not this repository's.
+
+#cloudflare-account-id   # an account identifier, not a credential — it is in every dashboard URL and every API path, and it opens nothing without a token

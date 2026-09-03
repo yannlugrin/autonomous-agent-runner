@@ -1,0 +1,136 @@
+# Render the status page and put it in the KV namespace the Worker serves.
+#
+# The page is served from the hostname worker/wrangler.toml names, behind
+# Cloudflare Access. Nothing here can reach that hostname: this writes one KV
+# key, and worker/index.js is what decides who may read it.
+#
+# WHY THE HALF-HOUR. It is the only freshness knob and it is deliberately
+# not shorter. The host publishes its own snapshot at most every ten minutes
+# — see publish-status.sh — so a faster schedule would mostly re-render
+# facts that had not moved. It is also the whole Actions bill: 48 runs a day
+# at well under a minute each, against a free private allowance of 2000
+# minutes a month that the hourly mirror is already drawing on. A dispatch
+# on every host publish was written and taken out for that reason — it would
+# have spent the month's allowance around the 20th, and a spent quota stops
+# the mirror too, silently.
+#
+# GitHub runs schedules on a best-effort basis and drops them under load, so
+# the gap is about half an hour and never exactly one. Scheduled workflows
+# run only from the default branch, and GitHub disables them after 60 days
+# with no repository activity — a collection push counts, so
+# `just collect --push` keeps this alive along with the mirror.
+# WHAT IT NEEDS. Four secrets on this repository — the read token below, and
+# CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID and CF_KV_TOKEN for the namespace the
+# Worker serves from. check-credentials.yml proves all four. Replace every
+# `REPLACE_WITH_` here and in scripts/render.py and worker/wrangler.toml
+# before enabling it.
+name: dashboard
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  # contents, to check out `main` and fetch the record branches.
+  # actions, because the page reports the mirror workflow's own health and
+  # `gh run list` on a private repository is refused without it.
+  contents: read
+  actions: read
+
+# Never two renders at once: they would race to write the same KV key, and
+# the loser would be the newer one about half the time. cancel-in-progress,
+# unlike the mirror's queue, because a render that is superseded has nothing
+# to preserve — the next one reads the same sources and says more.
+concurrency:
+  group: dashboard
+  cancel-in-progress: true
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the record branches
+        run: |
+          set -euo pipefail
+          # --depth 1 on `sessions`: it is 25MB of transcripts and only the
+          # tip tree is ever read. The three are fetched in one call so a
+          # missing branch is one visible failure rather than a partial
+          # page that blames the renderer.
+          # The mirror is at refs/archive/REPLACE_WITH_AGENT and is NOT a
+          # branch. GitHub starts workflow runs from the pushed ref, and that
+          # ref carries the workflow files the agent writes in its own
+          # repository — on a branch or a tag, one of those saying `on: push`
+          # would execute here with this repository's secrets. Only
+          # refs/heads/* and refs/tags/* trigger, so it lives outside both.
+          # A custom namespace has no remote-tracking form, which is why this
+          # is an identity refspec rather than a mapping into refs/remotes/.
+          git fetch --quiet --depth 1 origin \
+            '+refs/heads/status:refs/remotes/origin/status' \
+            '+refs/heads/sessions:refs/remotes/origin/sessions' \
+            '+refs/archive/REPLACE_WITH_AGENT:refs/archive/REPLACE_WITH_AGENT'
+          # The rewind marks are the one thing this archive exists to catch,
+          # and they are reachable from nothing it just fetched. Refs rather
+          # than tags, for the same reason as above.
+          git fetch --quiet origin '+refs/archive/rewound/*:refs/archive/rewound/*' || true
+
+      - name: Render
+        env:
+          # Two tokens that cannot substitute for each other — see the note
+          # at the top of render.py. The read token is fine-grained on
+          # the agent's repository and cannot see this one; this repository's
+          # own token cannot see the agent's.
+          AGENT_READ_TOKEN: ${{ secrets.REPLACE_WITH_PREFIX_READ_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Who the page is about. render.py refuses nothing when these are
+          # left as placeholders; it renders them, which is the visible
+          # failure a plausible default would not be.
+          AGENT_NAME: REPLACE_WITH_AGENT_NAME
+          AGENT_USER: REPLACE_WITH_AGENT
+          AGENT_OWNER: REPLACE_WITH_OWNER
+          AGENT_SOURCE_REPO: REPLACE_WITH_SOURCE_REPO
+        run: |
+          set -euo pipefail
+          if [ -z "${AGENT_READ_TOKEN:-}" ]; then
+            echo "::error::secret REPLACE_WITH_PREFIX_READ_TOKEN is not set — the issues"
+            echo "::error::and articles sections cannot be read."
+            exit 1
+          fi
+          python3 scripts/render.py --out page.html
+          # A page that came out suspiciously small is a render that failed
+          # in a way Python did not raise on. Publishing it would replace a
+          # working page with a blank one, and the Worker would serve that
+          # blank page perfectly.
+          bytes=$(wc -c < page.html)
+          echo "rendered $bytes bytes" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$bytes" -lt 2000 ]; then
+            echo "::error::page.html is only $bytes bytes — refusing to publish it."
+            exit 1
+          fi
+
+      - name: Publish to Cloudflare KV
+        env:
+          ACCOUNT: ${{ secrets.CF_ACCOUNT_ID }}
+          NS: ${{ secrets.CF_KV_NAMESPACE_ID }}
+          TOKEN: ${{ secrets.CF_KV_TOKEN }}
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/storage/kv/namespaces/${NS}"
+          # `page` is the key worker/index.js reads. It is named there and
+          # here and nowhere else; renaming it in one place serves a 503
+          # that says nothing has been rendered yet.
+          code=$(curl -sS -X PUT "${api}/values/page" \
+                   -H "Authorization: Bearer ${TOKEN}" \
+                   --form 'value=@page.html' \
+                   --form 'metadata={}' \
+                   -o /tmp/kv.json -w '%{http_code}')
+          if [ "$code" != 200 ]; then
+            echo "::error::KV write failed (HTTP $code)"
+            sed -n 's/.*"message":"\([^"]*\)".*/::error::\1/p' /tmp/kv.json | head -3
+            echo "Run check-credentials.yml — it proves the three Cloudflare secrets." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "Published — the Worker serves it on its own hostname." >> "$GITHUB_STEP_SUMMARY"

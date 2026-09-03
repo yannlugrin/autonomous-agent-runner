@@ -1,0 +1,36 @@
+# Deployed by hand, from this directory: `npx wrangler deploy`.
+#
+# Not from CI, and that is the point. CI holds a token that can write one KV
+# namespace and nothing else — it cannot replace the door it comes through.
+# This Worker changes about never, so a manual deploy costs nothing and
+# keeps the blast radius of a leaked Actions secret to one KV key.
+
+name = "REPLACE_WITH_WORKER_NAME"
+main = "index.js"
+compatibility_date = "2026-08-24"
+
+# The single most important line here. Left at its default, this Worker also
+# answers on <worker-name>.<account>.workers.dev — the whole private page,
+# on a hostname Access has never heard of. Nothing warns you.
+workers_dev = false
+
+# Identifiers rather than secrets: the AUD tag is what the Worker checks a
+# token's audience against, and it is useless to anyone who cannot get a
+# token signed for it. They live here, in the open, because the check is
+# worth reading beside the value it checks.
+[vars]
+ACCESS_TEAM = "REPLACE_WITH_ACCESS_TEAM"
+ACCESS_AUD = "REPLACE_WITH_ACCESS_AUD"
+
+# The three values above and below shipped as REPLACE_WITH_ placeholders
+# until they were filled, in the house spelling: a leftover one is visible
+# in a diff and stops the deploy, and a plausible wrong value is neither.
+# The same reason the Dockerfile ships its digest that way in
+# the runner.
+[[kv_namespaces]]
+binding = "PAGE"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+[[routes]]
+pattern = "REPLACE_WITH_HOSTNAME"
+custom_domain = true

@@ -1,0 +1,78 @@
+{
+  "model": "opus",
+  "autoMemoryEnabled": false,
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "disableBypassPermissionsMode": "disable",
+    "disableAutoMode": "disable",
+    "additionalDirectories": [
+      "../mirror"
+    ],
+    "allow": [
+      "Bash(git -C ../mirror log *)",
+      "Bash(git -C ../mirror diff *)",
+      "Bash(git -C ../mirror show *)",
+      "Bash(git -C ../mirror status)",
+      "Bash(git -C ../mirror rev-parse *)",
+      "Bash(git -C ../mirror ls-tree *)",
+      "Bash(git -C ../mirror shortlog *)",
+      "Bash(git -C ../mirror for-each-ref *)",
+      "Bash(git -C ../mirror merge-base *)",
+      "Read(../mirror/**)",
+      "Edit(/reports/**)"
+    ],
+    "deny": [
+      "WebFetch",
+      "WebSearch",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(nc:*)",
+      "Bash(ssh:*)",
+      "Bash(scp:*)",
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(node:*)",
+      "Bash(perl:*)",
+      "Bash(git push:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "Bash(git remote:*)",
+      "Bash(git config:*)",
+      "Bash(git clone:*)",
+      "Bash(git -c:*)",
+      "Bash(gh:*)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.claude/**)",
+      "Read(**/.claude/**)",
+      "Read(**/.env)",
+      "Read(**/*.pem)",
+      "mcp__*",
+      "Agent(Explore)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "allowUnsandboxedCommands": false,
+    "autoAllowBashIfSandboxed": true,
+    "filesystem": {
+      "denyRead": [
+        "~/"
+      ],
+      "allowRead": [
+        ".",
+        "../mirror"
+      ],
+      "denyWrite": [
+        "~/"
+      ],
+      "allowWrite": [
+        "./reports"
+      ]
+    },
+    "network": {
+      "allowedDomains": []
+    }
+  }
+}

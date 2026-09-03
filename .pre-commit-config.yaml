@@ -1,0 +1,27 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.5
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1-1
+    hooks:
+      - id: shellcheck
+        args: ["-x"]
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+        args: ["--config=host/archive/gitleaks.toml"]
+
+  - repo: local
+    hooks:
+      - id: check-auto-mode
+        name: check-auto-mode
+        entry: python3 host/release/check-auto-mode.py
+        language: system
+        files: ^(auto-mode/.*|AUTO-MODE\.md|image/managed-settings\.json)$
+        pass_filenames: false

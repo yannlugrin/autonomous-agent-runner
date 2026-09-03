@@ -1,0 +1,33 @@
+[project]
+name = "agent-runner"
+version = "0"
+# The floor for the host-side scripts. image/*.py runs on the base image's own
+# python (Debian Bookworm, 3.11), and the host needs at least that.
+requires-python = ">=3.11"
+
+[tool.ruff]
+# image/*.py runs inside the container on the base image's own python3, 3.11:
+# py314 would let ruff format emit PEP 758 syntax (unparenthesized except) that
+# is a SyntaxError there. host/**/*.py and auto-mode/*.py run on the host's
+# 3.14, and 3.11-valid code is a subset any newer interpreter runs.
+# see docs/release.md#setup-the-project-local-venv-and-the-lint-set
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",  # comments are long by doctrine
+    "UP031", # none autofixable; rewriting %-format by hand risks changing output
+    "B904",  # `from err` / `from None` is a per-site judgement call
+]
+
+[tool.ruff.format]
+# ruff format reflows the long string literals in decisions.py's rule tables
+# into one string per line, less readable than the hand-wrapped original.
+exclude = ["auto-mode/decisions.py"]
+
+[tool.mypy]
+python_version = "3.11"  # matches the container's actual interpreter, see target-version above
+files = ["image", "host", "auto-mode"]
+ignore_missing_imports = true

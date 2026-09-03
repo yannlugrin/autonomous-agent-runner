@@ -1,0 +1,210 @@
+# How the agent is run. The hardening lives here, not in the Dockerfile:
+# every capability that matters is granted at run time.
+# see docs/image.md#no-bind-mount-and-no-published-ports
+
+# Declared, not inferred: compose otherwise takes it from the directory name.
+# Derived rather than written out, because COMPOSE_PROJECT_NAME from the
+# justfile outranks this key — a stale value would never be used or noticed.
+name: ${RUNNER_PROJECT:-${AGENT_USER:?set by just}-runner}
+
+# No `container_name`: `compose run` ignores it, and one fixed name would hide
+# which of the coexisting containers is a session — host/lib/session-lock.sh.
+# see docs/image.md#no-container_name-and-a-volume-named-explicitly
+
+services:
+  agent:
+    build:
+      # Narrowed to image/ so .env and the host-side scripts are not in the
+      # build context at all, and no COPY can reach them by accident.
+      context: ./image
+      # AGENT_USER is the one value required rather than defaulted: a default
+      # would let a bare `docker compose` address another agent's volume in
+      # silence. AGENT_REPO_DIR is a build argument and a run-time variable
+      # both, and `just verify` compares them.
+      # see docs/image.md#everything-derives-from-agent_user
+      args:
+        AGENT_USER: ${AGENT_USER:?set by just}
+        AGENT_HOME: ${AGENT_HOME:-/home/${AGENT_USER:?set by just}}
+        AGENT_REPO_DIR: ${AGENT_REPO_DIR:-${AGENT_HOME:-/home/${AGENT_USER:?set by just}}/${AGENT_USER:?set by just}}
+        # The names the autoMode block in managed-settings.json is rendered
+        # with. Empty tells the classifier nothing rather than telling it wrong.
+        # The community it belongs to is not here: it is a sentence, and it
+        # comes from image/config/community.txt in the build context.
+        AGENT_NAME: ${AGENT_NAME:-agent}
+        AGENT_DOMAIN: ${AGENT_DOMAIN:-}
+        AGENT_MODEL: ${AGENT_MODEL:-sonnet}
+        OPERATOR_NAME: ${OPERATOR_NAME:-Operator}
+        OPERATOR_GITHUB_HANDLE: ${OPERATOR_GITHUB_HANDLE:-}
+        AGENT_TRANSCRIPT_RETENTION_DAYS: ${AGENT_TRANSCRIPT_RETENTION_DAYS:-30}
+        # What the image was built from, measured by `just build`: the context
+        # is image/ and carries no .git. Empty is a real answer, and the
+        # session's environment header then says the image does not say.
+        # see docs/image.md#what-the-image-was-built-from
+        RUNNER_COMMIT: ${RUNNER_COMMIT:-}
+        RUNNER_COMMITTED_AT: ${RUNNER_COMMITTED_AT:-}
+    # Which image runs. `agent:deployed` is what cron's session runs on, and
+    # only `just deploy` moves that tag; `just build` sets this variable to the
+    # candidate. A bare `docker compose build` tags the default, which is the
+    # deployed one: use `just build`.
+    # see docs/release.md#a-build-was-a-deploy
+    image: ${RUNNER_IMAGE:-${AGENT_USER:?set by just}-agent:deployed}
+    init: true          # reap zombies, and let the SessionEnd hook finish
+
+    # The agent's whole world: its git repository, its ~/.claude login and its
+    # SSH key all live in this volume and nowhere else.
+    #
+    # There is deliberately no bind mount, not even a read-only one: the
+    # container cannot see the host filesystem, which is what makes "it can do
+    # as it likes in there" true rather than aspirational.
+    volumes:
+      - agent-home:${AGENT_HOME:-/home/${AGENT_USER:?set by just}}
+
+    # List form, not a mapping: compose interpolates a list item whole, key
+    # included, which is the only way to write a name built from AGENT_PREFIX.
+    # A mapping key is literal, so the agent's own namespace cannot be spelled
+    # there.
+    # see docs/image.md#the-agents-own-namespace
+    environment:
+      # The vault: one credential that opens the rest, so a new secret costs a
+      # paste into Bitwarden rather than a variable here and a rebuild. It
+      # reaches `/usr/local/bin/vault` and nothing else — `bws` is denied,
+      # because only that wrapper writes a fetched secret where the guard can
+      # see it. Unset means the vault is not configured, which `vault` says.
+      # Readable by the session, unavoidably: unprivileged plus
+      # no-new-privileges means nothing here can hold a file it cannot read.
+      # see docs/vault.md
+      - BWS_ACCESS_TOKEN=${BWS_ACCESS_TOKEN:-}
+
+      # The region, which is not optional and has no safe default: `bws` ships
+      # pointing at the US server, and a token issued on bitwarden.eu is
+      # rejected there as `invalid_client` — which reads exactly like a revoked
+      # or mistyped token. Empty means bws's own default (US).
+      # see docs/image.md#the-bws-region-has-no-safe-default
+      - BWS_SERVER_URL=${BWS_SERVER_URL:-}
+
+      # Whether the HOST would refuse a session that is over budget, passed in
+      # because the guard runs on the host and nothing here can see it.
+      # `:-false` is the point of the line: unset must arrive as a definite
+      # `false`, never an empty string a session has to interpret. `just run`
+      # and `just chat` overwrite it with what their own guard acted on.
+      # see docs/budget.md
+      - ACCOUNT_BUDGET_GUARD=${ACCOUNT_BUDGET_GUARD:-false}
+
+      # Read by the entrypoint on every start, so changing one here reaches
+      # an existing volume — which is the whole reason they are not baked
+      # into the image.
+      # see docs/image.md#the-volume-is-seeded-once
+      - ${AGENT_PREFIX:?set by just}_GIT_NAME=${AGENT_GIT_NAME:-${AGENT_NAME:-}}
+      - ${AGENT_PREFIX:?set by just}_GIT_EMAIL=${AGENT_GIT_EMAIL:-}
+      - ${AGENT_PREFIX:?set by just}_REPO=${AGENT_REPO:-}
+      - ${AGENT_PREFIX:?set by just}_REPO_DIR=${AGENT_REPO_DIR:-${AGENT_HOME:-/home/${AGENT_USER:?set by just}}/${AGENT_USER:?set by just}}
+
+      # The display name: the start-up report, and the label over the agent's
+      # side of a transcript. Addresses nothing, so it may be anything.
+      - AGENT_NAME=${AGENT_NAME:-agent}
+
+      # Who the agent is told to ask. Named in the vault's messages and the
+      # start-up report, never in a rule.
+      - OPERATOR_NAME=${OPERATOR_NAME:-Operator}
+
+      # Testing bypass: any non-empty value skips the clone entirely. It
+      # prints a banner on every start so it cannot be left on quietly.
+      # see docs/image.md#the-testing-bypass-announces-itself
+      - AGENT_SKIP_CLONE=${AGENT_SKIP_CLONE:-}
+
+      # The budget gate's two percentages per window, read by
+      # /usr/local/bin/claude-usage: the allowance climbs from START at the
+      # window's reset to CAP just before the next one, and a session begins
+      # only while the account sits under that line. They reach the gate this
+      # way and no other — the justfile never sees them. Unset is not a
+      # permissive default: the gate refuses to answer, and a refusal stands
+      # the session down. see docs/budget.md
+      - ACCOUNT_BUDGET_SESSION_START=${ACCOUNT_BUDGET_SESSION_START:-}
+      - ACCOUNT_BUDGET_SESSION_CAP=${ACCOUNT_BUDGET_SESSION_CAP:-}
+      - ACCOUNT_BUDGET_WEEKLY_START=${ACCOUNT_BUDGET_WEEKLY_START:-}
+      - ACCOUNT_BUDGET_WEEKLY_CAP=${ACCOUNT_BUDGET_WEEKLY_CAP:-}
+
+      # How long claude-usage may reuse a reading, in minutes. Passed here as
+      # well as read on the host so both obey one number: the endpoint allows
+      # five requests per five minutes across the whole account. Unset is not a
+      # refusal here, unlike every other ACCOUNT_BUDGET_ above — it is five
+      # minutes, because this is a cadence knob and not a guard.
+      # see docs/budget.md
+      - ACCOUNT_BUDGET_CACHE_MINUTES=${ACCOUNT_BUDGET_CACHE_MINUTES:-}
+
+      # What Claude Code sends that is not a session, both off: an error report
+      # carries stack traces, file paths and command fragments out of a
+      # container whose whole design is that what leaves is deliberate.
+      #
+      # Literal "1", NEVER ${VAR:-}: these mean "any non-empty value, 0
+      # included, is on; unset or empty is off" — backwards from every other
+      # flag here, so an unset host variable would arrive as off and the line
+      # would look set while doing nothing.
+      #
+      # The third one is absent on purpose:
+      # CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC carries the `ai-title` entries
+      # host/archive/session-meta.jq builds a session's title from.
+      # see docs/image.md#what-claude-code-sends-that-is-not-a-session
+      - DISABLE_TELEMETRY=1
+      - DISABLE_ERROR_REPORTING=1
+
+      # Same family, same literal "1". The Dockerfile's pin installs a version
+      # and does not keep one: PATH puts ~/.npm-global/bin and ~/.local/bin
+      # ahead of /usr/local/bin and both are in the volume, so a self-update
+      # writes a second `claude` that wins the lookup and outlives rebuilds.
+      # This closes the automatic half only; one installed by hand is noticed
+      # rather than prevented. see docs/image.md#path-defeats-the-pin
+      - DISABLE_AUTOUPDATER=1
+
+      - TZ=UTC
+
+    # No ports are published. The agent reads the world; nothing reaches in.
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    # A runaway session should cost a container, not the machine.
+    mem_limit: 4g
+    cpus: 2.0
+
+    stdin_open: true
+    tty: true
+
+    # ---------------------------------------------------------------
+    # NEVER add any of these. Each one alone makes everything above
+    # theatre, and the failure is silent — the container goes on working
+    # exactly as before:
+    #
+    #   - /var/run/docker.sock         → root on the host
+    #   - privileged: true
+    #   - network_mode: host
+    #   - pid: host
+    #   - a bind mount of anything on the host
+    #   - user: root
+    # ---------------------------------------------------------------
+
+  # A throwaway twin of the service above, for rehearsing recovery: what a
+  # brand-new machine does before it has a key, a login or a checkout. It is not
+  # where the agent runs, and must NEVER be pointed at the real volume.
+  #
+  # `extends` and not a copy, so the hardening exists once: a test container
+  # that quietly lost `cap_drop` would still pass every test it was written for.
+  # `!reset null` clears the inherited volume rather than overriding it, so this
+  # service has none at all and its /home/agent is the image's own — which is
+  # what a first run really sees.
+  # see docs/image.md#the-volume-is-seeded-once
+  agent-test:
+    extends:
+      service: agent
+    volumes: !reset null
+
+volumes:
+  agent-home:
+    # Named explicitly, so the volume's identity does not depend on the project
+    # name: compose otherwise prefixes it, and COMPOSE_PROJECT_NAME is set per
+    # directory on this machine. Containers are ephemeral; the volume is the
+    # only thing whose identity must hold.
+    # see docs/image.md#no-container_name-and-a-volume-named-explicitly
+    name: ${AGENT_VOLUME:-${AGENT_USER:?set by just}-home}

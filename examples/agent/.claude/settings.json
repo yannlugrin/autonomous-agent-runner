@@ -1,0 +1,3 @@
+{
+  "_comment": "Deliberately empty of settings. The permission boundary lives in the runner's managed settings, which outrank this file; a permissions block here would be a classifier bypass, and the runner's check-agent-settings reports one. A permission prompt is something to report in the journal, never something to allow here."
+}

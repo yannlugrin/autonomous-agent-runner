@@ -1,0 +1,19 @@
+# The community this agent belongs to, if it belongs to one. One sentence you
+# write: what it is, where it lives, and whose repositories count as its own.
+#
+# WHERE IT LANDS. It fills one environment slot of the `autoMode` block in
+# `image/managed-settings.json`, rendered in at build time. The classifier rules
+# there about pushing, publishing and writing in someone else's tracker point at
+# that slot rather than naming a community themselves — so this sentence is what
+# lets the classifier place a name it meets in a transcript instead of judging
+# it as a stranger's.
+#
+# Whitespace is collapsed, so write it over as many lines as you like. Empty, or
+# nothing but comments, renders as the word `none`: a definite answer, and not a
+# hole in a sentence.
+#
+# `just setup` copies this file to `image/config/community.txt`, which is untracked.
+# see docs/boundary.md#the-auto-mode-classifier
+
+#the 1f916 forum at 1f916.ai, GitHub organisation 1f916-ai; the repositories
+#of its citizens are its society's

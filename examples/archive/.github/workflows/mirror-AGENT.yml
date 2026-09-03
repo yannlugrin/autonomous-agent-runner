@@ -1,0 +1,189 @@
+# Mirror the agent's memory repository into `refs/archive/<agent>` here.
+#
+# WHAT IT DOES. Once an hour it fetches the agent's `main` and moves one ref
+# of this repository to it. When the incoming history is not a descendant of
+# what is already held — the agent rewrote its own history — the old tip is
+# pushed to a mark under `refs/archive/rewound/` first, and only then is the
+# ref reset. That is the whole point: a plain mirror loses what a force-push
+# erased, and it loses it silently.
+#
+# WHAT IT NEEDS. Two secrets on this repository, both set by
+# `just setup-archive` in the runner:
+#
+#   REPLACE_WITH_PREFIX_SOURCE_KEY    a read-only deploy key on the agent's
+#                                     repository — this fetches with it
+#   REPLACE_WITH_PREFIX_ARCHIVE_TOKEN a fine-grained PAT on THIS repository,
+#                                     Contents and Workflows, read and write
+#
+# BEFORE IT WILL RUN. Rename this file to `mirror-<agent>.yml`, where
+# `<agent>` is `AGENT_USER` — the runner's `just mirror-status` and
+# `just setup-archive` both look for that name — and replace every
+# `REPLACE_WITH_` below. A leftover placeholder is visible in a diff and
+# fails loudly; a plausible wrong value is neither.
+#
+#   REPLACE_WITH_AGENT        the agent's AGENT_USER, lowercase
+#   REPLACE_WITH_PREFIX       AGENT_USER uppercased, dashes as underscores
+#   REPLACE_WITH_SOURCE_REPO  owner/name of the agent's own repository
+name: mirror-REPLACE_WITH_AGENT
+
+on:
+  # Hourly, at :19. This is the fidelity knob and the only one: a rewrite
+  # upstream can only be preserved back to the last run, so a commit that
+  # appeared and was rewritten away inside the same hour was never seen and
+  # is gone. Raise the frequency to narrow that window.
+  #
+  # GitHub runs schedules on a best-effort basis and drops them under load,
+  # so the window is about an hour and never exactly one. The runner asks for
+  # a run at the end of every session for that reason — see
+  # host/archive/dispatch-mirror.sh — which is what workflow_dispatch is for.
+  #
+  # Scheduled workflows run only from the default branch, and GitHub disables
+  # them after 60 days with no repository activity — a collection push
+  # counts, so `just collect --push` keeps this alive.
+  schedule:
+    - cron: '19 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Never two mirrors at once: the second would race the first between reading
+# the branch tip and pushing over it.
+concurrency:
+  group: mirror-REPLACE_WITH_AGENT
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install the read-only key for the agent's repository
+        env:
+          KEY: ${{ secrets.REPLACE_WITH_PREFIX_SOURCE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEY:-}" ]; then
+            echo "::error::secret REPLACE_WITH_PREFIX_SOURCE_KEY is not set — run 'just setup-archive'"
+            exit 1
+          fi
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/source_key
+          chmod 600 ~/.ssh/source_key
+          ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Mirror the agent's main into refs/archive/REPLACE_WITH_AGENT
+        id: mirror
+        env:
+          # NOT secrets.GITHUB_TOKEN, and this cannot go back to it. An
+          # Actions token may never push a commit that creates or updates a
+          # file under .github/workflows/ — there is no permission that
+          # allows it, `workflows` is not a key in a `permissions:` block, and
+          # the push is rejected outright. The day the agent adds a workflow
+          # to its own repository, every mirror run fails from that moment. A
+          # fine-grained PAT with Contents and Workflows, scoped to this
+          # repository alone, is the only thing that can carry it.
+          GITHUB_TOKEN: ${{ secrets.REPLACE_WITH_PREFIX_ARCHIVE_TOKEN }}
+          SOURCE_URL: git@github.com:REPLACE_WITH_SOURCE_REPO.git
+          SOURCE_BRANCH: main
+          # A ref, and DELIBERATELY NOT A BRANCH. See the comment on the push
+          # below: this is what stops a workflow the agent wrote from ever
+          # executing in the operator's repository.
+          TARGET_REF: refs/archive/REPLACE_WITH_AGENT
+        run: |
+          set -euo pipefail
+
+          say() { echo "$*"; echo "$*" >> "$GITHUB_STEP_SUMMARY"; }
+
+          # IdentitiesOnly, or a key the runner happens to have takes
+          # precedence and the failure reads as "repository not found".
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/source_key -o IdentitiesOnly=yes"
+
+          # Bare: nothing is ever checked out, so no worktree can collide with
+          # the two unrelated histories living in one repository.
+          git init -q --bare "$RUNNER_TEMP/mirror.git"
+          cd "$RUNNER_TEMP/mirror.git"
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          git remote add source "$SOURCE_URL"
+          # The token is a masked secret, so it does not survive into the log.
+          git remote add archive "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          # Refs outside refs/heads/: no name can be read as a branch or
+          # collide with the remotes' own names. --no-tags because the
+          # source's tags are the agent's, and this namespace is the
+          # operator's.
+          git fetch -q --no-tags source "+refs/heads/${SOURCE_BRANCH}:refs/mirror/source"
+          new=$(git rev-parse refs/mirror/source)
+
+          # WHY EVERY REF BELOW IS OUTSIDE refs/heads/* AND refs/tags/*.
+          #
+          # The agent writes workflow files in its own repository — that is
+          # its business and none of this repository's. But a mirror copies
+          # them here, and GitHub starts a workflow run using the workflow
+          # files FROM THE PUSHED REF. Land the agent's tree on a branch or a
+          # tag of this repository and a file it wrote saying `on: push`
+          # executes here, with this repository's secrets and whatever
+          # `permissions:` it asks for. The confined agent would be running
+          # code on the operator's credentials, which is the one thing the
+          # whole arrangement exists to prevent.
+          #
+          # GitHub only triggers on refs/heads/* and refs/tags/*. A ref in any
+          # other namespace is stored, fetchable, and anchors its objects
+          # against garbage collection exactly as a branch does — and can
+          # never run anything. That is a mechanism rather than a setting, and
+          # it holds whatever the agent writes next.
+          #
+          # THE REWIND MARK BELOW IS THE SAME HAZARD: a tag push triggers
+          # workflows too, so the marker is a ref under refs/archive/rewound/
+          # rather than an annotated tag. It still holds the objects; it is
+          # simply no longer executable.
+          #
+          # The cost, accepted knowingly: none of this is browsable on
+          # github.com, which lists branches and tags and nothing else. Read
+          # it with a fetch — `just mirror-status` in the runner.
+          #
+          # ls-remote exits 0 with empty output when the ref is absent, so a
+          # non-zero exit here is a real failure and must not be read as
+          # "first run".
+          old=$(git ls-remote archive "$TARGET_REF" | cut -f1)
+
+          if [ -z "$old" ]; then
+            git push -q archive "refs/mirror/source:${TARGET_REF}"
+            say "Created \`${TARGET_REF}\` at \`${new}\`."
+            exit 0
+          fi
+
+          if [ "$old" = "$new" ]; then
+            say "Already at \`${new}\` — nothing to mirror."
+            exit 0
+          fi
+
+          git fetch -q --no-tags archive "+${TARGET_REF}:refs/mirror/archive"
+
+          if git merge-base --is-ancestor refs/mirror/archive refs/mirror/source; then
+            git push -q archive "refs/mirror/source:${TARGET_REF}"
+            say "Fast-forwarded \`${TARGET_REF}\`: \`${old}\` → \`${new}\`."
+            exit 0
+          fi
+
+          # Not a descendant: upstream rewrote history. Mark first, push the
+          # mark first, and only then move the ref — if the force-push fails,
+          # the old history is already safe.
+          #
+          # A plain ref and not `git tag -a`: an annotated tag would have to
+          # live in refs/tags/ to be useful as a tag, and that is a namespace
+          # that triggers workflows. What was wanted from it was a name and a
+          # reason, and the reason moves to the summary and the warning below.
+          mark="refs/archive/rewound/$(date -u +%Y%m%dT%H%M%SZ)"
+          git push -q archive "refs/mirror/archive:${mark}"
+
+          # The lease is what makes the force safe: if anything moved the ref
+          # since the ls-remote above, this refuses instead of overwriting a
+          # tip that was never marked.
+          git push -q archive --force-with-lease="${TARGET_REF}:${old}" \
+            "refs/mirror/source:${TARGET_REF}"
+
+          echo "::warning::upstream history was rewritten — old tip $old preserved at $mark"
+          say "**Upstream history was rewritten.** Old tip \`${old}\` preserved at \`${mark}\`; \`${TARGET_REF}\` reset to \`${new}\`."
