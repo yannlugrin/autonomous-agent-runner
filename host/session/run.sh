@@ -12,6 +12,8 @@ set -uo pipefail
 # shellcheck source=SCRIPTDIR/../lib/root.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
 . host/lib/deployed.sh
+# How the last run ended, and how this one will record that it did.
+. host/lib/run-record.sh
 
 
 # --- what was asked for ---
@@ -117,12 +119,13 @@ if ! lock_try; then
         if [ -n "$began" ]; then
             up=$(( ( $(date +%s) - began ) / 60 ))
             if [ "$up" -ge "$wedge" ] \
-               && [ "$(cat "$RUNNER_WEDGE_NOTIFIED" 2>/dev/null)" != "$began" ]; then
+               && ! run_record_wedge_seen "$began"; then
                 # Stamped before the alert rather than after, so a notifier
                 # that hangs cannot become a toast a minute for as long as the
-                # wedge lasts.
-                mkdir -p "$(dirname "$RUNNER_WEDGE_NOTIFIED")" 2>/dev/null || true
-                printf '%s\n' "$began" > "$RUNNER_WEDGE_NOTIFIED" 2>/dev/null || true
+                # wedge lasts. It goes in the run record rather than a file of
+                # its own: that record already belongs to this run and already
+                # holds its start.
+                run_record_wedge_mark "$began"
                 alert "the unattended session has been running ${up}m — longer than any that ever finished. 'just run --force' starts one beside it."
             fi
         fi
@@ -235,20 +238,38 @@ fi
 # transcript in the volume: a container that died during bootstrap writes none
 # and leaves the previous session's as the newest.
 
-started=$(date +%s)
+# --output-format json, so that how the session ended is a fact it reports
+# rather than one inferred here. The transcript cannot answer it: measured over
+# 533 archived sessions, its last record is one of six shapes and none of them
+# says whether the session finished. What the envelope holds, and why
+# `terminal_reason` decides where `subtype` says "success" on a run that
+# failed, is in docs/budget.md#the-limit-stops-the-session.
+#
+# The record is opened here and nowhere earlier. Every wake-up that stands
+# down — cooldown, held lock, budget, a window with nothing left — has already
+# exited above without touching it, which is what leaves an unconsumed stop
+# standing across as many refused wake-ups as it takes for one to run.
 
+started=$(date +%s)
+run_record_open "$RUNNER_SESSION_NAME-$$"
+
+# Stdout is captured whatever happens, because the envelope is on it. Stderr
+# joins it only under --listen, where the viewer owns the screen; without the
+# viewer it goes where it always went, so a bootstrap failure still appears in
+# the run log as it happens rather than at the end.
+session_log=$(mktemp)
 if [ -n "$view" ]; then
-    # The view already shows everything the session says, so its own output is
-    # held back — and printed after all if it failed, which is the case where
-    # it is the only place the reason appears.
-    session_log=$(mktemp)
     docker compose run --rm --name "$RUNNER_SESSION_NAME-$$" \
-        "${SESSION_ENV[@]}" ${other[@]+"${other[@]}"} -w "$AGENT_REPO_DIR" agent claude-session -p "$prompt" >"$session_log" 2>&1
+        "${SESSION_ENV[@]}" ${other[@]+"${other[@]}"} -w "$AGENT_REPO_DIR" agent \
+        claude-session -p --output-format json "$prompt" >"$session_log" 2>&1
 else
     docker compose run --rm --name "$RUNNER_SESSION_NAME-$$" \
-        "${SESSION_ENV[@]}" ${other[@]+"${other[@]}"} -w "$AGENT_REPO_DIR" agent claude-session -p "$prompt"
+        "${SESSION_ENV[@]}" ${other[@]+"${other[@]}"} -w "$AGENT_REPO_DIR" agent \
+        claude-session -p --output-format json "$prompt" >"$session_log"
 fi
 status=$?
+
+run_record_close "$status" "$session_log"
 
 if [ -n "$view" ]; then
     # A moment before stopping it: the session writes its closing message
@@ -257,13 +278,22 @@ if [ -n "$view" ]; then
     sleep 2
     kill -INT -"$view" 2>/dev/null
     wait "$view" 2>/dev/null
-    if [ "$status" -ne 0 ]; then
-        echo
-        echo "The session exited $status. Its own output:"
-        cat "$session_log"
-    fi
-    rm -f "$session_log"
 fi
+
+# What the session said, unwrapped from the envelope, so the run log still
+# reads as the agent's closing words rather than as one line of JSON. Held back
+# under --listen, which has already shown it.
+if [ -z "$view" ]; then
+    run_envelope_result "$session_log"
+fi
+
+if [ "$status" -ne 0 ]; then
+    echo
+    echo "The session exited $status. Its own output:"
+    cat "$session_log"
+fi
+
+rm -f "$session_log"
 
 
 # --- the bookkeeping that follows it ---

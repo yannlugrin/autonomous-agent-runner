@@ -674,6 +674,61 @@ the volume: a container that died during bootstrap writes none, leaves the
 PREVIOUS session's as the newest, and its numbers would be printed as this
 run's own.
 
+## Recovering a session that was stopped
+
+A session can end without reaching its own end: the account's usage limit stops
+it, the API is down, the container dies, the host reboots. The next scheduled
+session starts from the standing prompt and knows nothing of it — its journal
+has no entry, and the agent's own instruments read presences, so it cannot
+detect an absence. The runner can, and this is how.
+
+**The signal is the runner's own record, never the transcript's contents.**
+`host/lib/run-record.sh` keeps one record at `RUNNER_LAST_RUN`, plain
+`key=value` lines under `~/.cache/<agent>/`: when the run started, what its
+container was called, when it came back, what it exited, and the
+`terminal_reason` its result envelope reported. `terminal_reason: completed` is
+the only clean ending. Everything else is a stop, including endings nobody here
+has seen yet — which is the point, since the case that motivated this has no
+specimen. What the envelope holds and why that field decides is in
+[`docs/budget.md`](budget.md), under "The limit stops the session".
+
+**The transcript cannot answer it, and that is measured.** Across all 533
+sessions on the archive's `sessions` branch the last main-chain record is
+`last-prompt` (306), `assistant` (158), `atis-latch` (34),
+`file-history-snapshot` (5), `attachment` (2) or `user` (1) — six shapes on
+sessions that almost all ended normally. Nor is an error record a stop: of 18
+`isApiErrorMessage` records across 977 transcripts on this host, 16 sit
+mid-session and were survived, and the only two that end a file are subagent
+transcripts. The transcript stays the right instrument for *what happened* and
+is the wrong one for *whether it finished*.
+
+**An absent record is the loudest signal there is.** `ended=` is written by the
+run itself, so a process killed outright — SIGKILL, the host rebooting, the
+container going away under it — leaves the record open. That is not a case
+anyone had to enumerate; it is what happens when nothing runs.
+
+**Open is only a stop once nothing is running on it.** A wedged session, or one
+`just run --force` started beside another, leaves an open record while it is
+still going. `run_record_verdict` takes the answer as an argument rather than
+asking docker for it: `run.sh` has it already, and a second `docker ps` on the
+path that wakes every minute is a process for nothing.
+
+**The latch is the file itself.** The record is replaced only when a session
+actually starts. Every wake-up that stands down — the cooldown, a held lock,
+the budget, a window with nothing left — exits before the record is opened, so
+a stop stays unconsumed across as many refused wake-ups as it takes for one to
+run. That matters because a session stopped by a usage limit is followed by
+hours of wake-ups that refuse on the same limit. There is no second file saying
+"recovery pending", and nothing has to clear one.
+
+**Nothing blocks.** An unrecognised ending does not hold the schedule; it
+becomes the next session's context and the session runs. Ruled 2026-09-04.
+
+**The wedge mark lives here too.** Which session start has already been toasted
+is one run's fact, and the record already belongs to that run — see
+[`docs/schedule.md`](schedule.md), under "The wedge alarm".
+
+
 ## Watching a session live
 
 Whether `just listen` FOLLOWS is not a flag. A session that is running is one

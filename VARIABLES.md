@@ -164,7 +164,7 @@ travels into the image and is reported there as such.
 | `RUNNER_SNAPSHOT_LOCK` | One writer per branch. |
 | `RUNNER_CONFIG_LOCK` | The same, for the `config` branch `just deploy` backs this installation's own files up to. |
 | `RUNNER_WEDGE_MINUTES` | How long an **unattended** session may run before it is reported as wedged, default `120`. Measured rather than chosen: of 289 completed sessions on the archive's status branch the 90th percentile is 16 minutes and the longest ever was 54, and the long ones are all just before midnight, where the agent waits out a `sleep` for the date to turn. Conversations are never counted — they legitimately run for hours. An explicit `0` turns the check off; anything else that is not a number falls back to the default, because a typo must not silently disable the only report a wedge ever produces. |
-| `RUNNER_WEDGE_NOTIFIED` | The start of the wedged session already reported, so a hang notifies once rather than once a minute — `just run` wakes every minute. Keyed on the session's start, so the next session is a new one without anything having to clear the file. |
+| `RUNNER_LAST_RUN` | How the last unattended run ended: when it started, what it was called, when it came back, and the `terminal_reason` its result envelope reported. Written only when a session actually starts, so a stop stays unconsumed across every wake-up that stands down — that is the latch the recovery start reads. It also holds the start of the wedged session already reported, so a hang notifies once rather than once a minute; that was `RUNNER_WEDGE_NOTIFIED` until 2026-09-04, and two files keyed on one moment is the second one going stale. |
 
 ## Tool namespaces
 
