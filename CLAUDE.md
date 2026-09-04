@@ -52,10 +52,13 @@ at the same time.
 Anything that has to start a container against that volume runs with a `HOME`
 of its own and says so — `RUNNER_TEST_ENV` in `host/verify/session.sh` is the
 one that exists, and `RUNNER_TEST` is what the entrypoint reads to know it is
-not setting up a real home. Working directories are left alone, so what a probe
-measures does not change. The measurements, and the two things that cannot be
-moved out, are in `docs/verify.md` under "A probe does not file in the agent's
-directory".
+not setting up a real home. **And it does not work in the agent's checkout
+either:** a probe that needs one builds its own inside that home, in the shape
+the real one has. Two of them used to borrow the agent's, and it was measured
+on 2026-09-04 that neither had to — a permission rule matches the command as
+typed, and a project settings file is read from whatever project the session
+is in. The measurements are in `docs/verify.md` under "A probe does not file in
+the agent's directory".
 
 **3. The boundary files are what this repository is for.** Changes to any
 of them go to the operator explicitly, with what changes and why, and are never

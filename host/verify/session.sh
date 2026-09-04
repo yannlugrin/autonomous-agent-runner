@@ -41,11 +41,11 @@ nonce() { printf 'probe-%s' "$RANDOM$RANDOM"; }
 # --- a probe runs in a home of its own ---
 # Claude Code files a transcript under $HOME/.claude/projects/<working
 # directory, slashes turned into dashes>. Left alone that is the agent's own
-# home in the volume — and for the two probes that must start IN the checkout,
-# the agent's own PROJECT directory: the one `just run` and `just chat` write
-# to, `just listen` follows, `just collect` archives and `just cost` prices.
-# Nothing but a real session belongs anywhere in that volume, so no probe here
-# runs with the agent's home.
+# home in the volume — and for the two probes that once started in the
+# checkout, the agent's own PROJECT directory: the one `just run` and `just
+# chat` write to, `just listen` follows, `just collect` archives and `just
+# cost` prices. Nothing but a real session belongs anywhere in that volume, so
+# no probe here runs with the agent's home.
 #
 # RUNNER_TEST_ENV is what makes that possible, and each entry earns its place:
 #
@@ -65,22 +65,31 @@ nonce() { printf 'probe-%s' "$RANDOM$RANDOM"; }
 #                        every secret the vault has.
 #                        see docs/verify.md#a-probe-carries-no-key-to-the-vault
 #
-# Working directories are untouched, so nothing changes about what any probe
-# measures: HOME decides the root, the working directory only the encoded
-# directory under it.
+# Every `docker compose run` below carries it, with no exception to remember.
+# There were four without it for a day — the shell halves that set up and
+# removed a fixture in the agent's checkout — which made the rule above true
+# only for whoever remembered the array. Those four are gone rather than
+# fixed: the two probes that needed them now build what they measure in a
+# checkout of their own, so nothing here reaches into the agent's repository
+# and there is no half left to forget.
 #
-# Every `docker compose run` below carries it, the shell-only setup and cleanup
-# halves included. Those start no session and so file no transcript, and for a
-# day they were the four invocations that did not have it — which made the rule
-# above true only for whoever remembered to add the array. It is on all ten so
-# that the invariant holds by reading instead, because the way it breaks is
-# silent: a setup half that grows a session, or a new probe copied from one,
-# files in the agent's directory with nothing to say so.
+# No probe writes in the agent's checkout either, which is a stronger claim
+# than the home and a later one. The two that did were measured on 2026-09-04
+# and neither needed it: a permission rule matches the command as typed, and a
+# project settings file is read from whatever project the session is in.
 # see docs/verify.md#a-probe-does-not-file-in-the-agents-directory
+
+PROBE_HOME=/tmp/runner-test
+
+# A checkout of the probe's own, inside the probe's own home — the shape the
+# real one has, where the agent's checkout sits inside the agent's home. Named
+# after the real repository's directory so what a probe produces differs from a
+# real session only by the home above it.
+PROBE_WORK="$PROBE_HOME/$(basename "$AGENT_REPO_DIR")"
 
 RUNNER_TEST_ENV=(
     -e RUNNER_TEST=1
-    -e HOME=/tmp/runner-test
+    -e "HOME=$PROBE_HOME"
     -e AGENT_SKIP_CLONE=1
 )
 
@@ -272,83 +281,66 @@ echo
 
 
 # --- tools allow ---
-# That `Bash(python3 tools/*)` matches the relative spelling a session in the
-# checkout types. Those two entries are how the agent runs the programs it
-# writes for itself, and they are the only allow whose cost the boundary
-# records as accepted rather than overlooked — a rule that matches nothing is
-# that cost paid for nothing.
+# That `Bash(python3 tools/*)` matches the relative spelling a session types.
+# Those two entries are how the agent runs the programs it writes for itself,
+# and they are the only allow whose cost the boundary records as accepted
+# rather than overlooked — a rule that matches nothing is that cost paid for
+# nothing.
 #
-# The checkout ships no program to run, so the probe writes a one-line one and
-# takes it away again. Both halves run with `--entrypoint sh`, which skips
-# bootstrap: nothing clones, nothing pushes, and the only thing that changes in
-# the volume is the file this creates. The `git status` before and after is
-# printed rather than judged — the checkout is the agent's, and a probe that
-# left something behind in it must say so.
+# It runs in a checkout of its own and never in the agent's. Measured
+# 2026-09-04 on 2.1.259: the rule matches the command as typed, not a path
+# resolved against the working directory — a session started outside the
+# checkout with `tools/x.py` beside it is not classified either. So the agent's
+# repository proved nothing the probe's own does not, and writing a file into
+# it to learn that was a cost with nothing bought.
+# see docs/verify.md#tools-allow
 #
-# `cd` inside the container rather than `docker compose run -w`, which creates
-# a missing path as root and would leave a directory the entrypoint could not
-# clone into. The session run below does use -w, and only after the setup has
-# said the checkout is there. see docs/verify.md#tools-allow
+# Two nonces, and not decoration: the file prints the first, the prompt asks
+# for the second. One value for both cannot tell "the session obeyed the
+# prompt" from "the command ran", so a probe that never reached the Bash call
+# answers with the nonce and passes.
+#
+# `mkdir` and `cd` in the container rather than `docker compose run -w`, which
+# creates a missing path as root.
 
 echo "== tools/ allow check (needs a session) =="
 
-probe_nonce=$(nonce)
-probe_tool="probe-$probe_nonce.py"
+probe_ran=$(nonce)
+probe_said=$(nonce)
+probe_tool="probe-$probe_ran.py"
 
-setup=$(docker compose run --rm -T \
-    -e PROBE_DIR="$AGENT_REPO_DIR" -e PROBE_TOOL="$probe_tool" -e PROBE_NONCE="$probe_nonce" \
+verdicts_from < <(docker compose run --rm -T \
+    -e PROBE_RAN="$probe_ran" -e PROBE_SAID="$probe_said" \
+    -e PROBE_TOOL="$probe_tool" -e PROBE_WORK="$PROBE_WORK" \
     "${RUNNER_TEST_ENV[@]}" \
-    --entrypoint sh agent -c '
+    --entrypoint /usr/local/bin/vault-env agent sh -c '
     # No apostrophes in this block, as above.
-    cd "$PROBE_DIR" 2>/dev/null || { echo "NO CHECKOUT at $PROBE_DIR"; exit 0; }
-    [ -d tools ] || { echo "NO tools/ DIRECTORY in $PROBE_DIR"; exit 0; }
-    before=$(git status --porcelain 2>/dev/null | wc -l)
-    printf "print(\"%s\")\n" "$PROBE_NONCE" > "tools/$PROBE_TOOL" 2>/dev/null \
-        || { echo "NOT WRITABLE: tools/$PROBE_TOOL"; exit 0; }
-    echo "MADE|$before"' 2>/dev/null | tr -d '\r' | grep -m1 .)
+    mkdir -p "$PROBE_WORK/tools" 2>/dev/null || { echo "LOOK|tools allow|no probe checkout — could not make $PROBE_WORK/tools"; exit 0; }
+    cd "$PROBE_WORK" || { echo "LOOK|tools allow|no probe checkout — could not enter $PROBE_WORK"; exit 0; }
+    printf "print(\"%s\")\n" "$PROBE_RAN" > "tools/$PROBE_TOOL" 2>/dev/null \
+        || { echo "LOOK|tools allow|no probe program — could not write tools/$PROBE_TOOL"; exit 0; }
 
-if [ "${setup%%|*}" != MADE ]; then
-    verdict LOOK "tools allow" "no probe program could be written — the container said: ${setup:-nothing}"
-else
-    printf '         %-22s %s\n' "checkout before:" "${setup#MADE|} change(s) already there"
+    answer=$(claude-session --debug-file /tmp/tools.log -p "Run exactly one command: python3 tools/$PROBE_TOOL. Then report in one line exactly what it printed, or the exact message if it was refused. Do nothing else and change nothing. End your reply with $PROBE_SAID." 2>/dev/null)
 
-    verdicts_from < <(docker compose run --rm -T \
-        -e PROBE_NONCE="$probe_nonce" -e PROBE_TOOL="$probe_tool" \
-        "${RUNNER_TEST_ENV[@]}" \
-        -w "$AGENT_REPO_DIR" --entrypoint /usr/local/bin/vault-env agent sh -c '
-        # No apostrophes in this block, as above.
-        answer=$(claude-session --debug-file /tmp/tools.log -p "Run exactly one command: python3 tools/$PROBE_TOOL. Then report in one line exactly what it printed, or the exact message if it was refused. Do nothing else and change nothing. End your reply with $PROBE_NONCE." 2>/dev/null)
+    case "$answer" in
+        *"$PROBE_SAID"*) ;;
+        *) echo "LOOK|tools allow|no session ran — the container said: $(printf "%s" "$answer" | tr -d "\r" | grep -m1 . | cut -c1-140)"
+           exit 0 ;;
+    esac
 
-        case "$answer" in
-            *"$PROBE_NONCE"*) ;;
-            *) echo "LOOK|tools allow|no session ran — the container said: $(printf "%s" "$answer" | tr -d "\r" | grep -m1 . | cut -c1-140)"
-               exit 0 ;;
-        esac
+    case "$answer" in
+        *"$PROBE_RAN"*) ;;
+        *) echo "FAIL|tools allow|NEVER RAN — the session answered without the program output, so no Bash call was made and nothing here says whether the entry matches"
+           exit 0 ;;
+    esac
 
-        if [ ! -f /tmp/tools.log ]; then
-            echo "FAIL|tools allow|NO DEBUG LOG — the session answered and wrote no debug file; this proved nothing"
-        elif grep -q "new action being classified.*tools/" /tmp/tools.log; then
-            echo "FAIL|tools allow|CLASSIFIED ANYWAY — Bash(python3 tools/*) does not match the relative spelling a session types, so both tools/ entries are decoration and every program the agent writes for itself is the classifier to rule on"
-        else
-            echo "ok|tools allow|not classified — the relative tools/ entry matches, so the agent runs its own programs unclassified, which is the cost the boundary records as accepted"
-        fi')
-fi
-
-# The file goes whatever the verdict was, and what git makes of the checkout
-# afterwards is printed: this is the agent's own repository, and the one probe
-# here that writes in it says what it left.
-
-cleanup=$(docker compose run --rm -T \
-    -e PROBE_DIR="$AGENT_REPO_DIR" -e PROBE_TOOL="$probe_tool" \
-    "${RUNNER_TEST_ENV[@]}" \
-    --entrypoint sh agent -c '
-    cd "$PROBE_DIR" 2>/dev/null || { echo "NO CHECKOUT"; exit 0; }
-    rm -f "tools/$PROBE_TOOL"
-    left=$(git status --porcelain 2>/dev/null)
-    if [ -z "$left" ]; then echo clean
-    else echo "still dirty: $(printf "%s" "$left" | tr "\n" " " | cut -c1-100)"; fi' \
-    2>/dev/null | tr -d '\r' | grep -m1 .)
-printf '         %-22s %s\n' "checkout after:" "${cleanup:-unreadable}"
+    if [ ! -f /tmp/tools.log ]; then
+        echo "FAIL|tools allow|NO DEBUG LOG — the session answered and wrote no debug file; this proved nothing"
+    elif grep -q "new action being classified.*tools/" /tmp/tools.log; then
+        echo "FAIL|tools allow|CLASSIFIED ANYWAY — Bash(python3 tools/*) does not match the relative spelling a session types, so both tools/ entries are decoration and every program the agent writes for itself is the classifier to rule on"
+    else
+        echo "ok|tools allow|not classified — the relative tools/ entry matches, so the agent runs its own programs unclassified, which is the cost the boundary records as accepted"
+    fi')
 echo
 
 
@@ -358,7 +350,7 @@ echo
 # pinned version does not know is a silent no-op.
 #
 # Measured on 2.1.250, 2026-09-03: the key's signature is at load time. With
-# it, an allow rule in the checkout's `.claude/settings.local.json` is never
+# it, an allow rule in a project's `.claude/settings.local.json` is never
 # added — the log replaces `localSettings` with 0 rules and nothing else names
 # the file; without it, the log says `Adding 1 allow rule(s) to destination
 # 'localSettings'`. Whether the command is then classified proves nothing
@@ -367,73 +359,53 @@ echo
 # classified with or without the key. So the probe reads the load, not the
 # command, and the session it needs is the cheapest one.
 #
-# The rule file is created only if none exists — an existing one is the
-# agent's, and the probe says so rather than replacing it — and removed
-# afterwards, with the checkout's `git status` printed as the tools probe
-# prints it. An untrusted workspace drops project rules for its own reason
-# and would read as the key working, so that line is a LOOK, not an ok.
+# In the probe's own checkout, not the agent's: the key governs how a project
+# file is loaded, and any project answers that. An untrusted workspace drops
+# project rules for its own reason and would read as the key working, so that
+# line is a LOOK, not an ok.
+#
+# The write and the session are one container deliberately. Measured 2026-09-04
+# on 2.1.259: with no settings file at all the log prints the same
+# `localSettings ... with 0 rule(s)` lines, so that signature alone does not
+# say a rule was dropped. What makes the ok mean anything is the write being
+# confirmed in this same shell immediately before — split the two across
+# containers again and the verdict says nothing while still reading ok.
 # see docs/verify.md#project-rules
 
 echo "== project rules check (needs a session) =="
 
 probe_nonce=$(nonce)
 
-setup=$(docker compose run --rm -T \
-    -e PROBE_DIR="$AGENT_REPO_DIR" \
+verdicts_from < <(docker compose run --rm -T \
+    -e PROBE_NONCE="$probe_nonce" -e PROBE_WORK="$PROBE_WORK" \
     "${RUNNER_TEST_ENV[@]}" \
-    --entrypoint sh agent -c '
+    --entrypoint /usr/local/bin/vault-env agent sh -c '
     # No apostrophes in this block, as above.
-    cd "$PROBE_DIR" 2>/dev/null || { echo "NO CHECKOUT at $PROBE_DIR"; exit 0; }
-    [ -e .claude/settings.local.json ] && { echo "EXISTS: .claude/settings.local.json is already there, and it is not this probe to replace"; exit 0; }
-    mkdir -p .claude 2>/dev/null || { echo "NOT WRITABLE: .claude/"; exit 0; }
-    before=$(git status --porcelain 2>/dev/null | wc -l)
+    mkdir -p "$PROBE_WORK/.claude" 2>/dev/null || { echo "LOOK|project rules|no probe checkout — could not make $PROBE_WORK/.claude"; exit 0; }
+    cd "$PROBE_WORK" || { echo "LOOK|project rules|no probe checkout — could not enter $PROBE_WORK"; exit 0; }
     printf "{\"permissions\":{\"allow\":[\"Bash(touch:*)\"]}}\n" > .claude/settings.local.json 2>/dev/null \
-        || { echo "NOT WRITABLE: .claude/settings.local.json"; exit 0; }
-    echo "MADE|$before"' 2>/dev/null | tr -d '\r' | grep -m1 .)
+        || { echo "LOOK|project rules|no rule file — could not write .claude/settings.local.json"; exit 0; }
+    [ -s .claude/settings.local.json ] || { echo "LOOK|project rules|the rule file is empty, so there is no rule for the key to drop"; exit 0; }
 
-if [ "${setup%%|*}" != MADE ]; then
-    verdict LOOK "project rules" "no rule file could be written — the container said: ${setup:-nothing}"
-else
-    printf '         %-22s %s\n' "checkout before:" "${setup#MADE|} change(s) already there"
+    answer=$(claude-session --debug-file /tmp/rules.log -p "Reply with exactly: ok $PROBE_NONCE. Do nothing else." 2>/dev/null)
 
-    verdicts_from < <(docker compose run --rm -T \
-        -e PROBE_NONCE="$probe_nonce" \
-        "${RUNNER_TEST_ENV[@]}" \
-        -w "$AGENT_REPO_DIR" --entrypoint /usr/local/bin/vault-env agent sh -c '
-        # No apostrophes in this block, as above.
-        answer=$(claude-session --debug-file /tmp/rules.log -p "Reply with exactly: ok $PROBE_NONCE. Do nothing else." 2>/dev/null)
+    case "$answer" in
+        *"$PROBE_NONCE"*) ;;
+        *) echo "LOOK|project rules|no session ran — the container said: $(printf "%s" "$answer" | tr -d "\r" | grep -m1 . | cut -c1-140)"
+           exit 0 ;;
+    esac
 
-        case "$answer" in
-            *"$PROBE_NONCE"*) ;;
-            *) echo "LOOK|project rules|no session ran — the container said: $(printf "%s" "$answer" | tr -d "\r" | grep -m1 . | cut -c1-140)"
-               exit 0 ;;
-        esac
-
-        if [ ! -f /tmp/rules.log ]; then
-            echo "FAIL|project rules|NO DEBUG LOG — the session answered and wrote no debug file; this proved nothing"
-        elif grep -q "not yet trusted" /tmp/rules.log; then
-            echo "LOOK|project rules|workspace not trusted — project rules are dropped for that reason, so nothing here says whether allowManagedPermissionRulesOnly is honoured"
-        elif grep -qE "Adding 1 allow rule\(s\) to destination .localSettings.|destination .localSettings. with 1 rule" /tmp/rules.log; then
-            echo "FAIL|project rules|RULE LOADED — Bash(touch:*) from the checkout was added to localSettings, so allowManagedPermissionRulesOnly is a no-op on this Claude Code and a permission rule the agent writes in its checkout is live"
-        elif grep -q "destination .localSettings. with 0 rule" /tmp/rules.log; then
-            echo "ok|project rules|rule not loaded — allowManagedPermissionRulesOnly is honoured, so a permission rule the agent writes in its checkout grants nothing"
-        else
-            echo "FAIL|project rules|LOG FORMAT MOVED — nothing about localSettings in the debug log, so this proved nothing; re-measure the signature"
-        fi')
-fi
-
-cleanup=$([ "${setup%%|*}" = MADE ] || { echo "nothing written"; exit 0; }
-    docker compose run --rm -T \
-    -e PROBE_DIR="$AGENT_REPO_DIR" \
-    "${RUNNER_TEST_ENV[@]}" \
-    --entrypoint sh agent -c '
-    cd "$PROBE_DIR" 2>/dev/null || { echo "NO CHECKOUT"; exit 0; }
-    rm -f .claude/settings.local.json
-    left=$(git status --porcelain 2>/dev/null)
-    if [ -z "$left" ]; then echo clean
-    else echo "still dirty: $(printf "%s" "$left" | tr "\n" " " | cut -c1-100)"; fi' \
-    2>/dev/null | tr -d '\r' | grep -m1 .)
-printf '         %-22s %s\n' "checkout after:" "${cleanup:-unreadable}"
+    if [ ! -f /tmp/rules.log ]; then
+        echo "FAIL|project rules|NO DEBUG LOG — the session answered and wrote no debug file; this proved nothing"
+    elif grep -q "not yet trusted" /tmp/rules.log; then
+        echo "LOOK|project rules|workspace not trusted — project rules are dropped for that reason, so nothing here says whether allowManagedPermissionRulesOnly is honoured"
+    elif grep -qE "Adding 1 allow rule\(s\) to destination .localSettings.|destination .localSettings. with 1 rule" /tmp/rules.log; then
+        echo "FAIL|project rules|RULE LOADED — Bash(touch:*) from a project file was added to localSettings, so allowManagedPermissionRulesOnly is a no-op on this Claude Code and a permission rule the agent writes in its checkout is live"
+    elif grep -q "destination .localSettings. with 0 rule" /tmp/rules.log; then
+        echo "ok|project rules|rule not loaded — allowManagedPermissionRulesOnly is honoured, so a permission rule the agent writes in its checkout grants nothing"
+    else
+        echo "FAIL|project rules|LOG FORMAT MOVED — nothing about localSettings in the debug log, so this proved nothing; re-measure the signature"
+    fi')
 echo
 
 

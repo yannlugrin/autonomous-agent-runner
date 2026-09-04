@@ -671,12 +671,14 @@ directory under it.
 Confirmed 2026-09-04 on 2.1.259 by timestamp: after three probe runs the newest
 file in either project directory was still older than the first of them.
 
-**On all ten invocations, and for a day on six.** The array is applied per
+**On every invocation, and for a day on six of ten.** The array is applied per
 `docker compose run`. It first went on the six that start a session and not on
-the four shell-only halves that create and remove each probe's fixture — those
-run `--entrypoint sh` in the checkout, with the agent's home. Nothing was filed
-by them and nothing could have been: they start no session, so there is no
-transcript to file.
+the four shell-only halves that created and removed each probe's fixture in the
+agent's checkout — those ran `--entrypoint sh` with the agent's home. Nothing
+was filed by them and nothing could have been: they started no session, so
+there was no transcript to file. Those four are now gone rather than fixed. The
+two probes that needed them build what they measure in a checkout of their own,
+so six invocations remain and every one of them carries the array.
 
 It was the agent that found it, reading `host/verify/` on 2026-09-04 after the
 probe transcripts were removed from its volume, and its argument is what decided
@@ -930,22 +932,31 @@ for itself, and they are the only allow whose cost the boundary records as
 accepted rather than overlooked — a rule that matches nothing is that cost paid
 for nothing, and every such program becomes the classifier's to rule on.
 
-The checkout ships no program to run, so the probe writes a one-line one into
-`tools/` and takes it away again. Both halves run with `--entrypoint sh`, which
-skips bootstrap: nothing clones, nothing pushes, and the only thing that
-changes in the volume is that file. `cd` inside the container rather than
-`docker compose run -w`, because `-w` creates a missing path **as root** and
-would leave behind a directory the entrypoint could not clone into; the session
-run does use `-w`, and only after the setup step has said the checkout is
-there — that is what makes `python3 tools/x.py` the relative spelling and not
-an absolute one.
+The probe builds a checkout of its own under its own home and writes a
+one-line program into its `tools/`. `mkdir` and `cd` inside the container
+rather than `docker compose run -w`, because `-w` creates a missing path **as
+root**.
 
-The `git status` of the checkout before and after is printed rather than
-judged. This is the one probe here that writes in the agent's own repository,
-and a probe that left something behind in it has to say so.
+**It used to write that program into the agent's own repository, and it did
+not need to.** Measured 2026-09-04 on 2.1.259: a session started in a directory
+that is not the checkout, with `tools/probe-<nonce>.py` beside it, runs the
+program and the debug log carries no classification line — the same result the
+checkout gives. The rule matches the **command as typed**, not a path resolved
+against the working directory, which is what the two entries in managed
+settings have always said: one spelling for what a session in the checkout
+types, one for what a different cwd produces. So the agent's repository proved
+nothing its own does not, and the write, the removal, and the `git status`
+before and after that reported them are all gone with it.
 
-`LOOK` when no session ran, or when there was no checkout to write into — a
-fresh volume has neither.
+**Two nonces, and they are not decoration.** The file prints the first, the
+prompt asks the reply to end with the second. Until 2026-09-04 one value served
+both, so "the session obeyed the prompt" and "the command ran" were the same
+string: a session that answered without ever making the Bash call left no
+classification line in the log and passed. The verdict now needs the program's
+own output back before it reads the log at all, and `FAIL`s as `NEVER RAN`
+without it.
+
+`LOOK` when no session ran or the probe could not build its own checkout.
 
 **2026-09-03, first run: `FAIL`, and the rule has never matched.** The debug
 log of that session, on 2.1.250, shows managed settings loaded — 25 allow rules
@@ -983,14 +994,26 @@ nothing about the key: auto mode drops broad allow rules on its own — a
 left `touch` classified with and without it too. The first probe written that
 day read the classification and passed for the wrong reason.
 
-The file is written only when none exists: an existing one is the agent's, and
-the probe reports it rather than replacing it. It goes afterwards whatever the
-verdict, and the checkout's `git status` before and after is printed as the
-tools probe prints it. An untrusted workspace drops project rules for its own
-reason and would read as the key working, so `not yet trusted` in the log is a
-`LOOK`. `LOOK` too when no session ran or nothing could be written; `FAIL` when
-the debug log names no `localSettings` at all, since the signature has moved
-and the probe must be re-measured.
+**It writes that file in a checkout of its own, not the agent's**, since
+2026-09-04. The key governs how a project file is loaded and any project
+answers that question: measured on 2.1.259, a settings file in a throwaway
+directory produced the same `localSettings ... with 0 rule(s)` load the
+checkout produced.
+
+**The write and the session are one container, deliberately.** Measured the
+same day: with no settings file present anywhere, the log prints exactly those
+same `0 rule(s)` lines. That signature alone therefore does not say a rule was
+dropped — it says as much about a project with no file at all. What makes the
+`ok` mean anything is that the write is confirmed in the same shell
+immediately before the session reads it. Split those across two containers, as
+they were while the fixture lived in the agent's checkout, and the verdict goes
+vacuous while still reading `ok`.
+
+An untrusted workspace drops project rules for its own reason and would read as
+the key working, so `not yet trusted` in the log is a `LOOK`. `LOOK` too when
+no session ran or nothing could be written; `FAIL` when the debug log names no
+`localSettings` at all, since the signature has moved and the probe must be
+re-measured.
 ### guard reached
 
 The `env` prefix is the whole point of the probe, not decoration. The only deny
