@@ -39,6 +39,24 @@ the operator's credential would read to the agent as the operator speaking. If y
 something to say there, draft it and let the operator post it, so that what the agent
 reads as theirs really is theirs.
 
+**And never write in the agent's volume.** Not its project directory, not its
+home, not the Claude Code state under either. Only a real session may leave a
+transcript there, and *real* means `just run` or `just chat` started by the
+operator or by cron: not a probe, not a test script, not an agent working here.
+Anything else left there is read downstream as the agent's own work — `just
+listen` shows a transcript in the project directory as a session, `just collect`
+archives it, `just cost` prices it — and everything else is residue in a volume
+that is not ours. Cleaning up afterwards is not a fix: a session may be running
+at the same time.
+
+Anything that has to start a container against that volume runs with a `HOME`
+of its own and says so — `RUNNER_TEST_ENV` in `host/verify/session.sh` is the
+one that exists, and `RUNNER_TEST` is what the entrypoint reads to know it is
+not setting up a real home. Working directories are left alone, so what a probe
+measures does not change. The measurements, and the two things that cannot be
+moved out, are in `docs/verify.md` under "A probe does not file in the agent's
+directory".
+
 **3. The boundary files are what this repository is for.** Changes to any
 of them go to the operator explicitly, with what changes and why, and are never
 folded into unrelated work:

@@ -640,6 +640,130 @@ re-measuring after an upgrade: a sweep that stopped reading managed settings is
 silent until the day the files are gone. See docs/boundary.md.
 
 
+## A probe does not file in the agent's directory
+
+Claude Code files a transcript under `$HOME/.claude/projects/<working
+directory, slashes turned into dashes>`. Left alone that is the agent's own
+home in the volume — and for the two probes that must start *in* the checkout,
+the agent's own project directory: the one `just run` and `just chat` write to,
+`just listen` follows, `just collect` archives and `just cost` prices.
+
+**That is the harness interfering with the agent, and it is not allowed.** It
+was found from the other end — a probe session appeared in a live `just listen`
+feed under the operator's name, because `transcript.jq` labels any user text
+without the runner's marker as theirs. By then 17 probe transcripts sat in the
+project directory, 15 had been committed to the archive's `sessions` branch as
+though they were the agent's own work, and 979 more with 763 `session-env`
+entries had accumulated in the home.
+
+**Every probe now runs with `RUNNER_TEST_ENV`**, and each entry earns its place:
+
+| | |
+| --- | --- |
+| `HOME=/tmp/runner-test` | a throwaway path inside the container, gone when it exits |
+| `AGENT_SKIP_CLONE=1` | bootstrap reports what an empty home is missing instead of stopping on it |
+| `RUNNER_TEST=1` | the entrypoint does not restore the agent's ssh key into a probe home, and does not report the generated one as something for a person to register |
+
+Working directories are untouched, so nothing changes about what any probe
+measures: `HOME` decides the root, the working directory only the encoded
+directory under it.
+
+Confirmed 2026-09-04 on 2.1.259 by timestamp: after three probe runs the newest
+file in either project directory was still older than the first of them.
+
+### What was measured on the way, because none of it was obvious
+
+**`HOME` must exist before bootstrap runs.** `git config --global` writes
+`$HOME/.gitconfig` and is the first thing to need it; a probe with `HOME` moved
+died on `could not lock config file` before anything could report why. The
+entrypoint now creates it — Claude Code would, but not until long after git.
+
+**Only a probe that skips bootstrap could be moved, until it could.** The first
+attempt moved `HOME` on the four probes that run `--entrypoint vault-env` and
+left the five that run the real entrypoint alone, because the entrypoint is the
+agent's home by construction — it derives the checkout from `$HOME`, reads the
+ssh key from `$HOME/.ssh`, and gates the session on setup being complete.
+`AGENT_SKIP_CLONE` already existed for exactly this and lifts the gate;
+`REPO_DIR` is absolute, so the clone was never the problem.
+
+**`BWS_ACCESS_TOKEN` cannot simply be emptied by the caller.** It is the
+obvious thing to drop — nothing should need the vault to run a probe — but
+`vault-env.sh` fetches the session's own Claude token through it, and with
+`HOME` moved there is no `~/.claude/.credentials.json` to fall back on.
+Measured: emptied by the caller, the probe answered `Not logged in · Please run
+/login`. What it needed instead was a login from somewhere that is not the
+vault — see "A probe carries no key to the vault" below.
+
+**The ssh key is generated, never restored.** `RUNNER_TEST` skips the vault
+restore. Otherwise every probe would pull the agent's real private key into a
+throwaway container, and ask the vault and GitHub for it each time, to produce a
+key used for nothing. Two consecutive probe runs reported different
+fingerprints, which is how a generate is told from a restore.
+
+## A probe carries no key to the vault
+
+A probe with `BWS_ACCESS_TOKEN` in its environment is a session holding the key
+to every secret the vault has. `bash-guard.py` denies `bws` on parsed argv,
+which covers the spelling and not the value: anything that prints an
+environment puts the token wherever that output went. The probes have no use
+for the vault — they need one login and nothing else.
+
+So `vault-env.sh`, under `RUNNER_TEST`, does not ask the vault at all. It reads
+`.claudeAiOauth.accessToken` out of the login the agent already has — in a
+volume the probe may read and never write — hands it over as
+`CLAUDE_CODE_OAUTH_TOKEN`, and unsets `BWS_ACCESS_TOKEN` before the session
+starts. One secret the probe needs, instead of the one that opens all of them.
+
+**Handed over as an environment value, not as a copy of the file, and that is
+not a detail.** Measured 2026-09-04 on 2.1.259: a session authenticated from
+`CLAUDE_CODE_OAUTH_TOKEN` writes six `localSettings` lines into its debug log;
+the same session authenticated from a `~/.claude/.credentials.json` file writes
+none. Both answer correctly — only the logging differs. `project rules` reads
+exactly those lines to prove a rule in the checkout was not loaded, so copying
+the file silenced that probe into `LOG FORMAT MOVED`, which is its own way of
+saying it proved nothing. Authenticating the way a real session does is also
+the only way a probe measures what a real session would.
+
+It is in `vault-env.sh` rather than in the caller for two reasons: every
+session path arrives there, `entrypoint.sh` included, so it is one place rather
+than one per probe; and that file is the one place a container's login is
+decided, which is the thing being changed.
+
+Measured 2026-09-04 on 2.1.259, without expanding any secret — `[ -n "$VAR" ]`
+tests, never `${VAR:-…}`, which yields the value when the variable is set:
+
+    a probe's session          a real session
+      vault key:  gone           vault key: present, as a session needs
+      login:      copied in
+      env token:  unset
+    and it answered `ok`
+
+**The transcript is read where it is written.** `model` and `connectors` both
+need the transcript the model probe's session produced, and it is written into
+a home that dies with the container — so a second container looking under the
+agent's home finds nothing. That session and both reads now happen in one
+container, which is also what the code's own comment always asked for: the
+envelope and the transcript are one session rather than two things that happen
+to be near each other in time.
+
+### The credentials probe moved too
+
+It asks a session to `Read` `~/.claude/.credentials.json` and reports whether a
+rule refused it. The rule is spelled with a tilde —
+`deny: Read(~/.claude/.credentials.json)` — and both it and the path the session
+asks for resolve against that session's own `HOME`, so they still name the same
+thing in a probe home. A permission decision is taken before anything is read,
+so whether the file exists does not enter into it. What the probe looks for is
+"refused by a permission rule"; a deny that had stopped working would let the
+Read through and report that the file is not there, which is not that.
+
+### What was refused
+
+Deleting the transcript after each probe. A session can be running in parallel,
+and writing into the agent's volume at all — even briefly, even to clean up
+after — is the interference this forbids.
+
+
 ## The probes that need a session
 
 `host/verify/session.sh` runs after `mechanical.sh` has said which credential a

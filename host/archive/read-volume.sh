@@ -23,11 +23,14 @@ echo "Extracting transcripts from $VOLUME ..."
 # owned by uid 1001 — but everything it writes to the bind mount comes out
 # root-owned, so it hands ownership back before exiting.
 #
-# Only the checkout's own sessions, filed under the mangled cwd. `just verify`'s
-# probes and `just shell` land in /home/agent and are neither archived nor
-# scanned. A session started without `-w` would file itself outside and never
-# be archived, with nothing to notice, so the count left behind is printed.
+# Only the checkout's own sessions, filed under the mangled cwd. `just shell`
+# lands in /home/agent and is neither archived nor scanned, and `just verify`'s
+# probes run with a HOME of their own so their transcripts never reach the
+# volume at all.
+# A session started without `-w` would file itself outside and never be
+# archived, with nothing to notice, so the count left behind is printed.
 # see docs/archive.md#only-the-checkouts-own-sessions
+# see docs/verify.md#a-probe-does-not-file-in-the-agents-directory
 
 SESSIONS_DIR="${AGENT_PROJECT_DIR:?not set — run this through 'just', which derives it from the checkout}"
 outside=$(docker run --rm \

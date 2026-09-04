@@ -32,7 +32,8 @@ VAULT_CLAUDE_TOKEN=claude-oauth-token
 # Already set wins, and nothing here overwrites it. That is what lets a probe
 # pass a deliberate value — `just verify` does — and what keeps this from
 # undoing an override someone chose on purpose.
-if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
+if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${RUNNER_TEST:-}" ] \
+   && [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
     # Silent on failure, deliberately. No such secret, an expired access
     # token, a network that is down — all of them mean "no token from the
     # vault", and the container falls back to the credentials file in its
@@ -44,6 +45,44 @@ if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
         export CLAUDE_CODE_OAUTH_TOKEN="$value"
     fi
     unset value
+fi
+
+# --- a verify probe carries no key to the vault ---
+# A probe runs with a HOME of its own so it writes nothing in the agent's
+# volume, and that home has no credentials file — so it would have to reach the
+# vault for a login, and would then be a session holding the key to every
+# secret the vault has. The guard denies `bws` on argv, which covers the
+# spelling and not the value: anything that prints an environment puts the
+# token where it was printed.
+#
+# So a probe is given the login the agent already has, read out of the volume
+# it may read and never write, and the access token is dropped before the
+# session starts. One secret it needs instead of the one that opens all of
+# them.
+#
+# Handed over as CLAUDE_CODE_OAUTH_TOKEN and not as a copy of the file, because
+# Claude Code does not behave the same way on the two paths: measured
+# 2026-09-04 on 2.1.259, a session authenticated from a credentials file logs
+# nothing about `localSettings` where one authenticated from the environment
+# logs six lines, and the `project rules` probe reads exactly that to prove a
+# rule in the checkout was not loaded. Authenticating the way a real session
+# does is also the only way a probe measures what a real session would.
+# see docs/verify.md#a-probe-carries-no-key-to-the-vault
+#
+# Here rather than in the caller because every session path arrives here,
+# entrypoint.sh included — one place rather than one per probe — and because
+# this is the file that decides what a container's login is.
+if [ -n "${RUNNER_TEST:-}" ]; then
+    _agent_login="/home/$(id -un)/.claude/.credentials.json"
+    if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -f "$_agent_login" ]; then
+        value=$(jq -r '.claudeAiOauth.accessToken // empty' "$_agent_login" 2>/dev/null)
+        if [ -n "$value" ]; then
+            export CLAUDE_CODE_OAUTH_TOKEN="$value"
+        fi
+        unset value
+    fi
+    unset _agent_login
+    unset BWS_ACCESS_TOKEN
 fi
 
 exec "$@"

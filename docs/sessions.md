@@ -1016,13 +1016,22 @@ mistake.
 
 Claude Code files a transcript under the working directory it was started in,
 encoded. `run` and `chat` both pass `-w` into the agent's repository, so a
-session lands under that directory and nothing else does: a `just verify` probe
-starts in the home and files under `-home-agent`, and so does a `claude`
+session lands under that directory and nothing else does: most `just verify`
+probes start in the home and file under `-home-agent`, as does a `claude`
 someone typed inside `just shell`. Those are deliberately not sessions —
 measured, because the newest transcript in the volume was one of them while the
 last session had ended half an hour earlier, and the summary would have been
 printed under its heading. The archive filters on the same directory for the
 same reason.
+
+**No probe writes in the volume at all, and two of them used to write in the
+agent's own project directory.** `tools allow` and `project rules` must run with
+the checkout as their working directory, so Claude Code filed their transcripts
+where `just listen` follows them, `just collect` archives them and `just cost`
+prices them as the agent's work. Every probe now runs with a `HOME` of its own,
+which moves the transcript root without moving the working directory. The
+record is in [`docs/verify.md`](verify.md), under "A probe does not file in the
+agent's directory".
 
 `--since` is what stops a session that wrote no transcript at all from being
 reported with the previous session's numbers. That is not hypothetical

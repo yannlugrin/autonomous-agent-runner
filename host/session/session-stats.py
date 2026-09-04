@@ -48,10 +48,12 @@ IMAGE = os.environ.get("RUNNER_EXTRACT_IMAGE", "alpine:3")
 
 # Claude Code files a transcript under the working directory it was started in,
 # encoded. `run` and `chat` both pass -w into the agent's repository, so a
-# session lands here and nothing else does: a `just verify` probe starts in
-# /home/agent and files under `-home-agent`, and so does a `claude` someone
-# typed inside `just shell`. Those are deliberately not sessions, and the
-# archive filters on the same directory for the same reason.
+# session lands here and nothing else does: a `claude` someone typed inside
+# `just shell` files under `-home-agent`, and `just verify`'s probes run with a
+# HOME of their own so their transcripts never reach the volume. Those are
+# deliberately not sessions, and the archive filters on the same directory for
+# the same reason.
+# see docs/verify.md#a-probe-does-not-file-in-the-agents-directory
 # see docs/sessions.md#which-transcripts-are-a-sessions
 PROJECT = _required("AGENT_PROJECT_DIR")
 

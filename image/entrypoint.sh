@@ -26,6 +26,14 @@ AGENT_PREFIX="$(id -un | tr 'a-z' 'A-Z' | tr '-' '_')"
 # script here is bash and not sh.
 agent_var() { local _n="${AGENT_PREFIX}_$1"; printf '%s' "${!_n-}"; }
 
+# A session's HOME is the volume and always exists; a verify probe's is a
+# throwaway path inside the container and does not. `git config --global` below
+# writes $HOME/.gitconfig and is the first thing that needs it — measured
+# 2026-09-04, where a probe with HOME moved died on `could not lock config
+# file` before anything else could report why.
+# see docs/verify.md#a-probe-does-not-file-in-the-agents-directory
+mkdir -p "$HOME"
+
 REPO_DIR="$(agent_var REPO_DIR)"
 REPO_DIR="${REPO_DIR:-$HOME/$(id -un)}"
 GIT_NAME="$(agent_var GIT_NAME)"
@@ -90,7 +98,14 @@ chmod 700 "$HOME/.ssh"
 # see docs/image.md#the-ssh-key-and-restoring-it-from-the-vault
 if [ ! -f "$KEY" ]; then
     restored=false
-    if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
+    # RUNNER_TEST never restores. A verify probe's home is empty by
+    # construction, so the restore would run on every probe — pulling the
+    # agent's real private key into a throwaway container, and asking the vault
+    # and GitHub for it each time — to produce a key that is used for nothing.
+    # It generates instead, which costs a millisecond and leaves the agent's own
+    # identity where it is.
+    # see docs/verify.md#a-probe-does-not-file-in-the-agents-directory
+    if [ -z "${RUNNER_TEST:-}" ] && [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
         # Output held back unless something was restored: "no secret named
         # 'github-ssh-key'" is correct, and is also a scary line to print at a
         # first bootstrap where the vault has legitimately never held one.
@@ -123,7 +138,14 @@ if [ ! -f "$KEY" ]; then
 
     if [ "$restored" = false ]; then
         ssh-keygen -t ed25519 -N "" -C "${GIT_EMAIL:-${AGENT_NAME:-agent}}" -f "$KEY" >/dev/null
-        note "A new SSH key was generated. Add its public half, printed above, to the agent's GitHub account before anything can be cloned or pushed. To make the next empty home recover on its own instead, store the PRIVATE half in the vault as '$VAULT_SSH_KEY' — the operator's to do, in the read-only project."
+        # Under RUNNER_TEST the key is generated into a throwaway home, is used
+        # for nothing, and dies with the container — so there is nothing for
+        # anyone to do about it. The note is what a real empty home needs, and
+        # printing it on every probe run would teach a reader to skip the one
+        # place setup problems are reported.
+        if [ -z "${RUNNER_TEST:-}" ]; then
+            note "A new SSH key was generated. Add its public half, printed above, to the agent's GitHub account before anything can be cloned or pushed. To make the next empty home recover on its own instead, store the PRIVATE half in the vault as '$VAULT_SSH_KEY' — the operator's to do, in the read-only project."
+        fi
     fi
 fi
 
