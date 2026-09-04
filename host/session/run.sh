@@ -287,10 +287,10 @@ fi
 
 
 # --- the session ---
-# Stamped before the session, because the summary afterwards takes the newest
-# transcript in the volume: a container that died during bootstrap writes none
-# and leaves the previous session's as the newest.
-
+# The timestamp is taken before the session, because the summary afterwards
+# takes the newest transcript in the volume: a container that died during
+# bootstrap writes none and leaves the previous session's as the newest.
+#
 # --output-format json, so that how the session ended is a fact it reports
 # rather than one inferred here. The transcript cannot answer it: measured over
 # 533 archived sessions, its last record is one of six shapes and none of them
@@ -336,13 +336,18 @@ fi
 # What the session said, unwrapped from the envelope, so the run log still
 # reads as the agent's closing words rather than as one line of JSON. Held back
 # under --listen, which has already shown it.
-if [ -z "$view" ]; then
-    run_envelope_result "$session_log"
-fi
 
-if [ "$status" -ne 0 ]; then
+said=""
+[ -z "$view" ] && said=$(run_envelope_result "$session_log")
+[ -n "$said" ] && printf '%s\n' "$said"
+
+# The whole log, when the status says so — and also when there was no envelope
+# to unwrap, because a run that printed nothing reads exactly like one that
+# never started, and that is the case most worth seeing whole.
+
+if [ "$status" -ne 0 ] || { [ -z "$view" ] && [ -z "$said" ]; }; then
     echo
-    echo "The session exited $status. Its own output:"
+    printf 'The session exited %s. Its own output:\n' "$status"
     cat "$session_log"
 fi
 
