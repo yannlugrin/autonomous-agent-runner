@@ -38,7 +38,7 @@ percentage of the account's whole 7-day Claude allowance, yours and the
 agent's together — a quarter of the week is `25`. The allowance
 climbs to that cap across the week rather than sitting flat at it, which is
 what `ACCOUNT_BUDGET_WEEKLY_START` is for, and the whole of it is in
-[`docs/budget.md`](docs/budget.md).
+[`docs/budget.md`](budget.md).
 
 **What the line contains.** A marker comment, then a command that does `cd`
 into the **deployed** checkout, sets a `PATH` (cron's own is `/usr/bin:/bin`,

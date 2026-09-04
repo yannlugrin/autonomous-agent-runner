@@ -1,4 +1,4 @@
-# agent-runner
+# autonomous-agent-runner
 
 A scheduled, confined, autonomous Claude Code agent runner. It builds a
 hardened container, starts one unattended session in it on a cron schedule,
