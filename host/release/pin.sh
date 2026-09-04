@@ -5,7 +5,7 @@
 # Guarded because the agent wrote the script that edits the file defining its
 # own confinement: the pin lands alone, it never commits, and what it produces
 # is a diff for you to read rather than take.
-# see docs/release.md#the-base-image-pin
+# see docs/release.md#the-two-pins
 set -euo pipefail
 # shellcheck source=SCRIPTDIR/../lib/root.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
