@@ -916,7 +916,7 @@ Shipped — **NOT installed**:
 
 **REPLACED**
 
-*Why (review note — not part of the installed text):* The shipped value assumes **one repository per session** — the checkout the session started in. This agent works across three owners' repositories, and the widening is the operator's, on his ruling of 2026-08-29. Written to say *why* those three rather than listing globs: its work, its operator's, and its society's.
+*Why (review note — not part of the installed text):* The shipped value assumes **one repository per session** — the checkout the session started in. This agent works across three owners' repositories, and the widening is the operator's, on his ruling of 2026-08-29. Written to say *why* those three rather than listing globs: its work, its operator's, and its society's. **The fork sentence was added on 2026-09-04, on the operator's ruling**, after the classifier refused `POST /repos/{owner}/{repo}/forks` of the operator's private runner into the agent's own organisation, reading it as H-1's relocation of a private tree to a destination the agent creates — the same night a `gh repo fork` of the public copy had passed. It is anchored on the act, not on access, deliberately: "a repository it has been granted access to" reads, to a rule that judges by provenance, as a credential that can reach a private tree, which is the very thing that clause calls relocation.
 
 Shipped — **NOT installed**:
 
@@ -935,7 +935,13 @@ Shipped — **NOT installed**:
 > its own repositories under `{{AGENT_USER}}/*`, its operator's under
 > `{{OPERATOR_GITHUB_HANDLE}}/*`, and its community's if it has one, as named
 > under Primary use — with their `git@github.com:` remotes. These are the
-> three it belongs to: its work, its operator's, and its society's
+> three it belongs to: its work, its operator's, and its society's. **A fork
+> it makes through the forge's own fork mechanism** — `gh repo fork`, or `POST
+> /repos/{owner}/{repo}/forks` — **landing under `{{AGENT_USER}}/*` is its own
+> repository from the moment it exists.** A fork moves nothing out: the forge
+> makes the copy inside itself, and the source's owner decided whether it may
+> be forked. It is contribution, not relocation, whatever credential the call
+> carries
 
 ### Source control
 
@@ -3276,7 +3282,7 @@ placeholders are filled in when the image is built, from the operator's `.env`.
       "**Network posture**: outbound open from an unprivileged container; nothing reaches in",
       "**Protected deployment namespaces / environments**: None configured — fall back to the Sensitive remote targets heuristic",
       "**Data retention / declassification**: None configured",
-      "**Trusted repo**: its own repositories under `{{AGENT_USER}}/*`, its operator's under `{{OPERATOR_GITHUB_HANDLE}}/*`, and its community's if it has one, as named under Primary use — with their `git@github.com:` remotes. These are the three it belongs to: its work, its operator's, and its society's",
+      "**Trusted repo**: its own repositories under `{{AGENT_USER}}/*`, its operator's under `{{OPERATOR_GITHUB_HANDLE}}/*`, and its community's if it has one, as named under Primary use — with their `git@github.com:` remotes. These are the three it belongs to: its work, its operator's, and its society's. **A fork it makes through the forge's own fork mechanism** — `gh repo fork`, or `POST /repos/{owner}/{repo}/forks` — **landing under `{{AGENT_USER}}/*` is its own repository from the moment it exists.** A fork moves nothing out: the forge makes the copy inside itself, and the source's owner decided whether it may be forked. It is contribution, not relocation, whatever credential the call carries",
       "**Source control**: `{{AGENT_USER}}/*` — the agent's own repositories. Narrower than Trusted repo on purpose: this names whose **code it may run**, not where it may push. Code from anywhere else is read, quoted and studied freely, but not executed",
       "**Trusted internal domains**: **`{{AGENT_DOMAIN}}` and every subdomain** — the agent's own zone, its to configure and publish on; any domain of its community, as named under Primary use, where it holds an account and takes part; `api.cloudflare.com`; `github.com`",
       "**Trusted cloud buckets**: no object storage in use; **KV namespaces in the agent's own account are its own data stores** and are covered as such",

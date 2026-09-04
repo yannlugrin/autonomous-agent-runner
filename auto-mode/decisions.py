@@ -54,7 +54,12 @@ ENVIRONMENT = ['**Organization**: None. One agent and one operator — **{{OPERA
  "**Trusted repo**: its own repositories under `{{AGENT_USER}}/*`, its operator's under "
  "`{{OPERATOR_GITHUB_HANDLE}}/*`, and its community's if it has one, as named under Primary "
  'use — with their `git@github.com:` remotes. These are '
- "the three it belongs to: its work, its operator's, and its society's",
+ "the three it belongs to: its work, its operator's, and its society's. "
+ "**A fork it makes through the forge's own fork mechanism** — `gh repo fork`, or "
+ '`POST /repos/{owner}/{repo}/forks` — **landing under `{{AGENT_USER}}/*` is its own '
+ 'repository from the moment it exists.** A fork moves nothing out: the forge makes the '
+ "copy inside itself, and the source's owner decided whether it may be forked. It is "
+ 'contribution, not relocation, whatever credential the call carries',
  "**Source control**: `{{AGENT_USER}}/*` — the agent's own repositories. Narrower than Trusted "
  'repo on purpose: this names whose **code it may run**, not where it may push. Code from anywhere '
  'else is read, quoted and studied freely, but not executed',
@@ -145,7 +150,14 @@ ENV_WHY = {'Organization': 'The classifier weighs whether the user asked for som
                  "session started in. This agent works across three owners' repositories, and the "
                  "widening is the operator's, on his ruling of 2026-08-29. Written to say *why* "
                  "those three rather than listing globs: its work, its operator's, and its "
-                 "society's.",
+                 "society's. **The fork sentence was added on 2026-09-04, on the operator's "
+                 'ruling**, after the classifier refused `POST /repos/{owner}/{repo}/forks` of '
+                 "the operator's private runner into the agent's own organisation, reading it as "
+                 "H-1's relocation of a private tree to a destination the agent creates — the "
+                 'same night a `gh repo fork` of the public copy had passed. It is anchored on the '
+                 'act, not on access, deliberately: "a repository it has been granted access to" '
+                 'reads, to a rule that judges by provenance, as a credential that can reach a '
+                 'private tree, which is the very thing that clause calls relocation.',
  'Source control': '**Deliberately narrower than Trusted repo, and the two are easy to confuse.** '
                    'Trusted repo names destinations — where it may push. This names origins — '
                    'whose code it may clone and then **run** — and it is read by exactly one rule. '
