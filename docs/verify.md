@@ -671,6 +671,36 @@ directory under it.
 Confirmed 2026-09-04 on 2.1.259 by timestamp: after three probe runs the newest
 file in either project directory was still older than the first of them.
 
+**On all ten invocations, and for a day on six.** The array is applied per
+`docker compose run`. It first went on the six that start a session and not on
+the four shell-only halves that create and remove each probe's fixture — those
+run `--entrypoint sh` in the checkout, with the agent's home. Nothing was filed
+by them and nothing could have been: they start no session, so there is no
+transcript to file.
+
+It was the agent that found it, reading `host/verify/` on 2026-09-04 after the
+probe transcripts were removed from its volume, and its argument is what decided
+this rather than a comment recording the exception. An invariant enforced by
+remembering to add an array to each new invocation fails silently in the
+direction that matters — the day a setup half needs a session rather than a
+shell, or a new probe is written by copying the setup block, the omission
+produces a working probe that files in the agent's directory with no symptom.
+On all ten, the rule is true by reading.
+
+Moving `HOME` on those four changes what `git status --porcelain` reads: it is
+the entrypoint that writes the global config, and `--entrypoint sh` skips it, so
+they had been reading whatever the volume's `~/.gitconfig` holds and now read
+none. The keys the entrypoint sets — `init.defaultBranch`, `push.default`,
+`user.name`, `user.email` — cannot change porcelain output, but the agent writes
+that file too, and a `core.excludesFile` there would. What settles it is the
+`checkout after:` line each half prints, which is why they print it.
+
+Measured 2026-09-04 on 2.1.259, both halves of both probes: `checkout before: 0
+change(s) already there`, `checkout after: clean`, and both verdicts `ok`. The
+risk only runs one way in any case — a global config that is no longer read
+cannot hide a file from `git status`, it can only stop hiding one — so a probe
+that has started leaving something behind reports it rather than going quiet.
+
 ### What was measured on the way, because none of it was obvious
 
 **`HOME` must exist before bootstrap runs.** `git config --global` writes

@@ -68,6 +68,14 @@ nonce() { printf 'probe-%s' "$RANDOM$RANDOM"; }
 # Working directories are untouched, so nothing changes about what any probe
 # measures: HOME decides the root, the working directory only the encoded
 # directory under it.
+#
+# Every `docker compose run` below carries it, the shell-only setup and cleanup
+# halves included. Those start no session and so file no transcript, and for a
+# day they were the four invocations that did not have it — which made the rule
+# above true only for whoever remembered to add the array. It is on all ten so
+# that the invariant holds by reading instead, because the way it breaks is
+# silent: a setup half that grows a session, or a new probe copied from one,
+# files in the agent's directory with nothing to say so.
 # see docs/verify.md#a-probe-does-not-file-in-the-agents-directory
 
 RUNNER_TEST_ENV=(
@@ -289,6 +297,7 @@ probe_tool="probe-$probe_nonce.py"
 
 setup=$(docker compose run --rm -T \
     -e PROBE_DIR="$AGENT_REPO_DIR" -e PROBE_TOOL="$probe_tool" -e PROBE_NONCE="$probe_nonce" \
+    "${RUNNER_TEST_ENV[@]}" \
     --entrypoint sh agent -c '
     # No apostrophes in this block, as above.
     cd "$PROBE_DIR" 2>/dev/null || { echo "NO CHECKOUT at $PROBE_DIR"; exit 0; }
@@ -331,6 +340,7 @@ fi
 
 cleanup=$(docker compose run --rm -T \
     -e PROBE_DIR="$AGENT_REPO_DIR" -e PROBE_TOOL="$probe_tool" \
+    "${RUNNER_TEST_ENV[@]}" \
     --entrypoint sh agent -c '
     cd "$PROBE_DIR" 2>/dev/null || { echo "NO CHECKOUT"; exit 0; }
     rm -f "tools/$PROBE_TOOL"
@@ -370,6 +380,7 @@ probe_nonce=$(nonce)
 
 setup=$(docker compose run --rm -T \
     -e PROBE_DIR="$AGENT_REPO_DIR" \
+    "${RUNNER_TEST_ENV[@]}" \
     --entrypoint sh agent -c '
     # No apostrophes in this block, as above.
     cd "$PROBE_DIR" 2>/dev/null || { echo "NO CHECKOUT at $PROBE_DIR"; exit 0; }
@@ -414,6 +425,7 @@ fi
 cleanup=$([ "${setup%%|*}" = MADE ] || { echo "nothing written"; exit 0; }
     docker compose run --rm -T \
     -e PROBE_DIR="$AGENT_REPO_DIR" \
+    "${RUNNER_TEST_ENV[@]}" \
     --entrypoint sh agent -c '
     cd "$PROBE_DIR" 2>/dev/null || { echo "NO CHECKOUT"; exit 0; }
     rm -f .claude/settings.local.json
