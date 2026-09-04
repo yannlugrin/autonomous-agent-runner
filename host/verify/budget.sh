@@ -43,4 +43,32 @@ else
     verdict FAIL "bad threshold" "ANSWERED ANYWAY — the thresholds are not being read"
 fi
 
+
+# --- nothing left ---
+# That the line the exhaustion floor reads is still printed. The floor is not
+# the budget: it refuses a session against a window at 100% whether or not the
+# guard is armed, and it reads one line of `--env` output to do it. If that
+# line stopped being printed — a rename, a refactor — BUDGET_EXHAUSTED stays
+# empty, the floor is simply gone, and nothing anywhere says so. `--selftest`
+# proves `exhausted()` the function; this proves the line.
+# see docs/verify.md#nothing-left
+
+# Only on a reading that reached a verdict. The tool deliberately prints no
+# EXHAUSTED line where it could not read — an unreadable account is not an
+# exhausted one — so a host without a usage-reading login would otherwise fail
+# this for doing exactly the right thing.
+env_out=$(python3 ./image/claude-usage.py --env 2>/dev/null)
+case $? in
+0|75)
+    if printf '%s' "$env_out" | grep -q '^EXHAUSTED='; then
+        verdict ok "nothing left" "the --env output still carries EXHAUSTED=, which the floor reads"
+    else
+        verdict FAIL "nothing left" "NO EXHAUSTED LINE — the floor that refuses an exhausted window reads nothing"
+    fi
+    ;;
+*)
+    verdict LOOK "nothing left" "usage could not be read here, so the line the floor reads was not checked"
+    ;;
+esac
+
 echo

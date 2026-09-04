@@ -18,17 +18,11 @@ import re
 import subprocess
 import sys
 
-
 # Required, not defaulted: a fallback naming some other agent's volume reads
-# as "no sessions yet" rather than as a mistake.
-def required(name):
-    value = os.environ.get(name, "")
-    if not value:
-        sys.exit(f"{name} not set — run this through 'just', which derives it")
-    return value
-
-
-VOLUME = required("AGENT_VOLUME")
+# as "no sessions yet" rather than as a mistake. Checked where they are used
+# rather than at import, so that a caller's --selftest, which touches no
+# volume, can run without an environment around it.
+VOLUME = os.environ.get("AGENT_VOLUME", "")
 IMAGE = os.environ.get("RUNNER_EXTRACT_IMAGE", "alpine:3")
 
 # Claude Code files a transcript under the working directory it was started in,
@@ -39,7 +33,13 @@ IMAGE = os.environ.get("RUNNER_EXTRACT_IMAGE", "alpine:3")
 # deliberately not sessions, and the archive filters on the same directory for
 # the same reason.
 # see docs/verify.md#a-probe-does-not-file-in-the-agents-directory
-PROJECT = required("AGENT_PROJECT_DIR")
+PROJECT = os.environ.get("AGENT_PROJECT_DIR", "")
+
+
+def required():
+    for name, value in (("AGENT_VOLUME", VOLUME), ("AGENT_PROJECT_DIR", PROJECT)):
+        if not value:
+            sys.exit(f"{name} not set — run this through 'just', which derives it")
 
 
 class Transcript:
@@ -115,6 +115,7 @@ def read(since, session="", subagents=True):
     volume is there or the docker daemon is, and neither is a question this
     can answer usefully.
     """
+    required()
     proc = subprocess.run(
         [
             "docker",

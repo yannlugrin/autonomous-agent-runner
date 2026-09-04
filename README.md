@@ -89,7 +89,8 @@ the agent's own — the Terms permit one alongside a personal account, used
 only for running a machine — or, simpler, a private repository of your own
 with a **write deploy key** on it. Push the example as its first commit: a
 `CLAUDE.md` with a session-start routine — an unattended session is opened
-with *"Run the session-start routine in CLAUDE.md"* and nothing else —
+with *"Run the session-start routine in CLAUDE.md"*, and nothing else unless
+the run before it was stopped —
 `SELF.md`, `JOURNAL.md`, a `.claude/settings.json` with no `permissions`
 block, and `tools/`, which one permission rule names by path. Its README
 says what the runner requires of each. The container generates the ssh key
@@ -296,9 +297,12 @@ unattended run.
     just run
 
 One unattended session, whole: the opening message asking for the
-session-start routine and nothing else, the session, the backup push at
-its end, and the collection afterwards. `just run --listen` renders it as
-it is written.
+session-start routine, the session, the backup push at its end, and the
+collection afterwards. `just run --listen` renders it as it is written.
+
+When the run before it did not end cleanly, the opening message instead
+carries what that session was doing — see **After a session is stopped**
+below.
 
     just collect
 
@@ -336,7 +340,32 @@ shows every option with what each one does.**
 | `just test-container` | the same container with **no volume** — an empty home every run, for rehearsing the morning the volume is gone. Never where the agent runs |
 | `just listen` | the running session from its first line, live — or, with nothing running, the tail of the last one. `--all` lifts the read ceiling, `--wait` waits for the next, `--live` never closes, `--remote` serves the live view to any device on the tailnet |
 | `just read <n\|id>` | one transcript whole, and the only reader there is. A row number from the last listing, or a session or subagent id; `--subagent K`, `--full` |
-| `just status` | what is running and what it has spent, or when the last one ended; whether scheduling is on; what the budget gate sees; how many transcripts the collection gate is holding |
+| `just status` | what is running and what it has spent, or when the last one ended and whether it ended cleanly; whether scheduling is on; what the budget gate sees; how many transcripts the collection gate is holding |
+
+### After a session is stopped
+
+A session can end without reaching its own end: the account's usage limit stops
+it, the API is down, the container dies, the host reboots. The runner records
+how every unattended run ended — `terminal_reason` out of Claude Code's own
+print-mode result, `completed` being the only clean one — and the next session
+that actually runs opens with what the stopped one was doing: its last words,
+the files it wrote, how many commits it ran, the tools that failed, and where
+its transcript is. The message says in words that this is a record and not
+instructions.
+
+The record is replaced only when a session actually starts, so a stop survives
+however many wake-ups stand down in between — which matters, because a usage
+limit is followed by hours of them. `just chat` opens with it too. Nothing is
+blocked at any point, and a run that never became a session at all leaves
+nothing to hand over and says nothing.
+
+Two settings follow from it. `autoContinueAtUsageLimit` is off in managed
+settings, so a limit ends the session instead of parking the container for the
+rest of the window; and a usage window with **nothing left** — 100% used, not
+merely past the agent's share — refuses a session whether or not
+`ACCOUNT_BUDGET_GUARD` is armed. `docs/sessions.md` and `docs/budget.md` carry
+the measurements.
+
 
 ### archive
 

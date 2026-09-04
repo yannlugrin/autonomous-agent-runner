@@ -84,7 +84,10 @@ def from_lock_library():
         # How the last unattended run ended, in the same sample as the rest:
         # asked separately it could report a stop that a session started since
         # has already consumed.
-        printf 'last_run: %s\n' "$(run_record_verdict "$([ -n "$c" ] && echo yes || echo no)")"
+        running=no
+        [ -n "$c" ] && [ "$(printf '%s' "$c" | cut -f1)" = "$(run_record_field container)" ] \
+            && running=yes
+        printf 'last_run: %s\n' "$(run_record_verdict "$running")"
     """
     code, out, err = run(["bash", "-c", script, "--", ROOT])
     if code != 0 and not out:
@@ -320,6 +323,10 @@ def main():
         # beside it, so the renderer never prints 16666 hours.
         "idle_minutes": int(idle) if (idle or "").isdigit() and int(idle) < 999999 else None,
         "forgotten": (idle or "").isdigit() and int(idle) >= 999999,
+        # `clean`, `none`, `running`, or `stopped <why>`. Null rather than the
+        # word when the sample could not answer, so the renderer never has to
+        # tell a verdict from a failure to reach one.
+        "run": lock.get("last_run") or None,
     }
 
     code, out, err = run(["just", "schedule", "--state"], timeout=60)

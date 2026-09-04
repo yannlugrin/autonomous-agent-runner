@@ -312,7 +312,8 @@ run — and two files keyed on one moment is the second one going stale.
 
 The other half of the alarm is the exit trap in `run.sh`: any status but 0, 2
 and 75 raises a toast. 0 worked; 2 is a usage error, which only a terminal can
-produce; 75 is the routine stand-down — cooldown, held lock, over budget —
+produce; 75 is the routine stand-down — cooldown, held lock, over budget, a
+window with nothing left —
 which happens dozens of times a day, and toasting it would teach anyone to
 dismiss the toast without reading it.
 

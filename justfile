@@ -117,9 +117,9 @@ export RUNNER_CONFIG_LOCK := env_var_or_default("RUNNER_CONFIG_LOCK", "/tmp" / a
 
 # How the last unattended run ended, and — until a session actually starts —
 # that nobody has been told about it yet. It also holds which wedged session
-# has already been toasted, which was a file of its own until 2026-09-04: one
-# record per run, keyed on that run's start, is one fewer thing to go stale.
+# has already been toasted: one record per run, keyed on that run's start.
 # see docs/sessions.md#recovering-a-session-that-was-stopped
+# see docs/schedule.md#the-wedge-alarm
 export RUNNER_LAST_RUN := env_var_or_default("RUNNER_LAST_RUN", runner_cache / "last-run")
 
 # Where cron writes what an unattended run printed. Named in the crontab line

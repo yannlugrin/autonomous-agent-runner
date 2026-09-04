@@ -89,7 +89,8 @@ this order:
    record's verdicts and the recovery projection among them.
 4. `image-commit.sh` — what the image says it was built from.
 5. `claude-code.sh` — which Claude Code answers inside it.
-6. `budget.sh` — the budget guard as this host has it configured.
+6. `budget.sh` — the budget guard as this host has it configured, and the
+   floor that refuses a window with nothing left.
 7. `session.sh` — the probes that need a real session.
 8. `prompt.sh` — the system prompt render.
 
@@ -595,23 +596,75 @@ vouch for.
 Proved by breaking it: with `api_error` added to the clean branch, the probe
 reports `WRONG VERDICT — an api_error run is not a stop`.
 
+## Recovery shapes
+
+`recovery shapes` runs `host/session/session-recovery.py --selftest`: the record
+shapes a transcript actually throws — a `message` that is a string, a `text`
+part that is not, an `input` that is not a dict, an id that is not hashable, a
+timestamp that is a number — and the byte ceiling against an input built to
+blow it. No volume, no container, no credential, the same reasoning as
+`claude-usage.py --selftest`.
+
+One odd record used to cost the whole projection, and `run.sh` can only report
+that as "no extraction could be produced": a recovery start that announces a
+stop and then says nothing about it. Proved by breaking it — with the
+per-record guard removed, the selftest reports `an odd record escaped
+gather(): AttributeError` and exits 1 rather than dying on a stack trace.
+
+The ceiling case is the one worth understanding. Every quoted passage is capped
+at `PASSAGE_BYTES` and every list at four items, so the only thing that can
+push the whole past `DEFAULT_BYTES` is a list item with no cap of its own — a
+pathological file path. That is what `trim()` is for, and what the selftest
+plants.
+
 ## Recovery size
 
-`recovery size` runs `host/session/session-recovery.py` over the newest
-transcript in the volume and reports what it rendered. Not a fixture, because
-what fails here is a transcript shape that moved under an upgrade, and only the
-real corpus carries those.
+`recovery size` runs the projection over the newest transcript in the volume,
+not a fixture, because what fails here is a transcript shape that moved under
+an upgrade and only the real corpus carries those.
 
-The failure it is for has no symptom of its own: a first message that grew to
-hundreds of kilobytes is paid once per recovery, silently, and nothing errors.
-The ceiling is 8 KB, twice the projection's own 4 KB cap, so this fails when
-the cap has stopped working rather than whenever a session was talkative.
-Measured on this installation: 807 bytes, and 1.0 to 1.4 KB against the three
-largest transcripts in the archive, which are 1.5 MB each.
+**The assertion is on content, not on size.** A projection that rendered
+nothing but its head line is exactly what a moved shape produces, and it is a
+perfectly small number of bytes — so a size check alone passes in the one case
+this exists for. Measured: with the ceiling as the only test, a head-only
+projection reported `ok  82 bytes`. Every real session says something, so the
+absence of `Its last words:` is the signal that the reader stopped reading.
+
+The byte ceiling stays beside it, at twice the projection's own cap, but it is
+the weaker half: `recovery shapes` is what actually proves the cap, against an
+input built to exceed it.
 
 `LOOK`, not `FAIL`, when there is nothing to project from: a volume where
 nothing has run yet is a state, not a defect.
 
+## Envelope read
+
+`envelope read` takes the result of the session already run for the model check
+— so it costs nothing — and puts it through `run_envelope_fields`, the parser
+`run.sh` uses, asserting `terminal_reason=completed`.
+
+Everything else about the recovery start is proved against planted fixtures,
+and a fixture cannot notice that the real binary stopped spelling the envelope
+the way the fixtures assume. Measured: a pretty-printed envelope makes every
+run read `stopped none`, because the parser takes the last line beginning with
+a brace. The direction is noisy rather than silent — every session would open
+with a recovery it did not need — but `just verify` would stay green either
+way, since the `model` check's own `jq` parses both shapes happily. A Claude
+Code bump is exactly when this happens.
+
+It sources `run-record.sh` in a subshell against a scratch `RUNNER_LAST_RUN`: a
+probe must not write over the record a real run left behind.
+
+## Nothing left
+
+`nothing left` asserts that `claude-usage.py --env` still prints an `EXHAUSTED=`
+line. That line is the whole input to the floor which refuses a session against
+a window at 100%, armed or not. If it stopped being printed — a rename, a
+refactor — `BUDGET_EXHAUSTED` stays empty, the floor is gone, and nothing
+anywhere says so; the next session simply starts, as it always did.
+
+`--selftest` proves `exhausted()`, the function. This proves the line, which is
+the part a caller depends on and the part a refactor moves.
 
 ## The budget guard, on this host
 

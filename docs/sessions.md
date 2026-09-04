@@ -636,7 +636,8 @@ and is read on no other day. `host/schedule/notify.sh` is silent on a terminal,
 so a run typed by hand is unchanged. See docs/schedule.md.
 
 0 is a session that worked. 2 is a usage error, which only a terminal can
-produce. 75 is the routine stand-down — cooldown, held lock, over budget —
+produce. 75 is the routine stand-down — cooldown, held lock, over budget, a
+window with nothing left —
 dozens of times a day, and toasting it would teach anyone to dismiss the toast
 without reading it. Everything else is worth being pulled away for: 69 is a
 docker daemon that did not answer, 78 is bootstrap regressed, and the rest is
@@ -723,6 +724,29 @@ hours of wake-ups that refuse on the same limit. There is no second file saying
 
 **Nothing blocks.** An unrecognised ending does not hold the schedule; it
 becomes the next session's context and the session runs. Ruled 2026-09-04.
+
+**A run that never became a session hands over nothing.** The projection exits
+3 when no transcript newer than that run exists — the container died in
+bootstrap, a missing key, an entrypoint that could not clone — and the next
+session opens normally. There is nothing to recover from and nothing it could
+do about it; the failure reached the operator when it happened, by the exit
+trap's toast and the run log.
+
+**`just chat` opens with it too, appended and under the runner's own marker.**
+The operator walking in after a failure is the same situation, and the agent has
+the same no way of knowing. Their words come first because the sender is the
+first thing read, and the record cannot go behind their bracket: that bracket
+is what rule 1 treats as direction from them, and a record in their voice they
+never wrote is the fault rule 2 exists to prevent. Not on `--continue`, which
+is a thread already underway rather than a beginning. It does not consume the
+record — only a session that actually starts unattended replaces it — so the
+next scheduled run is told as well, which is right, because that is a different
+session with no memory of this one.
+
+**The latch is one deep, and that is a known limit.** A stop followed by a run
+that fails before doing anything replaces the record, and the first stop's
+context is gone. The exhaustion floor makes the common cause of it rare, and no
+apparatus is built for the rest without a measured case.
 
 **The wedge mark lives here too.** Which session start has already been toasted
 is one run's fact, and the record already belongs to that run — see

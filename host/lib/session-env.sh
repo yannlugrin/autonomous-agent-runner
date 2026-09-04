@@ -87,9 +87,11 @@ case "$_env_cooldown" in ''|*[!0-9]*) _env_cooldown=0 ;; esac
 BUDGET_VERDICT="the host budget guard is off"
 BUDGET_STATUS=0
 # The gated windows with nothing left at all, comma-separated, or empty. Empty
-# and absent are different: the tool prints the line on every path that reached
-# a verdict and none where it could not read, so an unset variable here means
-# there was no reading rather than that both windows have room.
+# covers two states deliberately — nothing is exhausted, and there was no
+# reading at all — because neither is a reason to refuse: the tool prints no
+# EXHAUSTED line on the path where it could not read, and a floor that stood
+# sessions down on an unreadable account would stop every session on a host
+# that cannot read usage.
 BUDGET_EXHAUSTED=""
 # Every ACCOUNT_USAGE_* the tool printed, already spelled as `-e NAME=value`.
 BUDGET_ENV=()
@@ -179,11 +181,6 @@ SESSION_ENV=(
 # do not move with it.
 SESSION_ENV+=(${BUDGET_ENV[@]+"${BUDGET_ENV[@]}"})
 
-# Whether this host would refuse a session on budget — normalised to exactly
-# `true` or `false`, never absent and never empty. Told even when it is armed
-# and the run bypassed it: `--ignore-budget` does not disarm the guard, it
-# ignores the answer, so a ratio over 100 beside `true` is a session that
-# started because someone said so.
 # --- nothing left ---
 # A separate refusal from the budget, and it does not ask whether the guard is
 # armed. The guard shares out an allowance between the operator and the agent, and
@@ -207,4 +204,9 @@ if [ -n "$BUDGET_EXHAUSTED" ]; then
 fi
 
 
+# Whether this host would refuse a session on budget — normalised to exactly
+# `true` or `false`, never absent and never empty. Told even when it is armed
+# and the run bypassed it: `--ignore-budget` does not disarm the guard, it
+# ignores the answer, so a ratio over 100 beside `true` is a session that
+# started because someone said so.
 SESSION_ENV+=(-e "ACCOUNT_BUDGET_GUARD=$BUDGET_GUARD_ARMED")

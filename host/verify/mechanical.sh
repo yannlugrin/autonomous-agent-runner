@@ -500,9 +500,8 @@ verdicts_from < <(docker compose run --rm -T --entrypoint sh agent -c '
 # of `stopped` for a clean end is a recovery message on every ordinary session.
 # The envelope's field names are the part that moves under an upgrade, and the
 # api_error case is the one that catches it: `subtype` reads "success" on a run
-# that failed — measured 2026-09-04 on 2.1.260 — so a check keyed on the
-# obvious field would pass here and be wrong in production.
-# see docs/verify.md#run-record
+# that failed, so a check keyed on the obvious field would pass here and be
+# wrong in production.  see docs/verify.md#run-record
 
 wrong=$(
     scratch=$(mktemp -d)
@@ -532,6 +531,17 @@ wrong=$(
         printf 'not json at all\n' > "$scratch/junk"
         run_record_close 2 "$scratch/junk"
         [ "$(run_record_verdict no)" = "stopped none" ] || say "junk does not fail toward recovery"
+
+        # A close naming another run's container must not touch this record.
+        # That is the --force case: a second run opens its own on top of the
+        # wedged one's, and the wedged one closing later would otherwise report
+        # the forced session, still running, as stopped.
+        run_record_open probe-container
+        run_record_close 0 "$scratch/ok" some-other-container
+        [ "$(run_record_verdict no)" = "stopped killed" ] \
+            || say "a close from another container was allowed to land"
+        run_record_close 0 "$scratch/ok" probe-container
+        [ "$(run_record_verdict no)" = clean ] || say "a close from the right container did not land"
     )
     rm -rf "$scratch"
 )
@@ -543,24 +553,48 @@ else
 fi
 
 
+# --- the shapes a transcript throws ---
+# The projection's own selftest: the record shapes it could choke on, and the
+# byte ceiling against an input built to blow it. No volume, no container, no
+# credential, so this proves the arithmetic wherever the file is — the same
+# reasoning as claude-usage.py's selftest, and it runs at build time for the
+# same reason.
+#
+# One odd record used to cost the whole projection, and `run.sh` can only
+# report that as "no extraction could be produced": a recovery start that
+# announces a stop and then says nothing about it.
+# see docs/verify.md#recovery-shapes
+
+if out=$(host/session/session-recovery.py --selftest 2>&1); then
+    verdict ok "recovery shapes" "${out#session-recovery: }"
+else
+    verdict FAIL "recovery shapes" "${out//$'\n'/; }"
+fi
+
+
 # --- what a recovery start would say ---
 # The projection over this volume's newest transcript. Not a fixture, because
-# what fails here is a transcript shape that moved under an upgrade and only
-# the real corpus carries those. A first message that grew to hundreds of
-# kilobytes is not an error anywhere: it is paid for once per recovery, in
-# silence. The ceiling here is twice the projection's own, so this fails when
-# the cap has stopped working rather than whenever a session was talkative.
+# what fails here is a transcript shape that moved under an upgrade, and only
+# the real corpus carries those.
+#
+# The assertion is on CONTENT, not only on size. A projection that rendered
+# nothing but its head line is what a moved shape produces, and it is a
+# perfectly small number of bytes — so a size check alone passes in the very
+# case this exists for. Every real session says something, so "Its last words"
+# is the line whose absence means the reader stopped reading.
 # see docs/verify.md#recovery-size
 
 if projected=$(host/session/session-recovery.py --since 0 --reason api_error 2>&1); then
     projected_bytes=$(printf '%s' "$projected" | wc -c)
-    if [ "$projected_bytes" -eq 0 ]; then
-        verdict FAIL "recovery size" "EMPTY — a stopped session would be announced with nothing after it"
+    if ! printf '%s' "$projected" | grep -q "Its last words:"; then
+        verdict FAIL "recovery size" "HEAD ONLY — $projected_bytes bytes and no assistant text; the transcript shape has moved"
     elif [ "$projected_bytes" -gt 8192 ]; then
         verdict FAIL "recovery size" "$projected_bytes bytes — past its own ceiling, so the cap is not holding"
     else
         verdict ok "recovery size" "$projected_bytes bytes from the newest transcript in the volume"
     fi
+elif [ $? -eq 3 ]; then
+    verdict LOOK "recovery size" "the newest transcript is older than this check asked for — nothing has run in this volume"
 else
     verdict LOOK "recovery size" "could not project from the volume — ${projected%%$'\n'*}"
 fi

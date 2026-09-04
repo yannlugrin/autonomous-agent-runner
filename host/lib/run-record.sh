@@ -57,16 +57,22 @@ run_record_open() {
     {
         printf 'started=%s\n' "$(date +%s)"
         printf 'container=%s\n' "$1"
-    } > "$RUNNER_LAST_RUN" 2>/dev/null || true
+    } 2>/dev/null > "$RUNNER_LAST_RUN" || true
 }
 
+# The third argument is this run's container name, and a record naming another
+# is left alone. Under --force a second run opens its own record on top of the
+# wedged one's; when the wedged one finally dies, its close would append an
+# ending to a record that is not its own, and the next wake-up would read the
+# forced session — still running — as stopped.
 run_record_close() {
-    local status="$1" envelope="${2:-}"
+    local status="$1" envelope="${2:-}" name="${3:-}"
+    [ -z "$name" ] || [ "$(run_record_field container)" = "$name" ] || return 0
     {
         printf 'ended=%s\n' "$(date +%s)"
         printf 'status=%s\n' "$status"
         run_envelope_fields "$envelope"
-    } >> "$RUNNER_LAST_RUN" 2>/dev/null || true
+    } 2>/dev/null >> "$RUNNER_LAST_RUN" || true
 }
 
 
@@ -93,7 +99,7 @@ run_envelope_fields() {
     fi
     printf '%s' "$line" | jq -r '
         "reason=\((.terminal_reason // "none") | tostring | gsub("[^A-Za-z0-9_-]"; ""))",
-        (.is_error         | select(. != null) | "is_error=\(.)"),
+        (.is_error         | select(. != null) | "is_error=\(. | tostring | gsub("[^A-Za-z0-9]"; ""))"),
         (.api_error_status | select(. != null) | "api_error_status=\(. | tostring | gsub("[^0-9]"; ""))"),
         (.session_id       | select(. != null and . != "") | "session=\(. | gsub("[^A-Za-z0-9-]"; ""))")
     ' 2>/dev/null || printf 'reason=none\n'
@@ -144,13 +150,12 @@ run_record_verdict() {
 
 
 # --- the wedge mark ---
-# What RUNNER_WEDGE_NOTIFIED used to be, and the same fact: which session start
-# has already been toasted. It lives here because the record already belongs to
-# that run and already holds its start — two files keyed on one moment is the
-# second one going stale.  see docs/schedule.md#the-wedge-alarm
+# Which session start has already been toasted, so a hang reports once rather
+# than once a minute. It lives here because the record already belongs to that
+# run and already holds its start.  see docs/schedule.md#the-wedge-alarm
 
 run_record_wedge_seen() { [ "$(run_record_field wedged)" = "$1" ]; }
 
 run_record_wedge_mark() {
-    printf 'wedged=%s\n' "$1" >> "$RUNNER_LAST_RUN" 2>/dev/null || true
+    printf 'wedged=%s\n' "$1" 2>/dev/null >> "$RUNNER_LAST_RUN" || true
 }
