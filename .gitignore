@@ -2,6 +2,11 @@
 # outside this repository.
 .env
 
+# Local claude configuration, which is not portable and should not be committed.
+.claude/settings.local.json
+.claude/worktrees
+CLAUDE.local.md
+
 # Tool caches.
 .mypy_cache/
 __pycache__/
