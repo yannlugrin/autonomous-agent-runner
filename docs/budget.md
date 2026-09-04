@@ -120,6 +120,72 @@ than averaging over it. A window that grew *shorter* is invisible, and is the
 reason this is re-probed after every Claude Code upgrade rather than trusted.
 
 
+## The limit stops the session
+
+Claude Code's default, when a claude.ai usage limit stops a session, is to wait
+for the reset and carry on. At a keyboard that is the right behaviour. On a
+schedule it is the worst one: the container holds the session lock for whatever
+the window has left, every wake-up behind it stands down in silence, and the
+state is indistinguishable from a session that is working. That is the wedge
+alarm's case, and the wedge alarm can only report it.
+
+So `autoContinueAtUsageLimit` is **`false`** in managed settings, set
+2026-09-04. The limit ends the session, and what it was doing is handed to the
+next one — see [`docs/sessions.md`](sessions.md), under "Recovering a session
+that was stopped".
+
+**Managed rank is what makes it hold, and it also removes the toggle.**
+Measured on 2.1.260: the key is in the managed-settings path list, and `/config`
+offers the setting only while it is unset or set in user settings, so a value
+here takes effect and greys the toggle out. Its unset default is not a flat
+`true` — it is derived from a key-presence scan, which is reason enough to set
+it explicitly rather than trust a default to stay what it is.
+
+**How a stopped session is told from a finished one.** Not from the transcript.
+`host/session/run.sh` asks for the print-mode result envelope
+(`--output-format json`) and reads `terminal_reason` out of it. Measured
+2026-09-04 on 2.1.260, both sides:
+
+    # a run that fails. Throwaway container, no volume, a deliberately invalid
+    # token — vault-env.sh leaves it alone, because an already-set value wins.
+    docker run --rm -e CLAUDE_CODE_OAUTH_TOKEN=invalid-token-for-a-probe \
+        --entrypoint claude <image> \
+        -p --output-format json 'Reply with the single word: ok.'; echo "EXIT=$?"
+
+    terminal_reason "api_error"   is_error true    api_error_status 401   EXIT=1
+
+    # a run that succeeds, on a valid login
+    claude -p --output-format json 'Reply with the single word: ok.'
+
+    terminal_reason "completed"   is_error false
+
+Both report `subtype: "success"`.
+
+**`subtype` is not the field.** It reads `success` on a run that failed —
+identical across the two cases above — so a classifier keyed on it would call
+every API-error stop a clean end, in the words a correct one uses. It is the
+obvious field and the wrong one.
+
+**`terminal_reason` decides; `is_error` is evidence.** `is_error` was right in
+the probe and is still not the decider. It is a summary: the binary groups
+`completed`, `max_turns` and `background_requested` together as not-an-error,
+so a session that stopped at its turn limit — one worth recovering — would read
+as clean. And it fails the wrong way when absent: an absent `is_error` reads as
+falsy, reads as no error, and loses the stop, where an absent `terminal_reason`
+is simply not `completed` and routes to recovery. `is_error` and
+`api_error_status` are recorded beside it so a first-of-its-kind ending can be
+diagnosed, and they decide nothing.
+
+**What this does not answer.** Whether a real usage-limit stop reports
+`terminal_reason: "blocking_limit"` — a value the binary carries, distinct from
+`api_error` — or an `api_error` with `errorKind: "rate_limit"`. There is no
+specimen: across all 533 sessions on the archive's `sessions` branch, not one
+ends on an API error record at all. The rule does not depend on the answer,
+since anything that is not `completed` routes to recovery; only the wording of
+the message for that case does. Re-run both probes above after every Claude
+Code upgrade — a version bump is exactly when a silent mechanism stops working.
+
+
 ## The name changed on 2026-08-25
 
 It was called `usage-gate.py`. The rename to `claude-usage.py` is the whole
