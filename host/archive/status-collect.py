@@ -71,6 +71,7 @@ def from_lock_library():
         set -uo pipefail
         cd "$1" || exit 1
         . host/lib/session-lock.sh
+        . host/lib/run-record.sh
         c=$(session_container)
         printf 'container: %s\n' "$(printf '%s' "$c" | tr '\t' ' ')"
         if [ -n "$c" ]; then
@@ -80,6 +81,10 @@ def from_lock_library():
         printf 'idle_minutes: %s\n' "$(session_idle_minutes 2>/dev/null)"
         printf 'ended_at: %s\n' "$(session_ended_at || echo '')"
         printf 'other: %s\n' "$(service_container)"
+        # How the last unattended run ended, in the same sample as the rest:
+        # asked separately it could report a stop that a session started since
+        # has already consumed.
+        printf 'last_run: %s\n' "$(run_record_verdict "$([ -n "$c" ] && echo yes || echo no)")"
     """
     code, out, err = run(["bash", "-c", script, "--", ROOT])
     if code != 0 and not out:

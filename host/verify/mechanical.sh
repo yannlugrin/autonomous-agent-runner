@@ -489,4 +489,81 @@ verdicts_from < <(docker compose run --rm -T --entrypoint sh agent -c '
         || echo "FAIL|guard secrets|DID NOT DENY — the content layer is not reading staged changes"
 ')
 
+
+# --- how a run ended ---
+# The verdict a stopped run produces, against fixtures, because no probe can
+# make a session stop. It runs on the host with RUNNER_LAST_RUN pointed at a
+# scratch file, so nothing here touches the real record.
+#
+# Every branch of this is silent when it is wrong. A verdict of `clean` for a
+# stop is a recovery that never happens and a session that never notices; one
+# of `stopped` for a clean end is a recovery message on every ordinary session.
+# The envelope's field names are the part that moves under an upgrade, and the
+# api_error case is the one that catches it: `subtype` reads "success" on a run
+# that failed — measured 2026-09-04 on 2.1.260 — so a check keyed on the
+# obvious field would pass here and be wrong in production.
+# see docs/verify.md#run-record
+
+wrong=$(
+    scratch=$(mktemp -d)
+    (
+        export RUNNER_LAST_RUN="$scratch/last-run"
+        # shellcheck source=SCRIPTDIR/../lib/run-record.sh
+        . host/lib/run-record.sh
+        say() { printf '%s; ' "$1"; }
+
+        [ "$(run_record_verdict no)" = none ] || say "no record does not read as none"
+
+        run_record_open probe-container
+        [ "$(run_record_verdict no)" = "stopped killed" ] || say "an open record is not a stop"
+        [ "$(run_record_verdict yes)" = running ] || say "an open record is a stop while a session runs"
+
+        printf '{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed"}\n' > "$scratch/ok"
+        run_record_close 0 "$scratch/ok"
+        [ "$(run_record_verdict no)" = clean ] || say "a completed run is not clean"
+
+        run_record_open probe-container
+        printf '{"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error","api_error_status":401}\n' > "$scratch/bad"
+        run_record_close 1 "$scratch/bad"
+        [ "$(run_record_verdict no)" = "stopped api_error" ] || say "an api_error run is not a stop"
+        [ "$(run_record_field api_error_status)" = 401 ] || say "the api status is not kept"
+
+        run_record_open probe-container
+        printf 'not json at all\n' > "$scratch/junk"
+        run_record_close 2 "$scratch/junk"
+        [ "$(run_record_verdict no)" = "stopped none" ] || say "junk does not fail toward recovery"
+    )
+    rm -rf "$scratch"
+)
+
+if [ -z "$wrong" ]; then
+    verdict ok "run record" "a stop, a clean end, a killed run and junk each read as themselves"
+else
+    verdict FAIL "run record" "WRONG VERDICT — ${wrong%; }"
+fi
+
+
+# --- what a recovery start would say ---
+# The projection over this volume's newest transcript. Not a fixture, because
+# what fails here is a transcript shape that moved under an upgrade and only
+# the real corpus carries those. A first message that grew to hundreds of
+# kilobytes is not an error anywhere: it is paid for once per recovery, in
+# silence. The ceiling here is twice the projection's own, so this fails when
+# the cap has stopped working rather than whenever a session was talkative.
+# see docs/verify.md#recovery-size
+
+if projected=$(host/session/session-recovery.py --since 0 --reason api_error 2>&1); then
+    projected_bytes=$(printf '%s' "$projected" | wc -c)
+    if [ "$projected_bytes" -eq 0 ]; then
+        verdict FAIL "recovery size" "EMPTY — a stopped session would be announced with nothing after it"
+    elif [ "$projected_bytes" -gt 8192 ]; then
+        verdict FAIL "recovery size" "$projected_bytes bytes — past its own ceiling, so the cap is not holding"
+    else
+        verdict ok "recovery size" "$projected_bytes bytes from the newest transcript in the volume"
+    fi
+else
+    verdict LOOK "recovery size" "could not project from the volume — ${projected%%$'\n'*}"
+fi
+
+
 echo

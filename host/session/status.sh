@@ -14,6 +14,7 @@ fi
 
 host/lib/docker-up.sh || exit $?
 source host/lib/session-lock.sh
+source host/lib/run-record.sh
 
 
 # --- is a session running ---
@@ -47,6 +48,16 @@ else
     # recipes answering "is anything running?" differently is a bug you only
     # find by holding them side by side.
     session_absent_line
+    # A stop nobody has been told about yet, which is the state worth seeing
+    # here: it may sit for hours while wake-ups stand down on the same limit
+    # that caused it. Said only when there is one — a clean end is every other
+    # day and a line saying so would be a line nobody reads.
+    # see docs/sessions.md#recovering-a-session-that-was-stopped
+    last_run=$(run_record_verdict no)
+    case "$last_run" in
+    stopped*) printf '  The last run was stopped (%s). The next session opens with what it was doing.\n' \
+                  "${last_run#stopped }" ;;
+    esac
     # A shell or a probe is not a session and holds no lock, but "nothing is
     # running" while you are sitting in a container is a misleading answer.
     other=$(service_container)

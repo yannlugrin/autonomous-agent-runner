@@ -85,7 +85,8 @@ this order:
 2. `host/lib/docker-up.sh` — the daemon. After the tool table and not inside
    it: the table is worth reading whole on a machine where the daemon is down,
    and everything below the line needs the daemon anyway.
-3. `mechanical.sh` — everything provable without a Claude session.
+3. `mechanical.sh` — everything provable without a Claude session, the run
+   record's verdicts and the recovery projection among them.
 4. `image-commit.sh` — what the image says it was built from.
 5. `claude-code.sh` — which Claude Code answers inside it.
 6. `budget.sh` — the budget guard as this host has it configured.
@@ -565,6 +566,51 @@ read.
 This section runs on the real service and **not the twin**: the drift being
 looked for lives in the agent's home, and the twin has no volume, so it would
 agree with the pin forever and pass in the same words. Nothing here writes.
+
+
+## Run record
+
+`run record` proves, against fixtures, that the verdict a stopped run produces
+is the one it should. No probe can make a session stop, so the record is
+planted: an open one, an open one with a session running, a closed one whose
+envelope said `completed`, one whose envelope said `api_error`, and one whose
+output was not JSON at all.
+
+Every branch of it is silent when it is wrong, in both directions. A verdict of
+`clean` for a stop is a recovery that never happens, and nothing anywhere says
+so — the next session simply starts from the standing prompt as it always did.
+A verdict of `stopped` for a clean end is a recovery message on every ordinary
+session, which is noisy but at least visible.
+
+**The `api_error` fixture is the one that earns its place.** The envelope's
+`subtype` reads `"success"` on a run that failed — measured 2026-09-04 on
+2.1.260, and identical to what a genuine success reports — so an
+implementation that keyed on the obvious field would call every API-error stop
+a clean end. That fixture fails on it and the others do not.
+
+The junk fixture proves the direction of failure: an envelope that cannot be
+parsed must come out as a stop, because a run we cannot vouch for is not one to
+vouch for.
+
+Proved by breaking it: with `api_error` added to the clean branch, the probe
+reports `WRONG VERDICT — an api_error run is not a stop`.
+
+## Recovery size
+
+`recovery size` runs `host/session/session-recovery.py` over the newest
+transcript in the volume and reports what it rendered. Not a fixture, because
+what fails here is a transcript shape that moved under an upgrade, and only the
+real corpus carries those.
+
+The failure it is for has no symptom of its own: a first message that grew to
+hundreds of kilobytes is paid once per recovery, silently, and nothing errors.
+The ceiling is 8 KB, twice the projection's own 4 KB cap, so this fails when
+the cap has stopped working rather than whenever a session was talkative.
+Measured on this installation: 807 bytes, and 1.0 to 1.4 KB against the three
+largest transcripts in the archive, which are 1.5 MB each.
+
+`LOOK`, not `FAIL`, when there is nothing to project from: a volume where
+nothing has run yet is a state, not a defect.
 
 
 ## The budget guard, on this host
