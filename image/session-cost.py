@@ -99,6 +99,8 @@ import sys
 
 # $/MTok: input, 5m cache write, 1h cache write, cache read, output.
 PRICES = {
+    # Fable 5.1 reads cache at 0.025x base, not the 0.1x every other row uses.
+    "claude-fable-5-1": (10.00, 12.50, 20.00, 0.25, 50.00),
     "claude-fable-5": (10.00, 12.50, 20.00, 1.00, 50.00),
     "claude-opus-5": (5.00, 6.25, 10.00, 0.50, 25.00),
     "claude-opus-4-8": (5.00, 6.25, 10.00, 0.50, 25.00),
@@ -524,6 +526,18 @@ def selftest():
         5.00,
     )
     near("sonnet input", cost_of({"input_tokens": 1_000_000}, model="claude-sonnet-5"), 2.00)
+    # The one rate that does not follow its column's multiplier, so the one a
+    # reader is most likely to "correct" back to 1.00.
+    near(
+        "fable 5.1 cache read",
+        cost_of({"cache_read_input_tokens": 1_000_000}, model="claude-fable-5-1"),
+        0.25,
+    )
+    near(
+        "fable 5.1 is not fable 5",
+        cost_of({"cache_read_input_tokens": 1_000_000}, model="claude-fable-5"),
+        1.00,
+    )
 
     # Fast mode is a price, not a model, and only on the two that offer it.
     near("fast opus output", cost_of({"output_tokens": 1_000_000}, speed="fast"), 50.00)
