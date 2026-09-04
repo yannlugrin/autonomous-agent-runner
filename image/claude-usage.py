@@ -686,6 +686,27 @@ def age_text(age):
     return "%dm%02ds" % (seconds // 60, seconds % 60)
 
 
+def exhausted(results):
+    """The gated windows with nothing left at all, whatever the budget says.
+
+    A separate question from `go`, and the only one that does not depend on
+    the configured percentages: `go` asks whether the agent is inside the
+    share of the account it was given, and this asks whether the account can
+    answer a request at all. A session started against a window at 100% ends
+    on the limit rather than on its own work, which is what this exists to
+    stop happening on a schedule.
+
+    Reported, never enforced here, like everything else in this file: the
+    caller decides. It is deliberately not tied to ACCOUNT_BUDGET_GUARD —
+    the guard shares out an allowance, and a window with none left is not an
+    allowance question.  see docs/budget.md#nothing-left-is-not-a-budget
+
+    `used` has already been zeroed for a window whose reset is past, so a
+    closed window is never reported here.
+    """
+    return [kind for kind in sorted(results) if results[kind]["used"] >= 100]
+
+
 def as_env(result):
     return "used=%.1f allowed=%.1f ratio=%d budget=%g-%g window=%s resets=%s" % (
         result["used"],
@@ -822,6 +843,23 @@ def selftest():
         (0.0, 20.0, True),
     )
     check("an idle window names no reset", reset_text(idle["resets_at"]), "none")
+
+    # Nothing left, which is not the same question as over budget. A window at
+    # 100% is reported whatever the percentages say, and a window under it is
+    # not reported even when the budget has already refused it.
+    full = evaluate({"percent": 100, "resets_at": instant(now + five)}, 20, 50, five, now)
+    over = evaluate({"percent": 80, "resets_at": instant(now + five)}, 20, 50, five, now)
+    check("nothing left is reported", exhausted({"session": full}), ["session"])
+    check("over budget is not nothing left", exhausted({"session": over}), [])
+    check("over budget is still refused", over["go"], False)
+    check(
+        "both windows are named, in order",
+        exhausted({"weekly_all": full, "session": full}),
+        ["session", "weekly_all"],
+    )
+    # A closed window reports 0% used, so it can never be read as exhausted —
+    # which is what stops a spent window holding sessions out past its reset.
+    check("a closed window has nothing left to report", exhausted({"session": closed}), [])
     # Only at zero: a percentage with nowhere to place it is unplaceable, and
     # a window assumed for it is the one direction that lets spending past.
     refuses(
@@ -1133,6 +1171,7 @@ def main(argv):
         return CANNOT_TELL
 
     blocked = [kind for kind, result in results.items() if not result["go"]]
+    spent = exhausted(results)
     if blocked:
         verdict = "over budget: " + "; ".join(
             "%s %.1f%% used against %.1f%% allowed"
@@ -1172,6 +1211,11 @@ def main(argv):
         # reader never has to tell "no scoped limits" from "this source does
         # not report them".
         print("ACCOUNT_USAGE_SCOPED=%s" % "; ".join(scoped))
+        # Printed on every path that reached a verdict, empty included, so a
+        # reader tells "nothing is exhausted" from "there was no reading" —
+        # the cannot-tell path above prints no line at all, because there the
+        # honest answer is that the question was not reached.
+        print("EXHAUSTED=%s" % ",".join(spent))
         if renewed:
             print("RENEWED=1")
         # Deliberately not an ACCOUNT_* name: session-env.sh forwards this
@@ -1187,6 +1231,10 @@ def main(argv):
             print(as_text(kind, results[kind]))
         for line in scoped:
             print("  also: %s" % line)
+        # Said on the advisory path too, unlike the verdict below: a window
+        # with nothing left is a fact about the account, true whoever asked.
+        if spent:
+            print("  nothing left in: %s" % ", ".join(spent))
         if renewed:
             print("  (the access token was renewed)")
         # Said out loud, because a cached reading must not print in the same

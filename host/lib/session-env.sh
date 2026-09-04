@@ -86,6 +86,11 @@ case "$_env_cooldown" in ''|*[!0-9]*) _env_cooldown=0 ;; esac
 
 BUDGET_VERDICT="the host budget guard is off"
 BUDGET_STATUS=0
+# The gated windows with nothing left at all, comma-separated, or empty. Empty
+# and absent are different: the tool prints the line on every path that reached
+# a verdict and none where it could not read, so an unset variable here means
+# there was no reading rather than that both windows have room.
+BUDGET_EXHAUSTED=""
 # Every ACCOUNT_USAGE_* the tool printed, already spelled as `-e NAME=value`.
 BUDGET_ENV=()
 
@@ -136,6 +141,7 @@ while IFS= read -r _env_line; do
         ACCOUNT_USAGE_*|ACCOUNT_BUDGET_*)
                                 BUDGET_ENV+=(-e "$_env_line") ;;
         VERDICT=*)              [ "$BUDGET_GUARD_ARMED" = true ] && BUDGET_VERDICT="${_env_line#*=}" ;;
+        EXHAUSTED=*)            BUDGET_EXHAUSTED="${_env_line#*=}" ;;
     esac
 done <<<"$_env_budget"
 
@@ -178,4 +184,27 @@ SESSION_ENV+=(${BUDGET_ENV[@]+"${BUDGET_ENV[@]}"})
 # and the run bypassed it: `--ignore-budget` does not disarm the guard, it
 # ignores the answer, so a ratio over 100 beside `true` is a session that
 # started because someone said so.
+# --- nothing left ---
+# A separate refusal from the budget, and it does not ask whether the guard is
+# armed. The guard shares out an allowance between the operator and the agent, and
+# the percentages that describe it are theirs to set; a window at 100% is not
+# an allowance question at all — the account cannot answer a request, so the
+# session would start, hit the limit and stop, and with
+# `autoContinueAtUsageLimit` off that stop is a recovery start the next session
+# has to be told about for nothing.
+#
+# Overridable by --ignore-budget like the budget itself: the flag is the
+# operator saying start anyway, and a refusal with no way past it is a decision this
+# file should not be making on its own. What it costs is visible — the session
+# stops on the limit almost at once — and `run.sh` says so before it starts.
+# see docs/budget.md#nothing-left-is-not-a-budget
+
+if [ -n "$BUDGET_EXHAUSTED" ]; then
+    # shellcheck disable=SC2034 # both are read by the caller after sourcing
+    BUDGET_VERDICT="nothing left in: ${BUDGET_EXHAUSTED//,/, }"
+    # shellcheck disable=SC2034 # read by the caller after sourcing
+    BUDGET_STATUS=75
+fi
+
+
 SESSION_ENV+=(-e "ACCOUNT_BUDGET_GUARD=$BUDGET_GUARD_ARMED")

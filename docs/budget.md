@@ -45,6 +45,13 @@ login and the container's token: the endpoint reports the account, not the
 credential, so on a separate account for the agent the reading would be a
 statement about your quota, not its own.
 
+**One refusal is not yours to configure.** When a window has *nothing left* —
+100% used, not merely past its share — no session starts, whether or not the
+guard is armed and whatever the four percentages say. That is not a budget: the
+account cannot answer a request, so the session would start, stop on the limit,
+and leave the next one a recovery to do for nothing. `just run --ignore-budget`
+overrides it like anything else here.
+
 Two more knobs: `ACCOUNT_BUDGET_CACHE_MINUTES` (5 unless set) is how long a
 reading may be reused, because the usage endpoint allows five requests per
 five minutes for the whole account and a cron line that wakes every minute
@@ -118,6 +125,47 @@ one uses. Half of that is detectable: a `resets_at` further out than the
 assumed length proves the length wrong, and `elapsed_fraction` refuses rather
 than averaging over it. A window that grew *shorter* is invisible, and is the
 reason this is re-probed after every Claude Code upgrade rather than trusted.
+
+
+## Nothing left is not a budget
+
+The four percentages share an allowance out between the operator and the agent. They
+answer "has the agent had its share yet". They do not answer "can the account
+answer a request at all", and the two come apart at exactly one point: a window
+at 100%.
+
+So `exhausted()` in `image/claude-usage.py` reports, separately from `go`, every
+gated window whose `used` has reached 100, and `host/lib/session-env.sh` stands
+the run down on it **whether or not `ACCOUNT_BUDGET_GUARD` is armed**. Ruled
+2026-09-04. Without it, an unarmed installation starts a session against an
+exhausted window; the session stops on the limit within a turn or two, and —
+with `autoContinueAtUsageLimit` off — that stop latches a recovery start the
+next session has to be told about, for a session that never did anything.
+
+**It reports; the host decides.** The exit status of `claude-usage.py` is
+unchanged, on both paths: the tool's rule is that whether a report refuses
+anything belongs to whoever reads it, and the advisory read in the container
+still exits 0 whatever it finds. The line is `EXHAUSTED=` on the `--env` path,
+printed empty when nothing is exhausted and **not printed at all** when the
+reading failed — so absent means there was no reading, which is a different
+answer from "both windows have room".
+
+**A closed window can never be reported.** `evaluate()` already zeroes `used`
+when `resets_at` is in the past, because the percentage still reported belongs
+to the window that ended. That is what stops a spent window holding sessions
+out past its own reset, and `--selftest` covers it.
+
+**`--ignore-budget` overrides this too.** The flag is the operator saying start
+anyway, and a refusal with no way past it is not one this file should invent.
+What it costs is visible within a turn or two.
+
+**What is not covered.** The reading is of the *account*, and the host's login
+is what reads it — so on the day the agent runs on an account of its own, this
+floor would refuse its sessions on the operator's exhaustion. Arming the guard is
+not the escape from that (it has the same problem, and `docs/budget.md` already
+says arming is honest only while one account is behind both); the escape would
+be something that says whose account the host reads. Nothing needs it while one
+account is behind both, and it is not built.
 
 
 ## The limit stops the session
