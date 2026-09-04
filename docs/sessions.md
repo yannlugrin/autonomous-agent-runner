@@ -714,6 +714,16 @@ still going. `run_record_verdict` takes the answer as an argument rather than
 asking docker for it: `run.sh` has it already, and a second `docker ps` on the
 path that wakes every minute is a process for nothing.
 
+**That argument means "is THIS record's session running", never "is anything
+running".** Every caller compares the live container's name against the
+record's own `container=`, except `run.sh`, which is past the lock and can use
+`parallel` — nothing else can be running there unless `--force` stepped over a
+held lock. The distinction is not academic: a conversation opened while the
+hourly run is up would otherwise read a killed run's open record as still
+going, and say nothing about it, which is exactly the situation someone opens a
+conversation for. Measured on 2026-09-04, by composing the message with a
+session up.
+
 **The latch is the file itself.** The record is replaced only when a session
 actually starts. Every wake-up that stands down — the cooldown, a held lock,
 the budget, a window with nothing left — exits before the record is opened, so

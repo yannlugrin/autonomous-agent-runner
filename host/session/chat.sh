@@ -174,7 +174,16 @@ fi
 # see docs/sessions.md#recovering-a-session-that-was-stopped
 
 if [ "$resume" = false ]; then
-    chat_verdict=$(run_record_verdict "$([ -n "$(session_container)" ] && echo yes || echo no)")
+    # "Is a session running" means "is THIS record's session running", not "is
+    # anything running". A conversation started while the hourly run is up would
+    # otherwise read a killed run's open record as still going, and say nothing
+    # about it — which is exactly the case someone opens a conversation for.
+    chat_running=no
+    chat_now=$(session_container)
+    [ -n "$chat_now" ] \
+        && [ "$(printf '%s' "$chat_now" | cut -f1)" = "$(run_record_field container)" ] \
+        && chat_running=yes
+    chat_verdict=$(run_record_verdict "$chat_running")
     case "$chat_verdict" in
     stopped*)
         chat_reason="${chat_verdict#stopped }"
