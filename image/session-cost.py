@@ -131,6 +131,13 @@ US_MULTIPLIER = 1.1
 CATEGORIES = ("input", "write1h", "write5m", "read", "output")
 SUFFIX = ".jsonl"
 
+# Claude Code's own placeholder assistant records carry this instead of a model
+# id, with every token count zero — measured across the corpus, never anything
+# else. No request produced one, so counting it inflates the request count and
+# names a price that is not missing. Skipped, NOT priced at zero: the table
+# refusing an id it does not hold is what makes a real gap visible.
+SYNTHETIC = "<synthetic>"
+
 
 class Unpriceable(Exception):
     """A model id the table does not hold. Never priced as zero."""
@@ -260,6 +267,8 @@ def read(path, sessions):
         message = record.get("message") or {}
         usage = message.get("usage") or {}
         model = message.get("model")
+        if model == SYNTHETIC:
+            continue
         session.requests += 1
         session.models.add(normalise(model or "unknown"))
         if record.get("agentId"):
@@ -589,6 +598,15 @@ def selftest():
     try:
         rates("claude-something-9", "standard")
         failures.append("unknown model refused: priced something it does not know")
+    except Unpriceable:
+        pass
+
+    # The placeholder records are dropped by `read`, and the table must go on
+    # refusing the id: pricing it at zero here would make a real gap silent.
+    ran.append("synthetic refused, not priced")
+    try:
+        rates(SYNTHETIC, "standard")
+        failures.append("synthetic refused, not priced: the table holds a rate for it")
     except Unpriceable:
         pass
 
