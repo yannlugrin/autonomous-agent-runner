@@ -419,8 +419,9 @@ With nothing running it shows the last one's tail and closes on `just
 status`'s own first line. `--live` never closes: when a session ends it says
 what it cost and what in this tree is uncommitted or undeployed, then waits
 for the next one. `--remote` puts that same live view on a tailnet address for
-another device to open — a web terminal and a userspace Tailscale, both in the
-foreground of the window that started them and both gone when it closes.
+another device to open, while the window keeps showing it — a web terminal and
+a userspace Tailscale, both in the foreground of the window that started them,
+both taken down by the Ctrl-C that ends the follow.
 [`docs/sessions.md`](docs/sessions.md)
 
 **`just status` is the one-screen answer**: what is running and of what kind,

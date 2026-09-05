@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
 # The live view from another device: ttyd behind Tailscale, both in the
-# foreground of this window, both gone when it closes.
+# foreground of this window.
 #
-# Runs on the host. What it serves is a plain `just listen --live` — the
-# forwarding to the deployed checkout, the lock, the container, the render and
-# the stop are that recipe's and are not touched here. This file is only the
-# transport, and it holds nothing the session can read.
+# Runs on the host. The follow is this window's own `just listen --live`, tee'd
+# to a file that ttyd serves with `tail -F`. So the window shows the transcript
+# rather than a server's log, one container feeds any number of viewers, and a
+# viewer that goes away costs a `tail` and not a session's worth of following.
+# This file is only the transport, and it holds nothing the session can read.
 # see docs/sessions.md#the-live-view-from-another-device
 set -uo pipefail
 # shellcheck source=SCRIPTDIR/../lib/root.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
 
 port="${RUNNER_REMOTE_PORT:-7681}"
+
+# What the window prints and what the viewers tail, one file: `mktemp` because
+# it is a buffer that dies with the run and not a record, and because two runs
+# must not share one.
+view=$(mktemp) || exit 1
 
 # Tailscale's own state, outside the checkout and outside the agent's cache: it
 # holds this node's key, and a node that re-registers every run is a new machine
@@ -37,6 +43,27 @@ for binary in tailscaled tailscale ttyd; do
 done
 
 
+# --- what this window is holding ---
+# EXIT does the taking down, and the three signals are only how the script gets
+# there: bash takes a fatal signal's default action without running an EXIT
+# trap, so an untrapped HUP would leave a daemon behind — the one thing this
+# recipe must not do. Installed before anything is started, so there is nothing
+# it can miss.
+
+daemon=""
+viewer=""
+
+# shellcheck disable=SC2329  # invoked by the EXIT trap below
+stop_all() {
+    [ -n "$viewer" ] && kill "$viewer" 2>/dev/null
+    [ -n "$daemon" ] && kill "$daemon" 2>/dev/null
+    rm -f "$view"
+    return 0
+}
+trap 'exit 0' HUP INT TERM
+trap stop_all EXIT
+
+
 # --- the tailnet, for as long as this window ---
 # Userspace networking, which is what lets this run as an ordinary user with no
 # tun device, no root and no system service — and it is what makes the port
@@ -50,13 +77,6 @@ mkdir -p "$state" && chmod 700 "$state" || exit 1
 
 tailscaled --tun=userspace-networking --statedir="$state" --socket="$sock" >"$log" 2>&1 &
 daemon=$!
-
-# EXIT does the killing and the other three are only how the script gets there:
-# bash takes a fatal signal's default action without running an EXIT trap, so an
-# untrapped HUP would leave the daemon behind — which is the one thing this
-# recipe must not do.
-trap 'exit 0' HUP INT TERM
-trap 'kill "$daemon" 2>/dev/null' EXIT
 
 for _ in $(seq 100); do [ -S "$sock" ] && break; sleep 0.1; done
 [ -S "$sock" ] || {
@@ -77,21 +97,30 @@ ip=$(tailscale --socket="$sock" ip -4) || exit 1
 # 127.0.0.1 spelled as an address, because `-i lo` binds the other address WSL
 # keeps on that interface — which the tailnet proxy never hands anything to —
 # and `-i localhost` binds nothing at all. Both silent, both measured.
-# One client, so a second device cannot start a second follow and a
-# second container with it. No --writable, so the page renders and nothing it
-# sends can reach the session. --check-origin, so a page the viewing browser
-# happens to be visiting cannot open this socket and read the transcript out of
-# it.
+#
+# No --writable, so the page renders and nothing it sends reaches anything.
+# --check-origin, so a page the viewing browser happens to be visiting cannot
+# open this socket from the side and read the transcript out of it. `-d 3`
+# drops libwebsockets' notices, which are what would otherwise fill this window
+# instead of the transcript. A font that can be read at arm's length, which the
+# device overrides for itself with `?fontSize=` on the URL.
+#
+# `tail -F` and not the recipe: every client gets its own child, and a child
+# that is a tail costs nothing to start, nothing to stop, and does not follow a
+# session of its own.
 # see docs/sessions.md#the-live-view-from-another-device
+
+ttyd --interface 127.0.0.1 --port "$port" --check-origin -d 3 \
+     -t fontSize=18 -t "titleFixed=$AGENT_NAME — live" \
+     tail -n +1 -F "$view" &
+viewer=$!
 
 echo
 echo "    http://$ip:$port"
 echo
-echo "This window is the server: Ctrl-C, or closing it, ends the stream and takes"
-echo "this machine off the tailnet. One viewer at a time, read-only, and a device"
-echo "that reconnects starts the render again from the top of the session."
+echo "Read-only, for any device on the tailnet; add ?fontSize=24 to the URL to"
+echo "size it for the one you are reading it on. Ctrl-C here ends the stream and"
+echo "takes this machine off the tailnet. The transcript follows, below and there."
 echo
 
-ttyd --interface 127.0.0.1 --port "$port" --max-clients 1 --check-origin \
-     -t "titleFixed=$AGENT_NAME — live" \
-     just listen --live
+just listen --live | tee "$view"

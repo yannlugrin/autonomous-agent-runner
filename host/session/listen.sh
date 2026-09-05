@@ -151,13 +151,7 @@ colours=(-L host/session --arg dim "$dim" --arg bold "$bold" --arg off "$off"
 # non-interactive bash dies with 130 on SIGINT's default action, and the status
 # check that would normalise it never runs. Ahead of both branches on purpose —
 # interrupting a long render is the same act as interrupting a follow.
-#
-# HUP is that same act from a terminal that went away rather than from a
-# keyboard, and it is the one a viewer served over ttyd arrives by. Untrapped it
-# kills bash outright, and the follow's container — which `compose run` leaves
-# running when its client dies — is left up with nothing holding its name.
-# see docs/sessions.md#a-follow-whose-terminal-goes-away
-trap 'echo; exit 0' INT HUP
+trap 'echo; exit 0' INT
 
 
 # --- following ---
@@ -221,7 +215,7 @@ if [ "$follow" = true ]; then
             # turns up a moment later outliving the client that asked for it.
             docker rm -f "$name" >/dev/null 2>&1
         }
-        trap 'stop; echo; exit 0' INT HUP
+        trap 'stop; echo; exit 0' INT
 
         # A follow does not end when the session does: `tail -F` holds a file
         # that has stopped growing, and nothing in the transcript marks the end.
