@@ -53,6 +53,11 @@ PASSAGE_BYTES = 700
 # what it wrote, and what it ran that changed something.
 WROTE = ("Write", "Edit", "NotebookEdit", "MultiEdit")
 
+# A commit, including the global flags git takes before the verb. A missed one
+# renders as no line at all, which reads as "it committed nothing".
+# see docs/sessions.md#recovering-a-session-that-was-stopped
+COMMIT = re.compile(r"\bgit\b(?:\s+-\S+(?:\s+\S+)?)*\s+commit\b")
+
 # The checkout the agent works in, so a file reads as `JOURNAL.md` rather than
 # as `/home/<agent>/<agent>/JOURNAL.md` four times over. Absent is fine — the
 # path is then quoted whole, which is long and still true.
@@ -216,7 +221,7 @@ def fold(record, found, names):
                     found["wrote"].append(str(path))
             elif block.get("name") == "Bash":
                 command = str(inputs.get("command") or "")
-                if re.search(r"\bgit\s+commit\b", command):
+                if COMMIT.search(command):
                     found["commits"] += 1
 
 
@@ -436,6 +441,34 @@ def selftest():
     if "-" in out.split("ran ")[-1].split(".")[0]:
         failures.append("a backwards clock renders a negative duration")
 
+    # The spellings of a commit that carry a global flag, and two that only
+    # look like one. `git -C <path>` is what this container's own bash guard
+    # pushes the agent toward, since it refuses `cd` compounds.
+    spellings = [
+        "git commit -m x",
+        "git -C /home/agent/repo commit -q -F -",
+        'git -c user.name="a" -c user.email="b" commit -m x',
+        "git --no-pager commit -m x",
+    ]
+    commands = spellings + ["git log --grep commit", "git -C /p push origin main"]
+    counted = [
+        {
+            "type": "assistant",
+            "timestamp": "2026-09-04T10:00:00.000Z",
+            "message": {
+                "content": [
+                    {"type": "tool_use", "id": str(i), "name": "Bash", "input": {"command": c}}
+                ]
+            },
+        }
+        for i, c in enumerate(commands)
+    ]
+    out = render(
+        gather(read_records("\n".join(json.dumps(r) for r in counted))), "", "", DEFAULT_BYTES
+    )
+    if f"Commits it ran: {len(spellings)}" not in out:
+        failures.append("the commit counter did not count the spellings it should: " + out)
+
     # `none` is the parser's word for "there was no envelope", not a reason.
     out = render(gather(read_records(json.dumps(good))), "none", "", DEFAULT_BYTES)
     if "stopped: none" in out:
@@ -445,7 +478,7 @@ def selftest():
         print("session-recovery: " + line, file=sys.stderr)
     if failures:
         return 1
-    print("session-recovery: %d checks pass" % (len(odd) + 4))
+    print("session-recovery: %d checks pass" % (len(odd) + 5))
     return 0
 
 

@@ -758,6 +758,19 @@ that fails before doing anything replaces the record, and the first stop's
 context is gone. The exhaustion floor makes the common cause of it rare, and no
 apparatus is built for the rest without a measured case.
 
+**The commit counter reads the flags git takes before the verb.** It counted
+`git commit` and nothing else until 2026-09-05, so `git -C <path> commit` and
+`git -c k=v commit` were invisible: measured on the agent's own volume, 6 of 260
+commit invocations missed, across 2 of 120 sessions. The shape is not exotic —
+the bash guard refuses `cd` compounds, so `git -C <path>` is what the container
+pushes the agent toward, and the runner's guard was shaping the command into
+the shape the runner's counter missed. A missed commit renders as no
+`Commits it ran:` line at all, which reads as *it committed nothing* rather
+than as *the counter did not see it*, and for a recovery projection those are
+opposite claims about whether the work was saved. `COMMIT` in
+`host/session/session-recovery.py` now allows a run of leading flags; the
+selftest carries the four spellings and two decoys that must not count.
+
 **The wedge mark lives here too.** Which session start has already been toasted
 is one run's fact, and the record already belongs to that run — see
 [`docs/schedule.md`](schedule.md), under "The wedge alarm".
