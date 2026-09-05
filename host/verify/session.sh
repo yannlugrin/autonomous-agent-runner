@@ -565,7 +565,16 @@ envelope_read=$(
 )
 envelope_reason=$(printf '%s' "$envelope_read" | sed -n 's/^reason=//p' | tail -1)
 
-if [ "$envelope_reason" = completed ]; then
+# A session that never ran cannot answer for how the envelope is spelled. The
+# binary reports `api_error` for "not logged in", so asserting `completed` here
+# names the parser — which did its job, reading exactly what the envelope said.
+# `model` reports the same precondition below and reports it as a LOOK; two
+# probes disagreeing about one precondition is what sent a lapsed credential
+# out as "a mechanism is not doing its job". Measured 2026-09-05.
+
+if ! sees "$answer" "$probe_nonce"; then
+    verdict LOOK "envelope read" "no session ran, so the envelope proves nothing — the model verdict below says why"
+elif [ "$envelope_reason" = completed ]; then
     verdict ok "envelope read" "a finished session reports terminal_reason=completed, and the run record reads it"
 elif [ -z "$envelope_reason" ] || [ "$envelope_reason" = none ]; then
     verdict FAIL "envelope read" "UNREADABLE — the run record got no terminal_reason from a real session; every run would read as stopped"

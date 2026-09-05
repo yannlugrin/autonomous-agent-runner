@@ -655,6 +655,21 @@ Code bump is exactly when this happens.
 It sources `run-record.sh` in a subshell against a scratch `RUNNER_LAST_RUN`: a
 probe must not write over the record a real run left behind.
 
+**It asks first whether a session ran at all, and that is the whole difference
+between naming a mechanism and naming the weather.** Measured 2026-09-05: with
+no usable login, the binary answers `Not logged in · Please run /login` and the
+envelope reads `terminal_reason "api_error"`, `is_error true`,
+`api_error_status null` — and `subtype "success"`, which is the same reading
+`docs/budget.md` records for a 401, so the field this branch keys on holds up.
+The parser read that correctly. Asserting `completed` against it printed
+*"a session that finished is not reporting completed"* and failed the run,
+naming the one part that was working. `model` reports the same precondition
+twenty lines further down and reports it as a `LOOK`; two probes disagreeing
+about one precondition is what turned a lapsed credential into a mechanism
+failure. `envelope read` now takes the same reading `model` does, and keeps its
+FAIL for the case it exists for: a session that ran and reported something
+other than `completed`.
+
 ## Nothing left
 
 `nothing left` asserts that `claude-usage.py --env` still prints an `EXHAUSTED=`
