@@ -864,3 +864,13 @@ until someone looks, and this is what makes it reach them.
 `agentPushNotifEnabled` lets the agent push to their phone at its own
 discretion; the setting has no granularity, so the restraint is a written rule
 rather than a mechanism.
+
+`spinnerTipsEnabled` and `awaySummaryEnabled` are the two that are **off**.
+Neither can reach an unattended run: the spinner tips and the away recap are
+interactive-only, and `just run` passes `-p`. Both spend the operator's
+attention on something they did not ask for — the spinner on Claude Code's own
+feature advertising, and the recap on an LLM-written one-liner summarising the
+transcript they were sitting in five minutes ago, fired on the container's own
+credential and so against the same account the budget guard is counting. Both
+are ordinary settings keys (`awaySummaryEnabled` is marked `@internal` in
+Claude Code's schema, and read the same way regardless), measured in 2.1.261.
