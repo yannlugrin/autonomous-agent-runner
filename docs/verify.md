@@ -740,11 +740,37 @@ which covers the spelling and not the value: anything that prints an
 environment puts the token wherever that output went. The probes have no use
 for the vault — they need one login and nothing else.
 
-So `vault-env.sh`, under `RUNNER_TEST`, does not ask the vault at all. It reads
-`.claudeAiOauth.accessToken` out of the login the agent already has — in a
-volume the probe may read and never write — hands it over as
-`CLAUDE_CODE_OAUTH_TOKEN`, and unsets `BWS_ACCESS_TOKEN` before the session
-starts. One secret the probe needs, instead of the one that opens all of them.
+So `vault-env.sh`, under `RUNNER_TEST`, reads the vault for the one login the
+probe needs and then unsets `BWS_ACCESS_TOKEN` before the session starts. The
+probe's session holds the login and not the key that opens every secret. The
+read happens above the unset, in the same script, so there is no window in
+which the session itself carries it.
+
+**It used to read the agent's own login instead, and that rotted.** Until
+2026-09-05 the `RUNNER_TEST` branch did not ask the vault at all: it took
+`.claudeAiOauth.accessToken` out of the credentials file in the volume the
+probe may read and never write. The reasoning was that a probe needs no vault
+access if the agent's login is already sitting there. It was right about the
+key and wrong about the token. Measured 2026-09-05: that access token lasts
+about ten hours — written 2026-09-04 21:57 local, expired
+2026-09-05T05:57:26Z — and nothing here ever refreshes it, because **no session
+here authenticates from that file.** A real session runs on the vault's token,
+and the probe was handed the file's token as an environment value, which Claude
+Code cannot refresh: there is nowhere to write the new one. Only an interactive
+`claude login` rewrites the file.
+
+So every session probe in `just verify` went dead about ten hours after each
+interactive login and stayed dead — the binary answering `Not logged in ·
+Please run /login`, the envelope reading `terminal_reason "api_error"`, and
+`envelope read` reporting a mechanism failure for a credential that had simply
+aged out. Both halves are fixed: the probe now runs on the same long-lived
+token a real session runs on, and `envelope read` asks whether a session ran
+before it asserts anything about how one ended.
+
+**What did not change is the part the ruling was about.** The probe's session
+still carries no `BWS_ACCESS_TOKEN`, and the login is still handed over as an
+environment value rather than as a file — see the measurement below, which is
+why that matters and is unaffected.
 
 **Handed over as an environment value, not as a copy of the file, and that is
 not a detail.** Measured 2026-09-04 on 2.1.259: a session authenticated from
@@ -769,6 +795,10 @@ tests, never `${VAR:-…}`, which yields the value when the variable is set:
       login:      copied in
       env token:  unset
     and it answered `ok`
+
+That table measured the borrowed-login shape described above. The left column
+still holds — the vault key is gone from the probe's session — and "copied in"
+now means read from the vault rather than from the volume.
 
 **The transcript is read where it is written.** `model` and `connectors` both
 need the transcript the model probe's session produced, and it is written into

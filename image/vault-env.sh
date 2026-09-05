@@ -32,14 +32,14 @@ VAULT_CLAUDE_TOKEN=claude-oauth-token
 # Already set wins, and nothing here overwrites it. That is what lets a probe
 # pass a deliberate value — `just verify` does — and what keeps this from
 # undoing an override someone chose on purpose.
-if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${RUNNER_TEST:-}" ] \
-   && [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
+if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
     # Silent on failure, deliberately. No such secret, an expired access
     # token, a network that is down — all of them mean "no token from the
-    # vault", and the container falls back to the credentials file in its
-    # volume. A vault that cannot be reached must not be a container that
-    # cannot start; the budget gate is what says whether the credential that
-    # remains is usable, and it says it loudly.
+    # vault", and a real session falls back to the credentials file in its
+    # volume while a probe, whose home has none, starts with no login at all.
+    # A vault that cannot be reached must not be a container that cannot
+    # start; the budget gate is what says whether the credential that remains
+    # is usable, and it says it loudly.
     value=$(vault get "$VAULT_CLAUDE_TOKEN" --value 2>/dev/null)
     if [ -n "$value" ]; then
         export CLAUDE_CODE_OAUTH_TOKEN="$value"
@@ -48,40 +48,27 @@ if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${RUNNER_TEST:-}" ] \
 fi
 
 # --- a verify probe carries no key to the vault ---
-# A probe runs with a HOME of its own so it writes nothing in the agent's
-# volume, and that home has no credentials file — so it would have to reach the
-# vault for a login, and would then be a session holding the key to every
-# secret the vault has. The guard denies `bws` on argv, which covers the
-# spelling and not the value: anything that prints an environment puts the
-# token where it was printed.
+# A probe's session must not hold BWS_ACCESS_TOKEN: it is the key to every
+# secret the vault has, and `bash-guard.py` denies `bws` on parsed argv, which
+# covers the spelling and not the value — anything that prints an environment
+# puts the token wherever that output went. So the vault is read above, and the
+# key dropped here, before the session starts. The probe gets the one login it
+# needs and not the one that opens all of them.
 #
-# So a probe is given the login the agent already has, read out of the volume
-# it may read and never write, and the access token is dropped before the
-# session starts. One secret it needs instead of the one that opens all of
-# them.
-#
-# Handed over as CLAUDE_CODE_OAUTH_TOKEN and not as a copy of the file, because
-# Claude Code does not behave the same way on the two paths: measured
-# 2026-09-04 on 2.1.259, a session authenticated from a credentials file logs
-# nothing about `localSettings` where one authenticated from the environment
-# logs six lines, and the `project rules` probe reads exactly that to prove a
-# rule in the checkout was not loaded. Authenticating the way a real session
-# does is also the only way a probe measures what a real session would.
+# Until 2026-09-05 a probe did not ask the vault at all: it read
+# `.claudeAiOauth.accessToken` out of the agent's own volume. That token
+# expires in about ten hours and nothing here ever refreshes it, because no
+# session authenticates from that file — a real session runs on the vault's
+# token, and a probe was handed the file's token as an environment value, which
+# Claude Code cannot refresh because there is nowhere to write the new one. So
+# every session probe in `just verify` went dead ten hours after each
+# interactive login and stayed dead, reporting a mechanism failure.
 # see docs/verify.md#a-probe-carries-no-key-to-the-vault
 #
 # Here rather than in the caller because every session path arrives here,
 # entrypoint.sh included — one place rather than one per probe — and because
 # this is the file that decides what a container's login is.
 if [ -n "${RUNNER_TEST:-}" ]; then
-    _agent_login="/home/$(id -un)/.claude/.credentials.json"
-    if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -f "$_agent_login" ]; then
-        value=$(jq -r '.claudeAiOauth.accessToken // empty' "$_agent_login" 2>/dev/null)
-        if [ -n "$value" ]; then
-            export CLAUDE_CODE_OAUTH_TOKEN="$value"
-        fi
-        unset value
-    fi
-    unset _agent_login
     unset BWS_ACCESS_TOKEN
 fi
 
