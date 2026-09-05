@@ -758,6 +758,21 @@ that fails before doing anything replaces the record, and the first stop's
 context is gone. The exhaustion floor makes the common cause of it rare, and no
 apparatus is built for the rest without a measured case.
 
+**The recovery opening leads with the session-start routine, as every other
+opening does.** It did not until 2026-09-05: it opened on the news of the stop
+and reached "Then run as usual" only after a kilobyte of the previous session's
+business, so the one session that is by construction the most disoriented that
+ever starts here was the only one not told in plain words to read its own
+standing instructions. It now opens *"Run the session-start routine in CLAUDE.md
+first. Then the rest of this message is the priority."* — the same sentence the
+standing prompt opens with, so one thing is said one way, and then the ordering.
+The routine leads because it is what defines the agent's priorities; the record
+is what this session weighs against them, which is why it is named the priority
+rather than left to compete. What to *do* about the unfinished work is still the
+agent's own decision, and the closing paragraph still says so. Raised by the
+agent in its review of this branch, and ruled by the operator; the wording is
+theirs.
+
 **Every value on a top-level line goes through one filter, and it is not
 `quote()`.** The module's invariant — indent every quoted line, strip what
 could end the quoting — held for the passages and not for two fields that never
