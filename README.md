@@ -168,6 +168,7 @@ one that is absent fails in a way that reads as something else.
 | GNU `date` | `date -d` on ISO timestamps. BSD `date` answers nothing, and a waiting run then calls a live session wedged |
 | gh *(optional)* | without it no session end asks the archive to mirror, which looks like nothing at all until a rewrite upstream is lost |
 | gitleaks *(optional)* | `just collect` runs its own pattern floor alone |
+| ttyd, tailscale *(optional)* | `just listen --remote` and nothing else. Without them it says so and stops |
 
 ## Quickstart
 
@@ -333,7 +334,7 @@ shows every option with what each one does.**
 | `just chat "…"` | a conversation. It waits for a running session rather than refusing; `--continue` resumes the last *conversation*, which is not the last session |
 | `just shell` | a shell in the container, carrying the same environment a session gets. This is what bootstrap uses. `--build` looks inside a candidate instead of the deployed image |
 | `just test-container` | the same container with **no volume** — an empty home every run, for rehearsing the morning the volume is gone. Never where the agent runs |
-| `just listen` | the running session from its first line, live — or, with nothing running, the tail of the last one. `--all` lifts the read ceiling, `--wait` waits for the next, `--live` never closes |
+| `just listen` | the running session from its first line, live — or, with nothing running, the tail of the last one. `--all` lifts the read ceiling, `--wait` waits for the next, `--live` never closes, `--remote` serves the live view to any device on the tailnet |
 | `just read <n\|id>` | one transcript whole, and the only reader there is. A row number from the last listing, or a session or subagent id; `--subagent K`, `--full` |
 | `just status` | what is running and what it has spent, or when the last one ended; whether scheduling is on; what the budget gate sees; how many transcripts the collection gate is holding |
 
@@ -417,7 +418,10 @@ cannot remove it, and starts a **second** session beside the first instead.
 With nothing running it shows the last one's tail and closes on `just
 status`'s own first line. `--live` never closes: when a session ends it says
 what it cost and what in this tree is uncommitted or undeployed, then waits
-for the next one. [`docs/sessions.md`](docs/sessions.md)
+for the next one. `--remote` puts that same live view on a tailnet address for
+another device to open — a web terminal and a userspace Tailscale, both in the
+foreground of the window that started them and both gone when it closes.
+[`docs/sessions.md`](docs/sessions.md)
 
 **`just status` is the one-screen answer**: what is running and of what kind,
 what it has spent, whether scheduling is enabled, paused or disabled, what
@@ -580,6 +584,7 @@ through `vault`, and by shape otherwise. [`docs/vault.md`](docs/vault.md)
         shell.sh             a shell in the container, for bootstrap and looking around
         test-container.sh    the same container with no volume
         listen.sh            a running session live, or a finished one's tail
+        remote.sh            that live view on a tailnet address, for another device
         read.sh              one transcript whole, by its number or by its own id
         status.sh            what is running, what it spent, what is scheduled, what is live
         last-chat.sh         which session the last conversation was, from the volume

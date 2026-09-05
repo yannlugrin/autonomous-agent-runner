@@ -3,7 +3,8 @@
 # of it.
 #
 # Runs on the host. Every declared argument arrives as an environment
-# variable: the flags all, wait, live and summary, and the message count n.
+# variable: the flags all, wait, live, remote and summary, and the message
+# count n.
 #
 # shellcheck disable=SC2154  # the recipe's declared arguments reach this
 # script as exported environment variables, which shellcheck cannot see; a
@@ -16,6 +17,12 @@ set -uo pipefail
 # shellcheck source=SCRIPTDIR/../lib/root.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
 . host/lib/deployed.sh
+
+# --- the remote viewer ---
+# Ahead of the forwarding on purpose: what the viewer serves is a plain
+# `just listen --live`, which forwards, locks, renders and stops exactly as it
+# does when it is typed, and nothing below this line knows the flag exists.
+[ "$remote" = yes ] && exec host/session/remote.sh
 
 if [ "$RUNNER_IS_DEPLOYED" = no ]; then
     typed=()
@@ -144,7 +151,13 @@ colours=(-L host/session --arg dim "$dim" --arg bold "$bold" --arg off "$off"
 # non-interactive bash dies with 130 on SIGINT's default action, and the status
 # check that would normalise it never runs. Ahead of both branches on purpose —
 # interrupting a long render is the same act as interrupting a follow.
-trap 'echo; exit 0' INT
+#
+# HUP is that same act from a terminal that went away rather than from a
+# keyboard, and it is the one a viewer served over ttyd arrives by. Untrapped it
+# kills bash outright, and the follow's container — which `compose run` leaves
+# running when its client dies — is left up with nothing holding its name.
+# see docs/sessions.md#a-follow-whose-terminal-goes-away
+trap 'echo; exit 0' INT HUP
 
 
 # --- following ---
@@ -208,7 +221,7 @@ if [ "$follow" = true ]; then
             # turns up a moment later outliving the client that asked for it.
             docker rm -f "$name" >/dev/null 2>&1
         }
-        trap 'stop; echo; exit 0' INT
+        trap 'stop; echo; exit 0' INT HUP
 
         # A follow does not end when the session does: `tail -F` holds a file
         # that has stopped growing, and nothing in the transcript marks the end.

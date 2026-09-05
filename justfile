@@ -266,14 +266,15 @@ shell $build="no":
 test-container *ARGS:
     @exec host/session/test-container.sh "$@"
 
-[doc("A running session from its first line, live — or the last one's tail, or all of it; --live never closes")]
+[doc("A running session from its first line, live — or the last one's tail, or all of it; --live never closes, --remote serves it to the tailnet")]
 [group("session")]
 [arg("all", long, value="yes", help="the whole transcript, with no ceiling on what is read")]
 [arg("wait", long, value="yes", help="wait for a session when none is running, then give the prompt back")]
 [arg("live", long, value="yes", help="as --wait, and wait again for the next one; never closes")]
+[arg("remote", long, value="yes", help="serve the live view on the tailnet, for any device on it — implies --live, and ends with this window")]
 [arg("summary", long="no-summary", value="no", help="leave out what the session cost when it ends")]
 [arg("n", pattern='\d+', help="how many messages of a finished session to show")]
-listen $all="no" $wait="no" $live="no" $summary="yes" $n="20":
+listen $all="no" $wait="no" $live="no" $remote="no" $summary="yes" $n="20":
     @exec host/session/listen.sh
 
 [doc("Read one transcript whole — by its number in `just sessions`, or by its own id")]

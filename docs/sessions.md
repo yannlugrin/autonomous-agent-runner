@@ -13,7 +13,7 @@ commands.
 | `just chat "…"` | a conversation you sit in. It waits for a running session rather than standing down; `--continue` resumes the last **conversation**, which is not the last session |
 | `just shell` | a shell in the container, carrying the environment a session gets, without starting one. What bootstrap uses. `--build` looks inside the candidate instead |
 | `just test-container` | the same container with **no volume** — an empty home every run, for rehearsing recovery. Never where the agent runs |
-| `just listen` | the running session from its first line, live — or, with nothing running, the last one's tail. `--all` lifts the read ceiling, `--wait` waits for the next, `--live` never closes |
+| `just listen` | the running session from its first line, live — or, with nothing running, the last one's tail. `--all` lifts the read ceiling, `--wait` waits for the next, `--live` never closes, `--remote` serves the live view to the tailnet |
 | `just read <n\|id>` | one transcript whole, and the only reader there is. A row number from `just sessions`, or a session or subagent id. `--subagent K`, `--full` |
 | `just status` | the one-screen answer: what is running and of what kind, what it has spent, whether scheduling is on, what the budget gate sees, what the collection gate is holding, and what this checkout has that is not live |
 
@@ -769,6 +769,38 @@ failed recipe, and the status check that would normalise it never runs because
 the shell is already gone. The trap is the only thing that makes stopping
 ordinary.
 
+## A follow whose terminal goes away
+
+Both traps catch `HUP` as well as `INT`, because a terminal that disappears is
+the same act as Ctrl-C and produces the opposite result: bash takes SIGHUP's
+default action, dies before `stop` runs, and leaves the follow's container up —
+the exact thing the naming and the stop were written for. It is not a
+hypothetical: [`just listen --remote`](#the-live-view-from-another-device)
+serves the follow through ttyd, and ttyd's answer to a client that goes away is
+to signal the process it started.
+
+What that signal reaches was measured on 2026-09-05, with ttyd 1.7.7 and a
+stand-in tree of the same shape (`just` running a recipe that `exec`s a bash
+script that traps):
+
+- **ttyd's close signal reaches the whole process group**, so the trap in this
+  script runs and the tree is gone: `pgrep -P` finds nothing, and `caught.txt`
+  says `HUP`. An orderly close and a connection reset behave identically —
+  there is no separate case for a device that lost the network.
+- **`just` on its own pid ignores `HUP`, `INT` and `TERM`.** Signalling the
+  process ttyd started, if ttyd signalled only that pid, would reach nothing:
+  `just` survives and the script under it never hears. The group is what makes
+  this work, not the pid.
+- **A pty hangup delivers nothing here.** Closing the master leaves both
+  processes alive with their controlling terminal gone (`tty` becomes `?`), and
+  no trap runs. So the window closing is not what cleans up — ttyd's own kill
+  is, and a follow started in a terminal that is closed rather than interrupted
+  still leaves its container behind. That much is unchanged.
+
+The traps stop at `HUP`. `TERM` is not caught: nothing in this repository sends
+one to a follow, and a trap for a caller that does not exist is a line that
+goes stale unread.
+
 ## When a follow ends
 
 A follow does not end when the session does: `tail -F` holds a file that has
@@ -822,6 +854,65 @@ terminal is stopped by SIGTTIN, and it is also what tells `listen` there is no
 keyboard to offer `q` on. The session's own output is held back while a view is
 up, and printed after all if it failed — which is the case where it is the only
 place the reason appears.
+
+## The live view from another device
+
+`just listen --remote` shows the same live transcript on any device on the
+tailnet — a phone, a tablet, the laptop in the other room — that
+`just listen --live` shows here. It puts a web terminal in front of that recipe
+and a tailnet address in front of the web terminal, prints the URL, and holds
+the window: `http://100.x.y.z:7681`, opened in that device's browser.
+
+Nothing to set. `RUNNER_REMOTE_PORT` moves the port off 7681 if something else
+on this machine wants it. `ttyd`, `tailscale` and `tailscaled` must be
+installed — `~/.dotfiles` puts the last two in `~/.local/bin` — and the first
+run asks Tailscale for a login, once: the node's key is kept in
+`${XDG_STATE_HOME:-~/.local/state}/tailscaled`, so every run after it is the
+same machine in the admin console rather than a new one.
+
+**Both halves live and die with the window**, which is the machine's own rule
+and not a nicety. `tailscaled` runs in userspace networking mode — no tun
+device, no root, no system service, and no daemon left behind — and that mode
+is also what makes the port reachable: an inbound connection to the tailnet
+address is proxied to the same port on `127.0.0.1`, which is the only address
+the web terminal is bound to. So the LAN cannot see it, and when the window
+closes this machine is off the tailnet entirely. The cost is the other side of
+the same coin: the stream cannot be started FROM the device that watches it. It
+has to be left running before you go, which is what `--live` is for — it waits
+for the next session, so leaving it up before a scheduled one is the workflow.
+
+`host/session/remote.sh` is the transport and nothing else. `--remote` is caught
+in `listen.sh` ahead of the forwarding to the deployed checkout, so what ttyd
+runs is a plain `just listen --live` that forwards, locks, renders and stops
+exactly as a typed one does. The flag reaches nothing below that line.
+
+Four of ttyd's flags are load-bearing, and three were measured on 2026-09-05
+with ttyd 1.7.7 because the wrong spelling fails silently:
+
+- `--interface 127.0.0.1`, spelled as an address. `-i lo` binds
+  `10.255.255.254`, a second address WSL keeps on the loopback interface —
+  libwebsockets takes the first one there that is not `127.0.0.1` — and the
+  tailnet proxy hands its connections to `127.0.0.1` and nowhere else, so that
+  listener is unreachable from the tailnet while looking perfectly healthy from
+  here. `-i localhost` binds nothing at all and says so nowhere. With no
+  `--interface` it binds `0.0.0.0`, which includes this machine's LAN address.
+- `--max-clients 1`. Every client gets its own child, so a second device — or a
+  second tab — would start a second follow and a second container with it.
+  Measured: a second simultaneous connection is refused, and a reconnect after
+  the first has gone is admitted.
+- **No `--writable`.** ttyd is read-only unless asked, and this is not asked:
+  the page renders, and nothing it sends reaches the session. It also means `q`
+  cannot be pressed from there — the stream is stopped at this end.
+- `--check-origin`, so that a page the viewing browser happens to be visiting
+  cannot open this socket from the side and read the transcript out of it.
+
+A device that sleeps drops the socket, and the reconnect starts the render again
+from the top of the running session. tmux is what would hold the pane across
+that, and tmux is exactly what may not outlive the window here; the replay is
+the price of the rule. What the disconnect does NOT leave behind is a container
+— see [a follow whose terminal goes away](#a-follow-whose-terminal-goes-away),
+which is where the signal that stops it was measured, and which is the reason
+both traps in `listen.sh` catch `HUP`.
 
 ## Opening one finished transcript
 

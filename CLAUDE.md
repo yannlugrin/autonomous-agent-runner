@@ -245,7 +245,7 @@ message is better evidence than any inference from their name.
     image/         everything baked in; the agent may read, never write
     host/          every command's implementation, host-side only, by what you are doing
       lib/           shared: the checkout root, the lock, the session env, docker, forwarding
-      session/       run, chat, shell, test-container, listen, read, status
+      session/       run, chat, shell, test-container, listen, remote, read, status
       archive/       collect, publish-status, sessions, mirror, the archive's setup
       monitor/       the drift audit — what moved in the agent's memory — and
                      what the archive has cost; drift-audit/ is what the
