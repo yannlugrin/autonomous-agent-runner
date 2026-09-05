@@ -773,6 +773,28 @@ agent's own decision, and the closing paragraph still says so. Raised by the
 agent in its review of this branch, and ruled by the operator; the wording is
 theirs.
 
+**What the commit count is accurate about, and what it is not.** Not the
+number. Measured 2026-09-05 by the agent on its own volume, against this
+repository's `git log` as ground truth — single-writer, so a commit whose
+committer date falls in a session's window is a commit that session ran; 120
+sessions, 924 commits. Exact in 107 of 120 before the flag fix and 109 after,
+and **zero ghosts in both arms** — never a nonzero count where the repository
+says nothing was committed. That is the axis the projection is read on, because
+zero renders as no line at all and reads as *nothing was saved*; a count of 2
+where the truth is 4 changes nothing a session would do.
+
+The residual is not a spelling problem and no regex closes it. `fold` increments
+once per Bash call and a call can carry several commits — one specimen ran three
+`git add … && git commit` pairs in a single heredoc call. `findall` is closer and
+worse: of 273 matching calls in that window, 9 carry more than one spelling and
+hold 17 real invocations between them, where `search` counts 9 and `findall`
+would count 21 — because the string holds the command *and* its own prose, and
+one of those 9 was a heredoc writing a review that quoted two spellings and ran
+nothing. Widening the pattern also moved heredoc-only matches from 17 of 362 to
+19 of 371. All of it is over-counting on a number nothing acts on, so it is not
+chased. The measurement is recorded here so the next reader does not re-derive it
+or "fix" the counter into something worse.
+
 **Every value on a top-level line goes through one filter, and it is not
 `quote()`.** The module's invariant — indent every quoted line, strip what
 could end the quoting — held for the passages and not for two fields that never
