@@ -1201,6 +1201,20 @@ pattern line makes grep match every line of every file — which would hold the 
 and read exactly like a catastrophic leak. Nothing is printed at all when there is nothing to
 compare, for the same reason: a pattern file of one empty line is not an empty pattern file.
 
+### The subagent legend was a race
+
+`just sessions` decided whether to print its `+N marks subagents` line with `printf '%s\n'
+"$shown" | grep -q 'msg  +' && …`, and on 2026-09-06 that printed the legend **once in six runs**
+over the same 580 sessions. `grep -q` exits on the first match — row 61 here — and the `printf`
+still feeding it then dies of SIGPIPE, which under `set -o pipefail` becomes the pipeline's
+status, so the `&&` does not fire. Whether printf finishes its 50KB write before grep quits is
+the race, and nothing about the output says which way it went.
+
+It grew in with the archive rather than being wrong from the start: while the whole listing
+fitted in one write there was no window to lose. Matched with a `case` on the variable now, which
+starts no process and cannot lose. It was found by `just records --prove`, which diffs the
+command against a renderer over the session records and had no reason to be intermittent.
+
 
 ## The count without the collection
 

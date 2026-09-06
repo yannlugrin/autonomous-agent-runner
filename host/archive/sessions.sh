@@ -105,8 +105,18 @@ fi
 
 # Said only when one is on screen: a legend for a column that is empty on every
 # row explains nothing, and this list has no column headings for it to sit under.
-printf '%s\n' "$shown" | grep -q 'msg  +' && printf '  %s\n' \
-    "+N marks subagents — 'just read <number> --agent K' reads one"
+#
+# Matched in the shell and not through `grep -q`, which was a race and lost it
+# five times in six. `grep -q` exits on the first match — row 61 of 580 here —
+# and the `printf` feeding it then dies of SIGPIPE, which under `set -o
+# pipefail` is the pipeline's status, so the `&&` never fired. It was silent,
+# intermittent, and grew in with the archive: while the whole listing fitted in
+# one write there was nothing to lose the race with.
+#   see docs/archive.md#the-subagent-legend-was-a-race
+case "$shown" in
+    *"msg  +"*) printf '  %s\n' \
+        "+N marks subagents — 'just read <number> --agent K' reads one" ;;
+esac
 
 
 # --- on screen ---
