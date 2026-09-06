@@ -115,6 +115,21 @@ export RUNNER_SNAPSHOT_LOCK := env_var_or_default("RUNNER_SNAPSHOT_LOCK", "/tmp"
 # branch and pushing over it.
 export RUNNER_CONFIG_LOCK := env_var_or_default("RUNNER_CONFIG_LOCK", "/tmp" / agent_user + "-config-backup.lock")
 
+# One durable record per archived session — when it ran, what it was, what it
+# spent, which commits it made, and which runner built its container. Written
+# once, when every field in it is final, and never rewritten; `just records`
+# writes them here and publishes them to the archive's `cache` branch.
+# see docs/monitor.md#one-record-per-session
+export RUNNER_RECORDS_DIR := env_var_or_default("RUNNER_RECORDS_DIR", runner_cache / "records")
+
+# What the sealing was done against — the three source refs and when. It stays
+# on this host rather than on the branch, which is written once per file: this
+# is the one file that would change on every run.
+export RUNNER_RECORDS_STATE := env_var_or_default("RUNNER_RECORDS_STATE", runner_cache / "records-state.json")
+
+# One writer per branch, as above.
+export RUNNER_RECORDS_LOCK := env_var_or_default("RUNNER_RECORDS_LOCK", "/tmp" / agent_user + "-records-publish.lock")
+
 # How the last unattended run ended, and — until a session actually starts —
 # that nobody has been told about it yet. It also holds which wedged session
 # has already been toasted: one record per run, keyed on that run's start.
@@ -377,6 +392,18 @@ drift-status:
 [arg("ARGS", help="[SESSION-ID...] price those sessions wherever they sit in the archive, matched on the start of the id; no window applies")]
 cost $by_day="no" $days="0" *ARGS:
     @shift 2 && exec host/monitor/cost.sh "$@"
+
+# no-exit-message: an archive with nothing pushed, or a mirror that has never
+# run, is a state and not a defect, and the script says so in its own words.
+[doc("One durable record per archived session — every session end seals its own; --recheck audits them, --prove diffs the present commands against them")]
+[group("monitor")]
+[no-exit-message]
+[arg("recheck", long, value="yes", help="re-derive every stored record and diff it against what is stored, writing nothing")]
+[arg("prove", long, value="yes", help="render what sessions, read, tools and cost print today from the records alone, and diff")]
+[arg("publish", long="no-publish", value="no", help="write the records here and push nothing to the archive")]
+[arg("rewrite", long, help="replace one session's record, for a transcript a redact ruling changed after it sealed")]
+records $recheck="no" $prove="no" $publish="yes" $rewrite="":
+    @exec host/monitor/records.sh
 
 [doc("Count tool calls per day in the archived session transcripts — one line per tool, or name tools for one line per day")]
 [group("monitor")]

@@ -1,10 +1,19 @@
 # shellcheck shell=bash
-# The audit clone — where it and everything the audit writes live, and how the
-# clone is brought up to date.
+# The clones the monitor keeps, where everything it writes lives, and how each
+# is brought up to date. Two of them, reading two different things:
+#
+#   mirror/   the ARCHIVE's mirror of the agent's memory — a copy, refreshed by
+#             a workflow on GitHub's schedule, and what the drift audit reads
+#             because the audit is about what moved between two anchors
+#   memory/   the agent's repository ITSELF, fetched by this host on demand, and
+#             what `just records` reads because a record must be current at the
+#             moment it is sealed rather than as current as an hourly workflow
+#             managed to be
 #
 # Sourced by `drift-audit` and `drift-status`, the two that need the mirror to
-# be current. `drift-accept` and `drift-diff` read the anchors and the clone as
-# they stand, so they source this for the paths and never fetch.
+# be current, by `just records`, which needs the second, and by `drift-accept`
+# and `drift-diff`, which read the anchors and the clone as they stand and so
+# take the paths and never fetch.
 #
 # Working state, not tracked content: everything below sits under
 # RUNNER_MONITOR — `monitor/` inside the project, gitignored, exactly as
@@ -17,6 +26,10 @@
 MONITOR="${RUNNER_MONITOR:?not set — run this through 'just', which computes it}"
 
 AUDIT_CLONE="$MONITOR/mirror"
+# The agent's repository as this host reads it. Bare: nothing is ever checked
+# out of it and nothing is ever written to it — rule 2 is about writing, and
+# this only fetches.
+MEMORY_CLONE="$MONITOR/memory"
 # The session's working directory: the run procedure, the anchors it is given,
 # and the reports it writes. `../mirror` from in there is the clone, which is
 # how the auditor's settings.json spells what it may read.
@@ -75,5 +88,43 @@ sync_clone() {
         || ! git -C "$AUDIT_CLONE" rev-parse --verify -q refs/remotes/mirror/source >/dev/null; then
         echo "Fetched $ARCHIVE_REMOTE and $MIRROR_REF did not land. Nothing audited." >&2
         exit 1
+    fi
+}
+
+
+# --- sync_memory ---
+# The agent's own repository, brought up to date here and now.
+#
+# NOT the mirror, and that is the whole point. The mirror is the archive's copy,
+# advanced by a workflow on GitHub's best-effort schedule, so a record sealed
+# against it would be as current as that workflow last managed to be — which was
+# three days, once. This fetches the source at the moment the record is written,
+# which is what makes "the commits this session made" a settled fact rather than
+# a guess about whether a copy has caught up.
+#
+# It is read and never written: no push refspec, no checkout, no commit. The
+# fetch stamps FETCH_HEAD, and that mtime is how a later run knows how recently
+# the source was actually read.
+#   see docs/monitor.md#the-commits-come-from-the-agents-repository
+
+sync_memory() {
+    # No apostrophe in the message: inside ${var:?word} bash opens a single
+    # quote even within double quotes, and the file then fails to parse far
+    # below, at an error naming neither this line nor the quote.
+    #   see docs/archive.md#a-quoting-trap-in-three-files
+    local remote="${AGENT_REPO:?not set — the repository the agent owns, from .env}"
+
+    if [ ! -d "$MEMORY_CLONE" ]; then
+        mkdir -p "$MONITOR" || exit 1
+        git init -q --bare "$MEMORY_CLONE" || exit 1
+        git -C "$MEMORY_CLONE" remote add origin "$remote" || exit 1
+        git -C "$MEMORY_CLONE" config remote.origin.fetch \
+            '+refs/heads/*:refs/remotes/source/*' || exit 1
+    fi
+
+    if ! git -C "$MEMORY_CLONE" fetch --prune --quiet origin; then
+        echo "Could not reach $remote. The commits a session made cannot be read," >&2
+        echo "so nothing is sealed against a source that may be behind." >&2
+        return 1
     fi
 }

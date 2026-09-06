@@ -412,6 +412,13 @@ host/archive/dispatch-mirror.sh || {
 
 host/archive/publish-status.sh --now || true
 
+# The record of this session, sealed now that everything in it is final: the
+# transcript is on origin, the container's exit hook has pushed the memory and
+# this fetches it, and the snapshot above is newer than this session's start.
+# A session is recorded when it ends, and this is the only moment where no
+# source has to be waited for.  see docs/monitor.md#one-record-per-session
+just records || echo "RECORDS_NOT_SEALED — the reason is above; 'just records' picks it up next time." >&2
+
 echo
 host/session/session-stats.py --since "$started" || true
 

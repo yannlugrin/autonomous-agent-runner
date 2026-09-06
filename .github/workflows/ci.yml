@@ -59,6 +59,9 @@ jobs:
       - name: session-recovery selftest
         run: python3 host/session/session-recovery.py --selftest
 
+      - name: session-records selftest
+        run: python3 host/monitor/session-records.py --selftest
+
   docker-build:
     runs-on: ubuntu-latest
     steps:
