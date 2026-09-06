@@ -351,6 +351,36 @@ came back without a ruling, which is the only failure that section can still
 report.
 
 
+## What joined it, 2026-09-06
+
+`ScheduleWakeup`, `CronCreate`, `CronDelete`, `CronList` and `RemoteTrigger` —
+five bare tool names, the first entries here that are not a command or a path.
+
+A bare tool name in a deny list removes the tool from what a session is served,
+where a scoped rule refuses matching calls and leaves the tool in the list. That
+difference is the whole reason these are here: a session in this container is
+one-shot, nothing these five schedule for after the turn ever runs, and the
+tools say otherwise in their own results. Three sessions ended on that promise
+with their work unwritten — the record, with the transcripts and the dates, is
+in [`docs/sessions.md`](sessions.md), under "A session cannot schedule its own
+return".
+
+**They do not fit the sentence above about what this list holds**, and that is
+deliberate rather than overlooked. Nothing here touches a credential and nothing
+is irreversible; what makes them a boundary entry instead of a default is that
+`allowManagedPermissionRulesOnly` puts them out of reach of every other settings
+source, so no session in this container is served them however it began. A
+`--disallowedTools` flag on `image/claude-session.py` was built first and
+withdrawn on the operator's ruling the same day: it reaches only the sessions
+that wrapper starts, which leaves `--entrypoint claude` and a `claude` the agent
+runs itself.
+
+The same five are denied in `host/monitor/drift-audit/settings.json`. The
+auditor runs on the host with `--setting-sources ""`, so that file is the only
+one it reads and the managed settings above never reach it — two files for one
+rule, because they govern two session universes rather than one.
+
+
 ## check-agent-settings, and why an invariant
 
 `host/release/check-agent-settings.sh` reports any `permissions` block in a

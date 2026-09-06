@@ -858,6 +858,77 @@ is one run's fact, and the record already belongs to that run — see
 [`docs/schedule.md`](schedule.md), under "The wedge alarm".
 
 
+## A session cannot schedule its own return
+
+A container session is one-shot. `run` and `chat` both start `claude -p`: the
+turn ends, the process exits, the container is removed. Nothing runs after
+that and nothing is watching.
+
+Claude Code serves tools that assume otherwise, and their results say so in
+words. `ScheduleWakeup` answers *"Next wakeup scheduled for 00:06:00 (in
+2144s). Nothing more to do this turn — the harness re-invokes you when the
+wakeup fires."* True in an interactive loop, false here.
+
+**Three sessions ended on that sentence.** Read on 2026-09-06 out of the
+archive's `sessions` branch, over 562 sessions:
+
+    2026-08-26  e6b0581a  ended on "I'll wait for the background timer to
+                          complete before continuing"
+    2026-08-27  161f4fdc  ScheduleWakeup(120s) beside a background `until` loop
+                          waiting for 16:18Z that still had 40s to run
+    2026-08-29  30560b30  ScheduleWakeup(2100s), holding five verified drafts
+                          in /tmp — 11 minutes of work
+
+None wrote a journal entry, and none of them is recoverable: each ended its
+turn normally, so `terminal_reason` reads `completed`, the run record says
+`clean`, and the next session is told nothing. The record is right — the
+process did end cleanly. What went wrong sits above it.
+
+`ScheduleWakeup` has three uses in the whole archive; the third, `2db4fc43`,
+called it and closed properly anyway. `CronCreate`, `CronDelete`, `CronList`
+and `RemoteTrigger` have none — served for months and never touched.
+
+**What was done.** The five are `permissions.deny` entries in
+`image/managed-settings.json`, and the same five in
+`host/monitor/drift-audit/settings.json`, which is the only settings source the
+auditor reads. A bare tool name in a deny list removes the tool from what a
+session is served; a scoped rule such as `Bash(rm *)` refuses matching calls
+instead and leaves the tool in the list. Removal is the point here: the trap is
+the offer and the sentence that comes back with it, not the call.
+
+**Why the deny list and not a flag on the session command.** A
+`--disallowedTools` flag in `claude-session.py` reaches only the sessions that
+wrapper starts — a session begun with `--entrypoint claude`, or a `claude` the
+agent runs itself, would be served all five again. Managed settings reach every
+session in the container however it began, and `allowManagedPermissionRulesOnly`
+is what keeps any other source from loosening them.
+
+**A deny measured inside the container proves nothing about the deny.** On
+2026-09-06 a `permissions.deny` written into a probe's own user settings left
+every tool served. That is `allowManagedPermissionRulesOnly` working rather than
+the deny failing — the same fact the `project rules` probe in `just verify`
+exists to show — and reading it as a verdict on deny is how this record first
+recommended the flag. Measured again on the host, where nothing outranks it,
+`deny: ["ScheduleWakeup", "CronCreate"]` removed exactly those two from the
+`init` event's `tools` array and left `CronDelete`, `CronList` and
+`RemoteTrigger` in it.
+
+`disallowedTools` is not a settings key at all. It is subagent frontmatter, an
+SDK option and a CLI flag; a settings file carrying it is read with that key
+ignored and nothing says so.
+
+**What this does not cover.** A cron entry, a systemd timer,
+`.claude/scheduled_tasks.json` and a Cloudflare Worker trigger stay reachable
+through Bash, and auto-mode's *Unauthorized Persistence* rule still names them.
+Its mention of `CronCreate` went with this change: a rule naming a tool nobody
+is served is the redundant half, and the redundant half is what drifts.
+
+**What it does not catch either: a session that finishes and journals nothing.**
+Recovery keys on how the process ended, and these three ended well. Catching
+them needs a check against the agent's repository after a `clean` verdict.
+Not built, and not ruled on.
+
+
 ## Watching a session live
 
 Whether `just listen` FOLLOWS is not a flag. A session that is running is one

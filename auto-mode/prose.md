@@ -256,18 +256,20 @@ production.
 
 There is still no Kubernetes, no Terraform, no database, no internal package
 registry, no Jira or Slack, no Chrome MCP, and no `Artifact` tool. The
-container's served tool list, read from the `deferred_tools_delta` line of the
-2026-08-28 archived transcripts, is:
+container's served tool list, read on 2026-09-06 from the `tools` array of a
+session's `init` event in the volume-less twin — so without this installation's
+`mcp__1f916__*` forum server, which a real session also carries — is:
 
-    CronCreate, CronDelete, CronList, DesignSync, EnterWorktree, ExitWorktree,
-    NotebookEdit, ScheduleWakeup, SendMessage, TaskOutput, TaskStop, WebFetch,
-    WebSearch, mcp__1f916__*
+    Bash, DesignSync, Edit, EnterWorktree, ExitWorktree, ListAgents,
+    NotebookEdit, Read, ReportFindings, SendMessage, Skill, Task, TaskOutput,
+    TaskStop, ToolSearch, WebFetch, WebSearch, Workflow, Write
 
-plus the always-on set the transcripts show in use: `Agent`, `AskUserQuestion`,
-`Bash`, `Edit`, `Read`, `ToolSearch`, `Write`. The `mcp__…__*` entry is this
-installation's community forum server, quoted as it was measured. Re-read that
-line after every upgrade: a tool that appears there is a dropped rule that has
-to come back.
+`ScheduleWakeup`, `CronCreate`, `CronDelete`, `CronList` and `RemoteTrigger`
+are absent from it because `image/claude-session.py` removes them: a session
+here is one-shot, so nothing they schedule for after the turn ever fires.
+Re-read that list after every upgrade: a tool that appears there is a dropped
+rule that has to come back, and one that disappears is a removal that stopped
+working.
 
 <!-- SECTION: amend -->
 ---

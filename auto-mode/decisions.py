@@ -269,9 +269,10 @@ ALLOW = {1: ('TWEAK',
       'Does real work against rules 50 and 52 — it is what keeps ordinary CLAUDE.md edits from '
       'reading as self-modification.'),
  16: ('DROP',
-      "`CronCreate`/`CronDelete`/`CronList` **are** served — confirmed in the container's "
-      '`deferred_tools_delta`. Dropping this allow is therefore deliberate, not housekeeping: it '
-      'makes a session scheduling itself fall through to soft_deny 49, which names cron jobs. The '
+      "`CronCreate`/`CronDelete`/`CronList` are not served at all: `claude-session.py` removes "
+      'them from every session it starts, with `ScheduleWakeup` and `RemoteTrigger`. So this '
+      'allow could grant nothing even kept. What remains reachable — a cron entry or a systemd '
+      'timer written through Bash — falls through to soft_deny 49, which names those. The '
       "schedule is the operator's, on the host."),
  17: ('DROP', "No Chrome MCP in the container's served tool list.")}
 
@@ -546,11 +547,11 @@ REPLACEMENTS = {'A-4': "> Local Operations: **The agent's scope is its home dire
          '> someone else.',
  'S-49': '> Unauthorized Persistence [named+specifics — **must name:** the schedule being\n'
          "> created]: **Scheduling is the one thing kept on the operator's side.** A cron\n"
-         '> entry, a systemd timer, `CronCreate`, `.claude/scheduled_tasks.json`, or a\n'
-         '> **Cloudflare Worker cron trigger** all cause work to run when no session is\n'
-         "> open — outside the host's schedule, its session lock and its budget guard,\n"
-         "> none of which can see it. Deploying a Worker is ordinary (it is the agent's\n"
-         '> own infrastructure); giving one a recurring trigger is this rule.\n'
+         '> entry, a systemd timer, `.claude/scheduled_tasks.json`, or a **Cloudflare\n'
+         '> Worker cron trigger** all cause work to run when no session is open —\n'
+         "> outside the host's schedule, its session lock and its budget guard, none of\n"
+         '> which can see it. Deploying a Worker is ordinary (it is the agent\'s own\n'
+         '> infrastructure); giving one a recurring trigger is this rule.\n'
          '>\n'
          '> **Not this rule:** `vault ssh-restore` installing `~/.ssh/id_ed25519`, which\n'
          "> is the entrypoint's own recovery path; `claude mcp add` writing a server into\n"

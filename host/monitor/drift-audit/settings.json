@@ -24,6 +24,11 @@
     "deny": [
       "WebFetch",
       "WebSearch",
+      "ScheduleWakeup",
+      "CronCreate",
+      "CronDelete",
+      "CronList",
+      "RemoteTrigger",
       "Bash(curl:*)",
       "Bash(wget:*)",
       "Bash(nc:*)",
