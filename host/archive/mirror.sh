@@ -17,6 +17,12 @@ need_archive
 ref="refs/archive/$AGENT_USER"
 workflow="${AGENT_ARCHIVE_WORKFLOW:-mirror-$AGENT_USER.yml}"
 
+# What is wrong, collected as it is found and judged at the end. This recipe
+# used to only describe; a backup that has stopped reads exactly like one that
+# is idle, and describing both in the same words is how three days passed.
+# see docs/archive.md#the-key-goes-on-before-the-secret-goes-in
+problems=()
+
 
 # --- who is mirroring whom ---
 # Slugs are derived, never written down twice: the archive's from the remote,
@@ -67,7 +73,9 @@ else
     # The tip is the agent's activity, not the mirror's health — the ref only
     # moves when the agent pushed. The workflow section below reports health.
     printf '  tip        : %s  %s\n' "$tip" "$(git -C "$ARCHIVE" log -1 --format=%s "$ref")"
-    printf '  written    : %s  (by %s — silence here is a quiet agent, not a fault)\n' "$when" "$AGENT_NAME"
+    # Whether silence here is a quiet agent or a dead mirror is not knowable
+    # from this line — the workflow section decides it, and the verdict says so.
+    printf '  written    : %s  (by %s)\n' "$when" "$AGENT_NAME"
     printf '  commits    : %s\n' "$(git -C "$ARCHIVE" rev-list --count "$ref")"
 fi
 echo
@@ -160,7 +168,20 @@ else
         # is normal and six in a row is not: past that runs are being skipped
         # or failing, whatever the last conclusion was.
         age=$(( ( $(date -u +%s) - $(date -u -d "$created" +%s) ) / 3600 ))
-        [ "$age" -ge 6 ] && printf '  STALE      : %s hours since the last run; it is scheduled hourly.\n' "$age"
+        [ "$age" -ge 6 ] && {
+            printf '  STALE      : %s hours since the last run; it is scheduled hourly.\n' "$age"
+            problems+=("no run for $age hours, on an hourly schedule")
+        }
+
+        # A failing run is the whole reason this recipe judges. How many in a
+        # row, because one is a hiccup and a streak is a broken credential —
+        # asked only when the last one failed, so a healthy mirror costs no
+        # second call.
+        if [ "$(printf '%s' "$run" | jq -r '.[0].conclusion // "-"')" = failure ]; then
+            streak=$(gh run list --repo "$archive" --workflow "$workflow" --limit 100 \
+                       --json conclusion --jq '[.[].conclusion] | index("success") // length' 2>/dev/null)
+            problems+=("the last ${streak:-1} run(s) FAILED — read the log: gh run view --repo $archive --log-failed \$(gh run list --repo $archive --workflow $workflow --limit 1 --json databaseId --jq '.[0].databaseId')")
+        fi
     fi
 fi
 echo
@@ -189,7 +210,12 @@ else
         set -- $(printf '%s' "$raw" | jq -r '"\(.status) \(.ahead_by) \(.behind_by)"')
         case "$1" in
             identical) echo "  current — $source@main is exactly what is mirrored." ;;
-            ahead)     printf '  behind by %s commit(s). The next hourly run fast-forwards.\n' "$2" ;;
+            ahead)     printf '  behind by %s commit(s).\n' "$2"
+                       if [ ${#problems[@]} -eq 0 ]; then
+                           echo "  The next hourly run fast-forwards."
+                       else
+                           problems+=("$2 commit(s) of $AGENT_NAME's memory are NOT mirrored")
+                       fi ;;
             diverged)  printf '  DIVERGED — %s ahead, %s behind. Upstream rewrote history and no run\n' "$2" "$3"
                        echo "  has seen it yet. The next run marks the tip above before resetting." ;;
             *)         printf '  %s (ahead %s, behind %s)\n' "$1" "$2" "$3" ;;
@@ -214,5 +240,28 @@ else
     fi
 fi
 
+
+# --- the verdict ---
+# Last, and it decides the exit status: `just status` and `just verify` read
+# that rather than parsing this screen, so the judgement lives in one place.
+# The mirror is the agent's memory outliving a repository the agent may rewrite
+# — a backup that has stopped is a FAIL here, never a note.
+
 echo
-echo "Run it now:  gh workflow run $workflow --repo ${archive:-<the archive>}"
+if [ ${#problems[@]} -eq 0 ]; then
+    echo "== verdict =="
+    echo "  ok — the backup is running."
+    echo
+    echo "Run it now:  gh workflow run $workflow --repo ${archive:-<the archive>}"
+else
+    echo "== verdict =="
+    echo "  FAIL — THE BACKUP IS NOT RUNNING."
+    for p in "${problems[@]}"; do printf '    - %s\n' "$p"; done
+    echo
+    echo "  Nothing is lost while $AGENT_NAME's own origin holds its memory; what is"
+    echo "  missing is the copy that outlives a rewrite. 'just setup-archive' is what"
+    echo "  replaces the read key when the failure is Permission denied (publickey)."
+    echo
+    echo "Run it now:  gh workflow run $workflow --repo ${archive:-<the archive>}"
+    exit 1
+fi

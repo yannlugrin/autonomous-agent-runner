@@ -1607,9 +1607,29 @@ account, and it does not expire. The raw API is used rather than `gh repo deploy
 are immutable, so rotation is delete-then-add, and only keys matching the title are removed: anything else on
 that repository is not ours to remove.
 
-That step needs *admin* on the agent's repository, which a collaborator does not have — if the agent's account
-owns it, the step is done while logged in as it. When it fails the script prints the public key and the two ways
-to finish by hand; nothing else has to be redone.
+That step needs *admin* on the agent's repository, which a collaborator does not have. On this installation it
+never will: the agent's account is reachable only through a browser, in a private session, so the API path
+cannot run here at all and adding the key by hand is not a fallback but the normal path. Setup prints the key,
+says nothing has changed yet, and waits.
+
+### The key goes on before the secret goes in
+
+The public half is installed and **proved to read** before the private half replaces the secret the mirror is
+running on. A run that cannot finish therefore changes nothing, and the mirror stays on the key it has.
+
+It was written the other way round until 2026-09-06, and the cost was measured rather than imagined. On
+2026-09-03 at 17:30Z `just setup-archive` was run as part of going live with a new runner. It wrote the new
+private key to the archive, then found it could not install the matching public half — no admin — printed *"The
+secret is already set; only this half is left"*, and **exited 0**. Every mirror run from 18:41 that day failed
+`Permission denied (publickey)`: 58 consecutive failures, three days, 245 commits of the agent's memory not
+mirrored. Nothing said so. `just mirror-status` was run two commands later and looked healthy, because the ref
+was still current at that moment; it only went stale from the next hourly run. The `ls-remote` check that would
+have caught it existed already — inside `if [ "$deployed" = true ]`, the one branch that did not need it.
+
+Three things changed as a result: the order above; the check runs on every path; and **nothing is deleted from
+here**. Rotation used to be delete-then-add, because keys are immutable — which destroys the running credential
+first and cannot run at all without admin. Superseded keys are named at the end for the operator to remove once
+the next run is green.
 
 `ssh -T` against github always exits 1 for a deploy key, so it proves nothing. A `ls-remote` does: it is exactly
 what the workflow runs.

@@ -119,6 +119,24 @@ else
 fi
 
 
+# --- is the memory still being backed up ---
+# The verdict only, from the recipe that decides it. Said here because a mirror
+# that has stopped looks exactly like one that is idle, and this screen is
+# where the operator looks when they look at all — it was three days dead in
+# September 2026 with every other line on this page green.
+# see docs/archive.md#the-key-goes-on-before-the-secret-goes-in
+
+echo
+if mirror=$(host/archive/mirror.sh 2>&1); then
+    echo "Backup: the mirror is running."
+else
+    echo "Backup: THE MIRROR IS NOT RUNNING — the agent's memory is not being archived."
+    printf '%s\n' "$mirror" | sed -n 's/^    - /  /p'
+    echo "  'just mirror-status' has the detail."
+fi
+echo
+
+
 # --- whether the agent has granted itself anything ---
 # Here rather than in `verify` because it is a fact about the volume and not
 # about the image: verify proves the candidate on a twin with no volume, and

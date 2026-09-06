@@ -12,9 +12,9 @@
 #   3. a fresh read-only deploy key on the agent's own repository;
 #   4. that key's private half, stored on the archive as <PREFIX>_SOURCE_KEY.
 #
-# Step 3 needs *admin* on the agent's repository, which a collaborator does not
-# have. When it fails the script prints the public key and the two ways to
-# finish by hand; nothing else has to be redone.
+# Step 3 needs *admin* on the agent's repository. Without it the key is added by
+# hand in a browser and this waits; either way step 4 happens only once the new
+# key is proved to read, so a run that cannot finish changes nothing.
 #   see docs/archive.md#the-archives-setup
 set -euo pipefail
 # shellcheck source=SCRIPTDIR/../lib/root.sh
@@ -101,9 +101,21 @@ else
 fi
 
 
-# --- the key pair ---
+# --- the read key on the agent's repository ---
+# THE ORDER IS THE POINT: the public half goes on the agent's repository and is
+# proved to read it before the private half replaces the secret the mirror is
+# running on. A run that cannot finish leaves the working mirror untouched.
+#
+# Nothing is deleted from here. Keys are immutable, so rotation used to be
+# delete-then-add, which destroys the running credential first and cannot run
+# at all without admin; superseded keys are named at the end for you to remove.
+#   see docs/archive.md#the-key-goes-on-before-the-secret-goes-in
 
-step "Key pair"
+step "Read key for $SOURCE"
+
+# Asked before anything is generated, so the run says which path it is on
+# rather than discovering it halfway through.
+admin=$(gh api "repos/$SOURCE" --jq '.permissions.admin // false' 2>/dev/null || echo false)
 
 keydir=$(mktemp -d)
 trap 'rm -rf "$keydir"' EXIT
@@ -111,58 +123,69 @@ ssh-keygen -q -t ed25519 -N '' -C "$TITLE" -f "$keydir/key"
 pub=$(cat "$keydir/key.pub")
 echo "Generated (it lives in a temp dir this script deletes on exit)."
 
-step "Secret $KEY_SECRET on $ARCHIVE_REPO"
-gh secret set "$KEY_SECRET" -R "$ARCHIVE_REPO" < "$keydir/key"
-echo "Set."
-
-
-# --- the deploy key on the agent's repository ---
 # The raw API rather than `gh repo deploy-key`: it takes read_only as an
 # explicit argument instead of a default, and its output does not shift between
-# gh versions.  see docs/archive.md#a-deploy-key-and-who-owns-it
-
-step "Deploy key on $SOURCE"
-
-deployed=false
-if old_ids=$(gh api "repos/$SOURCE/keys" --jq ".[] | select(.title == \"$TITLE\") | .id" 2>/dev/null); then
-    # Keys are immutable, so rotation is delete-then-add. Matching title only:
-    # anything else on that repository is not ours to remove.
-    for id in $old_ids; do
-        gh api -X DELETE "repos/$SOURCE/keys/$id" && echo "Removed previous key $id."
-    done
+# gh versions.
+if [ "$admin" = true ]; then
     gh api "repos/$SOURCE/keys" -f title="$TITLE" -f key="$pub" -F read_only=true \
         --jq '"Added key \(.id), read_only=\(.read_only)."'
-    deployed=true
 else
     cat <<MSG
 
-Cannot manage deploy keys on $SOURCE as $who — that needs admin, and a
-collaborator does not have it. The secret is already set; only this half
-is left. Either:
+  $who has no admin on $SOURCE, so this half is yours to add. That is the
+  normal path when the agent's account is reachable only by browser.
 
-  gh auth switch --user <the account that owns $SOURCE>
-  just archive-setup                 # re-runs clean, generates a new pair
+  https://github.com/$SOURCE/settings/keys/new
 
-or add this public key by hand, read-only (leave "Allow write access"
-unchecked), at
-https://github.com/$SOURCE/settings/keys/new :
+    Title               $TITLE
+    Key                 the line below, whole
+    Allow write access  LEAVE UNCHECKED — this key only reads
 
 $pub
 
+  Nothing has been changed yet. The mirror is still running on the key it
+  has, and stays on it until the check below passes.
+
 MSG
+    read -rp "  press enter once the key is added (ctrl-c to abandon) : " _
 fi
 
-if [ "$deployed" = true ]; then
-    step "Verify the key can read $SOURCE"
-    # ssh -T against github always exits 1 for a deploy key, so it proves
-    # nothing. A ls-remote does: it is exactly what the workflow runs.
-    if GIT_SSH_COMMAND="ssh -i $keydir/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
-       git ls-remote --heads "git@github.com:$SOURCE.git" main >/dev/null; then
-        echo "Read access confirmed."
-    else
-        die "The key was added but cannot read $SOURCE. Check it landed on
-the right repository before trusting the workflow."
+
+step "Verify the key can read $SOURCE"
+
+# ssh -T against github always exits 1 for a deploy key, so it proves nothing.
+# A ls-remote does: it is exactly what the workflow runs. On every path, and
+# before the secret moves — this check sat inside the API branch until
+# 2026-09-06, which is the one branch that did not need it.
+if GIT_SSH_COMMAND="ssh -i $keydir/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+   git ls-remote --heads "git@github.com:$SOURCE.git" main >/dev/null 2>&1; then
+    echo "Read access confirmed."
+else
+    die "The new key cannot read $SOURCE, so it was NOT stored.
+
+Nothing changed: the mirror is still running on whatever key it had. Check the
+key landed on $SOURCE itself, read-only, and run this again."
+fi
+
+
+step "Secret $KEY_SECRET on $ARCHIVE_REPO"
+gh secret set "$KEY_SECRET" -R "$ARCHIVE_REPO" < "$keydir/key"
+echo "Set. The mirror now reads $SOURCE with this key."
+
+if [ "$admin" = true ]; then
+    others=$(gh api "repos/$SOURCE/keys" --jq \
+        ".[] | select(.title == \"$TITLE\") | \"  \(.id)  added \(.created_at)\"" 2>/dev/null | head -20)
+    n=$(printf '%s\n' "$others" | grep -c . || true)
+    if [ "${n:-0}" -gt 1 ]; then
+        echo
+        echo "$n keys on $SOURCE carry this title. The newest is the live one;"
+        echo "remove the others when the next mirror run has gone green:"
+        printf '%s\n' "$others"
     fi
+else
+    echo
+    echo "Remove any older key with this title at"
+    echo "https://github.com/$SOURCE/settings/keys once the next run is green."
 fi
 
 

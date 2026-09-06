@@ -92,6 +92,7 @@ echo
 . host/verify/budget.sh
 . host/verify/session.sh
 . host/verify/prompt.sh
+. host/verify/backup.sh
 
 
 # --- summary ---
