@@ -45,6 +45,13 @@ login and the container's token: the endpoint reports the account, not the
 credential, so on a separate account for the agent the reading would be a
 statement about your quota, not its own.
 
+**One refusal is not yours to configure.** When a window has *nothing left* —
+100% used, not merely past its share — no session starts, whether or not the
+guard is armed and whatever the four percentages say. That is not a budget: the
+account cannot answer a request, so the session would start, stop on the limit,
+and leave the next one a recovery to do for nothing. `just run --ignore-budget`
+overrides it like anything else here.
+
 Two more knobs: `ACCOUNT_BUDGET_CACHE_MINUTES` (5 unless set) is how long a
 reading may be reused, because the usage endpoint allows five requests per
 five minutes for the whole account and a cron line that wakes every minute
@@ -118,6 +125,113 @@ one uses. Half of that is detectable: a `resets_at` further out than the
 assumed length proves the length wrong, and `elapsed_fraction` refuses rather
 than averaging over it. A window that grew *shorter* is invisible, and is the
 reason this is re-probed after every Claude Code upgrade rather than trusted.
+
+
+## Nothing left is not a budget
+
+The four percentages share an allowance out between the operator and the agent. They
+answer "has the agent had its share yet". They do not answer "can the account
+answer a request at all", and the two come apart at exactly one point: a window
+at 100%.
+
+So `exhausted()` in `image/claude-usage.py` reports, separately from `go`, every
+gated window whose `used` has reached 100, and `host/lib/session-env.sh` stands
+the run down on it **whether or not `ACCOUNT_BUDGET_GUARD` is armed**. Ruled
+2026-09-04. Without it, an unarmed installation starts a session against an
+exhausted window; the session stops on the limit within a turn or two, and —
+with `autoContinueAtUsageLimit` off — that stop latches a recovery start the
+next session has to be told about, for a session that never did anything.
+
+**It reports; the host decides.** The exit status of `claude-usage.py` is
+unchanged, on both paths: the tool's rule is that whether a report refuses
+anything belongs to whoever reads it, and the advisory read in the container
+still exits 0 whatever it finds. The line is `EXHAUSTED=` on the `--env` path,
+printed empty when nothing is exhausted and **not printed at all** when the
+reading failed — so absent means there was no reading, which is a different
+answer from "both windows have room".
+
+**A closed window can never be reported.** `evaluate()` already zeroes `used`
+when `resets_at` is in the past, because the percentage still reported belongs
+to the window that ended. That is what stops a spent window holding sessions
+out past its own reset, and `--selftest` covers it.
+
+**`--ignore-budget` overrides this too.** The flag is the operator saying start
+anyway, and a refusal with no way past it is not one this file should invent.
+What it costs is visible within a turn or two.
+
+**What is not covered.** The reading is of the *account*, and the host's login
+is what reads it — so on the day the agent runs on an account of its own, this
+floor would refuse its sessions on the operator's exhaustion. Arming the guard is
+not the escape from that (it has the same problem, and `docs/budget.md` already
+says arming is honest only while one account is behind both); the escape would
+be something that says whose account the host reads. Nothing needs it while one
+account is behind both, and it is not built.
+
+
+## The limit stops the session
+
+Claude Code's default, when a claude.ai usage limit stops a session, is to wait
+for the reset and carry on. At a keyboard that is the right behaviour. On a
+schedule it is the worst one: the container holds the session lock for whatever
+the window has left, every wake-up behind it stands down in silence, and the
+state is indistinguishable from a session that is working. That is the wedge
+alarm's case, and the wedge alarm can only report it.
+
+So `autoContinueAtUsageLimit` is **`false`** in managed settings, set
+2026-09-04. The limit ends the session, and what it was doing is handed to the
+next one — see [`docs/sessions.md`](sessions.md), under "Recovering a session
+that was stopped".
+
+**Managed rank is what makes it hold, and it also removes the toggle.**
+Measured on 2.1.260: the key is in the managed-settings path list, and `/config`
+offers the setting only while it is unset or set in user settings, so a value
+here takes effect and greys the toggle out. Its unset default is not a flat
+`true` — it is derived from a key-presence scan, which is reason enough to set
+it explicitly rather than trust a default to stay what it is.
+
+**How a stopped session is told from a finished one.** Not from the transcript.
+`host/session/run.sh` asks for the print-mode result envelope
+(`--output-format json`) and reads `terminal_reason` out of it. Measured
+2026-09-04 on 2.1.260, both sides:
+
+    # a run that fails. Throwaway container, no volume, a deliberately invalid
+    # token — vault-env.sh leaves it alone, because an already-set value wins.
+    docker run --rm -e CLAUDE_CODE_OAUTH_TOKEN=invalid-token-for-a-probe \
+        --entrypoint claude <image> \
+        -p --output-format json 'Reply with the single word: ok.'; echo "EXIT=$?"
+
+    terminal_reason "api_error"   is_error true    api_error_status 401   EXIT=1
+
+    # a run that succeeds, on a valid login
+    claude -p --output-format json 'Reply with the single word: ok.'
+
+    terminal_reason "completed"   is_error false
+
+Both report `subtype: "success"`.
+
+**`subtype` is not the field.** It reads `success` on a run that failed —
+identical across the two cases above — so a classifier keyed on it would call
+every API-error stop a clean end, in the words a correct one uses. It is the
+obvious field and the wrong one.
+
+**`terminal_reason` decides; `is_error` is evidence.** `is_error` was right in
+the probe and is still not the decider. It is a summary: the binary groups
+`completed`, `max_turns` and `background_requested` together as not-an-error,
+so a session that stopped at its turn limit — one worth recovering — would read
+as clean. And it fails the wrong way when absent: an absent `is_error` reads as
+falsy, reads as no error, and loses the stop, where an absent `terminal_reason`
+is simply not `completed` and routes to recovery. `is_error` and
+`api_error_status` are recorded beside it so a first-of-its-kind ending can be
+diagnosed, and they decide nothing.
+
+**What this does not answer.** Whether a real usage-limit stop reports
+`terminal_reason: "blocking_limit"` — a value the binary carries, distinct from
+`api_error` — or an `api_error` with `errorKind: "rate_limit"`. There is no
+specimen: across all 533 sessions on the archive's `sessions` branch, not one
+ends on an API error record at all. The rule does not depend on the answer,
+since anything that is not `completed` routes to recovery; only the wording of
+the message for that case does. Re-run both probes above after every Claude
+Code upgrade — a version bump is exactly when a silent mechanism stops working.
 
 
 ## The name changed on 2026-08-25

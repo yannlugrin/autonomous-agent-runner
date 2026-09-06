@@ -299,15 +299,21 @@ ago (default 120), it raises a toast naming how long it has been up and
 offering `just run --force`. The threshold's measurement, and why an attended
 `chat` is excluded, are in `docs/sessions.md`.
 
-One toast per wedge, not one a minute: `RUNNER_WEDGE_NOTIFIED` (in
-`~/.cache/<agent>/`, declared in the justfile) holds that session's start time,
-which is what makes the next session a new one without anything having to clear
-the file. It is stamped **before** the alert rather than after, so a notifier
-that hangs cannot become a toast a minute for as long as the wedge lasts.
+One toast per wedge, not one a minute: the run record (`RUNNER_LAST_RUN`, in
+`~/.cache/<agent>/`, declared in the justfile) holds that session's start time
+under `wedged=`, which is what makes the next session a new one without
+anything having to clear it. It is stamped **before** the alert rather than
+after, so a notifier that hangs cannot become a toast a minute for as long as
+the wedge lasts.
+
+This was a file of its own, `RUNNER_WEDGE_NOTIFIED`, until 2026-09-04. It held
+one run's start time; so does the run record, which already exists for that
+run — and two files keyed on one moment is the second one going stale.
 
 The other half of the alarm is the exit trap in `run.sh`: any status but 0, 2
 and 75 raises a toast. 0 worked; 2 is a usage error, which only a terminal can
-produce; 75 is the routine stand-down — cooldown, held lock, over budget —
+produce; 75 is the routine stand-down — cooldown, held lock, over budget, a
+window with nothing left —
 which happens dozens of times a day, and toasting it would teach anyone to
 dismiss the toast without reading it.
 

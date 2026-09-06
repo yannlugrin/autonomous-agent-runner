@@ -638,6 +638,19 @@ def render():
             head = "Idle"
         add('<p class="hero">%s</p>' % head)
 
+        # A stop nobody has been told about yet. It can sit for hours while
+        # wake-ups stand down on the limit that caused it, and only the next
+        # session's opening message clears it — so it belongs on the page
+        # rather than only in `just status`. The sentence carries the meaning;
+        # the tint only repeats it.
+        run = last.get("run") or ""
+        if run.startswith("stopped"):
+            add(
+                '<p class="stale">The last run was stopped (%s). '
+                "The next session opens with what it was doing.</p>"
+                % e(run[len("stopped ") :] or "no reason given")
+            )
+
         word = {
             "enabled": "Scheduling enabled",
             "paused": "Scheduling paused",

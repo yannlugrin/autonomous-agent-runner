@@ -39,6 +39,11 @@ jobs:
       - name: mypy
         run: mypy
 
+      # Every `--selftest` in the repository, and the list is meant to stay
+      # that way: a selftest that only `just verify` runs is proved on the
+      # operator's machine and nowhere else, which is a check that goes
+      # unnoticed the day it starts failing on a pull request.
+      # `grep -rl selftest --include='*.py' host/ image/` is the list.
       - name: bash-guard selftest
         run: python3 image/bash-guard.py --selftest
 
@@ -47,6 +52,12 @@ jobs:
 
       - name: session-cost selftest
         run: python3 image/session-cost.py --selftest
+
+      - name: needles selftest
+        run: python3 host/archive/needles.py --selftest
+
+      - name: session-recovery selftest
+        run: python3 host/session/session-recovery.py --selftest
 
   docker-build:
     runs-on: ubuntu-latest

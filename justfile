@@ -115,11 +115,12 @@ export RUNNER_SNAPSHOT_LOCK := env_var_or_default("RUNNER_SNAPSHOT_LOCK", "/tmp"
 # branch and pushing over it.
 export RUNNER_CONFIG_LOCK := env_var_or_default("RUNNER_CONFIG_LOCK", "/tmp" / agent_user + "-config-backup.lock")
 
-# Which wedged session has already been reported — one toast per wedge, not one
-# a minute. It holds that session's start, which is what makes the next session
-# a new one without anything having to clear the file.
-# see docs/schedule.md
-export RUNNER_WEDGE_NOTIFIED := env_var_or_default("RUNNER_WEDGE_NOTIFIED", runner_cache / "wedge-notified")
+# How the last unattended run ended, and — until a session actually starts —
+# that nobody has been told about it yet. It also holds which wedged session
+# has already been toasted: one record per run, keyed on that run's start.
+# see docs/sessions.md#recovering-a-session-that-was-stopped
+# see docs/schedule.md#the-wedge-alarm
+export RUNNER_LAST_RUN := env_var_or_default("RUNNER_LAST_RUN", runner_cache / "last-run")
 
 # Where cron writes what an unattended run printed. Named in the crontab line
 # `schedule` installs, so a second agent on this host neither shares the log

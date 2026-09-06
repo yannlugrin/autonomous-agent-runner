@@ -538,6 +538,49 @@ got=$(printf '%s' "$raw" | jq -r '[.modelUsage // {} | keys[]] | join(",")' 2>/d
 # session and not two things that happen to be near each other in time.
 
 answer=$(printf '%s' "$raw" | jq -r '.result // ""' 2>/dev/null)
+
+
+# --- the envelope the run record reads ---
+# The same result, through the parser `run.sh` uses. Everything else about the
+# recovery start is proved against planted fixtures, and a fixture cannot
+# notice that the real binary stopped spelling the envelope the way the
+# fixtures assume: a renamed field, or a pretty-printed object, makes every run
+# read `stopped none` and every session open with a recovery it did not need.
+# `just verify` would stay green — the jq above parses either shape.
+#
+# Free: it reuses the session already run for the model check rather than
+# starting one. see docs/verify.md#envelope-read
+#
+# Sourced in a subshell because run-record.sh writes to RUNNER_LAST_RUN, and a
+# probe must not touch the record a real run left there.
+
+envelope_read=$(
+    scratch=$(mktemp -d)
+    printf '%s\n' "$raw" > "$scratch/envelope"
+    export RUNNER_LAST_RUN="$scratch/last-run"
+    # shellcheck source=SCRIPTDIR/../lib/run-record.sh
+    . host/lib/run-record.sh
+    run_envelope_fields "$scratch/envelope"
+    rm -rf "$scratch"
+)
+envelope_reason=$(printf '%s' "$envelope_read" | sed -n 's/^reason=//p' | tail -1)
+
+# A session that never ran cannot answer for how the envelope is spelled. The
+# binary reports `api_error` for "not logged in", so asserting `completed` here
+# names the parser — which did its job, reading exactly what the envelope said.
+# `model` reports the same precondition below and reports it as a LOOK; two
+# probes disagreeing about one precondition is what sent a lapsed credential
+# out as "a mechanism is not doing its job". Measured 2026-09-05.
+
+if ! sees "$answer" "$probe_nonce"; then
+    verdict LOOK "envelope read" "no session ran, so the envelope proves nothing — the model verdict below says why"
+elif [ "$envelope_reason" = completed ]; then
+    verdict ok "envelope read" "a finished session reports terminal_reason=completed, and the run record reads it"
+elif [ -z "$envelope_reason" ] || [ "$envelope_reason" = none ]; then
+    verdict FAIL "envelope read" "UNREADABLE — the run record got no terminal_reason from a real session; every run would read as stopped"
+else
+    verdict FAIL "envelope read" "SAYS '$envelope_reason' — a session that finished is not reporting completed"
+fi
 # shellcheck disable=SC2154  # $want is read once, in host/verify/verify.sh
 printf '         %-22s %s\n' "requested:" "$want"
 # Who authored the conversation is read from the transcript, not inferred:

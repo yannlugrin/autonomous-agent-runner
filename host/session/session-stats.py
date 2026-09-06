@@ -29,56 +29,18 @@ see docs/sessions.md#what-a-session-cost-and-which-model-answered
 import argparse
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
-
-# Required, not defaulted: a fallback naming some other agent's volume reads
-# as "no sessions yet" rather than as a mistake.
-def _required(name):
-    value = os.environ.get(name, "")
-    if not value:
-        sys.exit(f"{name} not set — run this through 'just', which derives it")
-    return value
-
-
-VOLUME = _required("AGENT_VOLUME")
-IMAGE = os.environ.get("RUNNER_EXTRACT_IMAGE", "alpine:3")
-
-# Claude Code files a transcript under the working directory it was started in,
-# encoded. `run` and `chat` both pass -w into the agent's repository, so a
-# session lands here and nothing else does: a `claude` someone typed inside
-# `just shell` files under `-home-agent`, and `just verify`'s probes run with a
-# HOME of their own so their transcripts never reach the volume. Those are
-# deliberately not sessions, and the archive filters on the same directory for
-# the same reason.
-# see docs/verify.md#a-probe-does-not-file-in-the-agents-directory
-# see docs/sessions.md#which-transcripts-are-a-sessions
-PROJECT = _required("AGENT_PROJECT_DIR")
+# Reading one transcript out of the volume is `volume.py`, beside this file and
+# shared with session-recovery.py: two spellings of which directory a session
+# files under do not fail, they answer "no sessions yet".
+import volume
 
 # The boundary file, relative to this script: `host/` and `image/` are siblings
 # under the checkout, and every host script runs from that root anyway.
 ROOT = Path(__file__).resolve().parent.parent.parent
 SETTINGS = ROOT / "image" / "managed-settings.json"
-
-# The newest transcript, plus the sub-agent files that belong to it. The glob is
-# one level deep on purpose: sub-agent transcripts sit a directory further down
-# and would otherwise be candidates for "newest" themselves.
-#
-# --since is what stops a session that wrote no transcript at all from being
-# reported with the previous session's numbers: a container that dies during
-# bootstrap leaves the transcript before it as the newest file in the volume.
-READER = r"""
-f=$(ls -t "/vol/.claude/projects/$PROJECT"/*.jsonl 2>/dev/null | head -1)
-[ -n "$f" ] || exit 3
-[ "$(stat -c %Y "$f")" -ge "$SINCE" ] || exit 4
-cat "$f"
-for s in "${f%.jsonl}"/subagents/*.jsonl; do
-    [ -f "$s" ] && cat "$s"
-done
-exit 0
-"""
 
 
 def stamp(text):
@@ -155,32 +117,12 @@ def model_line(served, requested):
 
 
 def read_transcript(since):
-    proc = subprocess.run(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "-v",
-            f"{VOLUME}:/vol:ro",
-            "-e",
-            f"SINCE={since}",
-            "-e",
-            f"PROJECT={PROJECT}",
-            IMAGE,
-            "sh",
-            "-c",
-            READER,
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode == 3:
-        sys.exit(f"No session transcript under {PROJECT} in the volume yet.")
-    if proc.returncode == 4:
+    try:
+        return volume.read(since).text
+    except volume.NoTranscript as why:
+        if why.reason == "absent":
+            sys.exit(f"No session transcript under {volume.PROJECT} in the volume yet.")
         sys.exit("No transcript newer than this session's start — nothing to summarise.")
-    if proc.returncode != 0:
-        sys.exit(f"Could not read the transcript: {proc.stderr.strip()}")
-    return proc.stdout
 
 
 def summarise(text):
