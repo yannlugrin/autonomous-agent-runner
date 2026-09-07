@@ -1303,6 +1303,27 @@ it starts with `MODEL MISMATCH` or `MODEL UNPINNED` when it has something to
 say, because it is the line an unattended log is grepped for — the same grep
 that finds `COLLECT_FAILED`.
 
+**The alias is compared as a tier, not whole.** `<NAME>_MODEL` may carry a
+context suffix — `opus[1m]` — and Claude Code strips it before the id is sent,
+so the transcript records `claude-opus-5` and the whole alias matches nothing.
+Until 2026-09-07 this line compared the alias whole and reported **every**
+session on such a key as a mismatch, in capitals, in a log that is grepped for
+exactly that word. `just verify` already stripped the suffix and said the same
+run was fine, so the two readers of one question disagreed for as long as the
+key had a suffix.
+
+Three aliases are not judgeable from an id at all: `default` and `opusplan`
+name no single tier, and `best` names two. Those are reported as what they are
+rather than as mismatches, which is the disposition `just verify` reaches by a
+`LOOK`. `sonnet` used to pass here by luck — it is a substring of
+`claude-sonnet-5` — and now passes by rule.
+
+The two comparisons are still two implementations of one judgement, which is
+the shape that drifted in the first place. One definition both called would
+mean a Python helper `host/verify/session.sh` shells out to; that is a larger
+change than this defect bought, and it is the thing to do the next time they
+disagree.
+
 It reads the transcript out of the volume through a throwaway container,
 exactly as `host/archive/read-volume.sh` does and for the same reason:
 nothing here should depend on anything the agent can execute.

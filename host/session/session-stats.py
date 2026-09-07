@@ -108,8 +108,21 @@ def model_line(served, requested):
             f"none: the credential decided"
         )
 
+    # The tier the alias names, which is what a served id can be compared
+    # against: Claude Code strips a `[1m]` suffix before the id is sent, and
+    # the transcript carries the id. Matching the alias whole reported every
+    # session on `opus[1m]` as a mismatch.  see docs/verify.md#model
+    tier = requested.split("[", 1)[0].lower()
+
+    # `default` and `opusplan` name no single tier and `best` names two, so
+    # neither is judgeable from an id — `just verify` answers LOOK on the same
+    # two rather than calling them wrong.
+    if served and tier in ("default", "opusplan"):
+        return f"{answered} answered · {requested} requested, which names no single tier"
+
     def fits(m):
-        return m == requested or requested.lower() in m.lower()
+        low = m.lower()
+        return ("opus" in low or "fable" in low) if tier == "best" else tier in low
 
     if served and all(fits(m) for m in served):
         return f"{answered} answered · {requested} requested"
