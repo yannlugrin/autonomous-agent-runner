@@ -693,17 +693,23 @@ def sleep(window):
     ]
 
 
-def deploy(window, live):
+def deploy(records, live):
     """Section four: how many sessions each build has carried.
+
+    EVERY RECORD, NEVER A WINDOW. The three sections above measure activity and
+    are windowed; this one is the build lineage, and no `-d N` changes which
+    build is live or how much has run on it. Windowed, `-d 14` dropped today and
+    reported the build that went live this morning as carrying nothing — the one
+    sentence the live line exists to be able to say honestly, and then
+    indistinguishable from a build that really has carried nothing.
 
     A null `runner_commit` is correct rather than missing: `deploy.deployed`
     appears in the status snapshots only from 2026-08-28, because before that a
-    build WAS a deploy and there was nothing to attribute to. It has a clause of
-    its own, and the clause goes once those runs age out of the window.
+    build WAS a deploy and there was nothing to attribute to.
     """
     counts = collections.Counter()
     first = {}
-    for _record, run in window.runs:
+    for run in (run for record in records for run in record["runs"]):
         commit = run.get("runner_commit")
         counts[commit] += 1
         if commit and commit not in first:
@@ -816,7 +822,7 @@ def screen(records, name, monitor, days, cost, every=False):
         out += rule("week by week, %s sessions" % UNATTENDED)
         out += weeks
 
-    built = deploy(window, live_commit())
+    built = deploy(records, live_commit())
     if built:
         out += rule("what it ran on")
         out += built
@@ -1026,8 +1032,8 @@ def selftest():
     # The live build is what `deploy --state` says. Right after a deploy it has
     # carried nothing, and a block that showed the newest build seen would name
     # the wrong one for as long as that is true.
-    built = Window([session(20)])
-    built.runs[0][1]["runner_commit"] = "aaaaaaa"
+    built = [session(20)]
+    built[0]["runs"][0]["runner_commit"] = "aaaaaaa"
     check(
         "a fresh deploy carries nothing yet",
         "bbbbbbb is live, 0 sessions" in flat(deploy(built, "bbbbbbb")),
@@ -1044,6 +1050,26 @@ def selftest():
         False,
     )
     check("one deploy is not 1 deploys", "1 deploy since" in flat(deploy(built, None)), True)
+
+    # THE SECTION IS NOT WINDOWED, so the build that went live this morning is
+    # reported on what it has carried and not on the part of that a window kept.
+    # `-d 14` ends yesterday, took today out, and read the live build as having
+    # carried nothing — which is the sentence above, and not distinguishable
+    # from it. `deploy` takes the records for that reason: there is no window to
+    # pass it wrongly.
+    fresh = [on(yesterday), on(datetime.date.today()), on(datetime.date.today())]
+    for record, commit in zip(fresh, ["aaaaaaa", "ccccccc", "ccccccc"], strict=True):
+        record["runs"][0]["runner_commit"] = commit
+    check(
+        "a build that has only run today has still carried it",
+        "ccccccc is live, 2 sessions" in flat(deploy(fresh, "ccccccc")),
+        True,
+    )
+    check(
+        "and the deploy before it is still counted",
+        "2 deploys since" in flat(deploy(fresh, "ccccccc")),
+        True,
+    )
 
     # The cadence is the last seven days and not the archive's life: the
     # `--cooldown` on the crontab line has changed, and the older setting

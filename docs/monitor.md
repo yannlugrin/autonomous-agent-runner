@@ -843,6 +843,15 @@ archive started with, and the newest row read 209 sessions where seven whole
 days held 242. A week the archive does not cover in full is dropped rather than
 shown short, and rows carry their dates.
 
+**"What it ran on" is not windowed.** The three sections above measure activity
+and are windowed; this one is the build lineage, and no `-d N` changes which
+build is live or how much has run on it. Windowed, `-d 14` ended yesterday, took
+today out, and reported the build that went live this morning as carrying
+nothing — which is the sentence a genuinely fresh build gets, and then not
+distinguishable from it. It read `4 deploys since 09-06` under `-d 1`, as though
+there had only ever been four. `deploy` takes the records rather than a window,
+so there is no window to pass it wrongly.
+
 **No block grows without bound.** The daily chart is seven rows and the weekly
 table four, and neither gains a row as the archive ages. `--all` is a reader asking
 for every day of the window, and is not that.
