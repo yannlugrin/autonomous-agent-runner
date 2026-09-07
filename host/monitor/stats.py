@@ -205,8 +205,6 @@ class Window:
             records = [r for r in records if self.since <= local_day(r["start"]) <= self.until]
         self.runs = sorted(runs, key=lambda p: p[1]["from"])
         self.records = records
-        if not self.runs:
-            return
         if not days:
             # Everything the records hold, and the window runs to TODAY rather
             # than to the last day a session ran: a day the agent did not wake
@@ -214,7 +212,7 @@ class Window:
             # make an outage disappear off the end of the daily table exactly
             # when it matters.
             self.until = today
-            self.since = min(local_day(run["from"]) for _r, run in self.runs)
+            self.since = min((local_day(run["from"]) for _r, run in self.runs), default=today)
 
         # The span, and the one denominator every "per day" on the screen uses:
         # a rate over the days the window covers, idle ones included, and not
@@ -378,9 +376,13 @@ def whole(window, cost):
     took, what it produced, what it cost — and then the three that are detail
     rather than headline.
     """
+    # A WINDOW CAN HOLD NO SESSION AT ALL: `-d 1` on a day the agent never woke,
+    # which is what a paused schedule looks like the morning after. Every row
+    # below divides by one, and the daily table under it still draws the days.
+    if not window.runs:
+        return fact([("no sessions", ["nothing ran in this period"])])
+
     auto = window.auto()
-    lengths = [run["to"] - run["from"] for run in auto]
-    longest = max(auto, key=lambda run: run["to"] - run["from"])
     commits = sum(len(run["commits"]) for _r, run in window.runs)
     rows = [
         (
@@ -391,22 +393,40 @@ def whole(window, cost):
             "%s awake" % duration(awake_of(window.runs)),
             [awake_split(window)],
         ),
-        (
-            "%.1fm a session" % (statistics.mean(lengths) / 60),
-            [
-                "%s; the longest was %s on %s"
-                % (UNATTENDED, duration(longest["to"] - longest["from"]), when(longest["from"]))
-            ],
-        ),
+    ]
+    # Skipped rather than printed as a zero, the rule `detail()` follows: a
+    # window holding only `just chat` has no unattended session to average, to
+    # call the longest, or to divide its commits by.
+    if auto:
+        lengths = [run["to"] - run["from"] for run in auto]
+        longest = max(auto, key=lambda run: run["to"] - run["from"])
+        rows.append(
+            (
+                "%.1fm a session" % (statistics.mean(lengths) / 60),
+                [
+                    "%s; the longest was %s on %s"
+                    % (
+                        UNATTENDED,
+                        duration(longest["to"] - longest["from"]),
+                        when(longest["from"]),
+                    )
+                ],
+            )
+        )
+    rows.append(
         (
             "%d commits" % commits,
-            ["%.1f a session, %.0f a day" % (commits / len(auto), commits / window.days)],
-        ),
+            ["%.1f a session, %.0f a day" % (commits / len(auto), commits / window.days)]
+            if auto
+            else ["%.0f a day" % (commits / window.days)],
+        )
+    )
+    rows.append(
         (
             "$%.0f at list rates" % sum(usd_of(r, cost) for r in window.records),
             ["what this traffic would cost per token — weight, never money spent"],
-        ),
-    ]
+        )
+    )
     return fact(rows + detail(window))
 
 
@@ -508,7 +528,11 @@ def recent(window, cost):
     # `--cooldown`; how long it worked is the work. Two days here ran 35 sessions
     # each and one of them was two and a half hours busier, which a count cannot
     # show. The bars sum to the `unattended` half of the awake figure below.
-    peak = max(sum(lengths[d]) for d in days) or 1
+    # Over the days that are DRAWN, today included: the bars share one scale or
+    # they cannot be read against each other, and today drawn against a peak it
+    # was not in overflows the line on any day busier than the week behind it.
+    # It is also the whole table on a store whose only day is today.
+    peak = max(sum(lengths[d]) for d in days + [partial]) or 1
 
     def row(day):
         chat = counts[(day, "chat")]
@@ -916,6 +940,46 @@ def selftest():
     check("seven rows unless asked", Window(span, days=14).full, RECENT)
     check("and every day when asked", Window(span, days=14, every=True).full, 14)
     check("--all alone takes the whole record", Window(span, every=True).full, 20)
+
+    # A WINDOW CAN HOLD NO SESSION AT ALL: `-d 1` on a day the agent never woke,
+    # which is what a paused schedule looks like the morning after. The dates
+    # come from the flag rather than from a run, so there is still a period to
+    # name and a table of noughts to draw; it was an AttributeError, because the
+    # window stopped building itself the moment it found nothing in it.
+    stale = [on(yesterday - datetime.timedelta(days=39))]
+    empty = Window(stale, days=3)
+    check("an empty window still knows its period", empty.until, yesterday)
+    check(
+        "and reaches back the days asked for", empty.since, yesterday - datetime.timedelta(days=2)
+    )
+    check("and still draws them", empty.full, 3)
+    check(
+        "and divides nothing by nought",
+        flat(whole(empty, cost)),
+        "no sessions nothing ran in this period",
+    )
+
+    # Only `just chat` ran in the window: there is no unattended session to
+    # average or to call the longest, so that row is skipped rather than printed
+    # as a nought — the rule `detail()` follows. It was a ValueError.
+    chatted = flat(whole(Window([on(yesterday, kind="chat")], days=3), cost))
+    check(
+        "a chat-only window counts what it has", "1 sessions 0 unattended, 1 chat" in chatted, True
+    )
+    check("and skips the unattended average", "m a session" in chatted, False)
+    check("which is there whenever a session was", "m a session" in flat(whole(asked, cost)), True)
+
+    # THE BARS SHARE ONE SCALE, and today is the only row not among the days the
+    # scale is taken over. Drawn against a peak it was not in, today overflowed
+    # the line on any day busier than the week behind it; and a store whose only
+    # day is today has no full day at all, which was a ValueError of its own.
+    def bar_of(records):
+        drawn = [line for line in recent(Window(records), cost) if "today, up to" in line]
+        return drawn[0].count("\u2588")
+
+    now = datetime.date.today()
+    check("today is drawn on the same scale", bar_of([on(yesterday, 10), on(now, 600)]), BAR)
+    check("and a store whose only day is today draws", bar_of([on(now)]), BAR)
 
     # `to - from` per run and never `end - start`: the resumed transcript in the
     # archive spans 8h34m for 3h25m of work.
