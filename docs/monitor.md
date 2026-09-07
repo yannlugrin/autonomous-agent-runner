@@ -456,9 +456,9 @@ print over a message. Measured on 2026-09-06 over 582 transcripts:
 
 Nothing else separates them. The probes carry the same `cwd`, the same
 `permission_mode` and the same `effort` as a real session; they are short, and
-shortness is not a rule. `cwd` looks like a discriminator and is not: its two
-values are `/home/cairnfield/cairnfield` and `/home/cairn/cairn`, which is the
-agent's earlier name and a real session either way.
+shortness is not a rule. `cwd` looks like a discriminator and is not: it holds
+two values, the checkout under the agent's name and under an earlier one, and a
+real session either way.
 
 The marker is matched literally, exactly as `chat --continue` matches it, so
 changing `OPERATOR_NAME` stops the operator's marker matching transcripts
@@ -876,7 +876,7 @@ ever did without either being wrong.
 
 ### The count spelled out
 
-The opening line prints our count in words — `Cairnfield stands at its
+The opening line prints our count in words — `<agent> stands at its
 five-hundred-and-sixty-ninth session.` — and the agent's own journal headings
 carry the same number in the same idiom, so **the two agreeing is a check that
 costs nothing**. It is silent when they agree. On a mismatch it prints the
