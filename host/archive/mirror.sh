@@ -16,6 +16,12 @@ need_archive
 
 ref="refs/archive/$AGENT_USER"
 workflow="${AGENT_ARCHIVE_WORKFLOW:-mirror-$AGENT_USER.yml}"
+# The job inside that workflow that IS the backup. Named rather than derived:
+# the workflow examples/archive ships has this one job, and an archive is free
+# to carry others beside it — a run's own conclusion covers all of them and so
+# says nothing about whether the memory was mirrored.
+#   see docs/archive.md#the-run-is-not-the-backup
+backup_job=mirror
 
 # What is wrong, collected as it is found and judged at the end. This recipe
 # used to only describe; a backup that has stopped reads exactly like one that
@@ -153,7 +159,7 @@ else
     fi
 
     run=$(gh run list --repo "$archive" --workflow "$workflow" --limit 1 \
-            --json status,conclusion,createdAt,url 2>/dev/null)
+            --json databaseId,status,conclusion,createdAt,url 2>/dev/null)
     if [ -z "$run" ] || [ "$run" = "[]" ]; then
         echo "  last run   : never"
     else
@@ -173,14 +179,52 @@ else
             problems+=("no run for $age hours, on an hourly schedule")
         }
 
-        # A failing run is the whole reason this recipe judges. How many in a
-        # row, because one is a hiccup and a streak is a broken credential —
-        # asked only when the last one failed, so a healthy mirror costs no
-        # second call.
+        # A failing run is the whole reason this recipe judges, and the run
+        # is not the backup: a workflow may carry jobs beside the mirror, and
+        # any one of them failing makes the whole run read failure. So the jobs
+        # are read and the verdict is taken from the one that mirrors — asked
+        # only when the last run failed, so a healthy mirror costs no second
+        # call.  see docs/archive.md#the-run-is-not-the-backup
         if [ "$(printf '%s' "$run" | jq -r '.[0].conclusion // "-"')" = failure ]; then
-            streak=$(gh run list --repo "$archive" --workflow "$workflow" --limit 100 \
-                       --json conclusion --jq '[.[].conclusion] | index("success") // length' 2>/dev/null)
-            problems+=("the last ${streak:-1} run(s) FAILED — read the log: gh run view --repo $archive --log-failed \$(gh run list --repo $archive --workflow $workflow --limit 1 --json databaseId --jq '.[0].databaseId')")
+            id=$(printf '%s' "$run" | jq -r '.[0].databaseId')
+            log="gh run view --repo $archive --log-failed $id"
+            jobs=$(gh run view "$id" --repo "$archive" --json jobs \
+                     --jq '.jobs[] | "\(.name)\t\(.conclusion // "-")"' 2>/dev/null)
+            state_of=$(printf '%s\n' "$jobs" | awk -F'\t' -v j="$backup_job" '$1 == j {print $2}')
+            # Everything that is not the backup and did not come out of the run
+            # clean. `skipped` is a job that was not asked to run and is not a
+            # failure of anything.
+            others=$(printf '%s\n' "$jobs" \
+                       | awk -F'\t' -v j="$backup_job" \
+                             'NF && $1 != j && $2 != "success" && $2 != "skipped" {print $1}' \
+                       | paste -sd', ' -)
+            if [ "$state_of" = success ]; then
+                # Loud, and deliberately not a problem: the memory reached the
+                # ref. Whatever else that workflow does is the archive's own
+                # business and has its own alarm, and calling it a dead backup
+                # is how a real one stops being believed.
+                printf '  backup job : ok — %s succeeded, and the ref above is what it wrote.\n' "$backup_job"
+                printf '  OTHER JOB  : %s failed, and that is why the run reads failure.\n' \
+                    "${others:-a job this host could not name}"
+                printf '               %s\n' "$log"
+            else
+                # How many runs in a row, because one is a hiccup and a streak
+                # is a broken credential. Nought when a run has succeeded in
+                # the seconds between the two calls, and a streak of no runs
+                # is not something to print.
+                streak=$(gh run list --repo "$archive" --workflow "$workflow" --limit 100 \
+                           --json conclusion --jq '[.[].conclusion] | index("success") // length' 2>/dev/null)
+                [ "${streak:-0}" -gt 0 ] 2>/dev/null || streak=1
+                # A job that could not be read is not one that passed: an
+                # archive whose workflow has no such job lands here as well,
+                # and the log is the next step for either.
+                if [ -n "$state_of" ]; then
+                    why="the $backup_job job FAILED"
+                else
+                    why="the last run FAILED and no $backup_job job could be read in it"
+                fi
+                problems+=("$why; $streak run(s) have failed in a row — read the log: $log")
+            fi
         fi
     fi
 fi

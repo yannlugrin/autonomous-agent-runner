@@ -1550,6 +1550,33 @@ captured as if it were the answer. The exit status is the only thing worth testi
 The mirror is scheduled hourly and GitHub drops scheduled runs under load, so a missed hour is normal and six
 in a row is not: past that runs are being skipped or failing, whatever the last conclusion was.
 
+### The run is not the backup
+
+A run's conclusion covers every job in it, and only one of them is the backup. The workflow
+`examples/archive/` ships has the single job `mirror`; an archive is free to carry others beside it, and this
+one does — a job that copies the memory into Google Drive so a Claude Project can read it. Any job failing
+makes the whole run read `failure`.
+
+**Measured 2026-09-07.** `QUESTION.md` outgrew the Google Docs ceiling and the Drive job refused it, six runs
+in a row between 05:54 and 12:02 UTC. Every one of those runs had `mirror=success`: the memory was on the ref,
+on time, the whole morning. `just mirror-status` and `just verify` said **THE BACKUP IS NOT RUNNING** for six
+hours about a backup that was running, which is the failure this whole recipe exists to make credible and
+cannot afford to cry.
+
+So the jobs of a failed run are read — one extra call, and only when the run failed, so a healthy mirror still
+costs what it did — and the verdict is taken from the job named `mirror`:
+
+- it succeeded: the run's failure is somebody else's job, named on its own line under `OTHER JOB` with the log
+  command beside it, and **not** a problem. The exit status stays zero, so `verify` stays green. What that
+  other job is worth alarming about is the archive's business, not this host's, and GitHub already mails a
+  failed scheduled run to the repository's owner.
+- it failed, or the run holds no job by that name: the problem the recipe has always raised, worded for which
+  of the two it is. A job that could not be read is not a job that passed.
+
+The streak beside it counts *runs* and not that job's runs, which is what a hundred conclusions can answer in
+one call; it is a signal about the credential, not a count of backups lost. It is floored at one because the
+two calls are seconds apart and a run finishing between them would otherwise print a streak of nought.
+
 ### Against the source
 
 The mirror can be healthy and still be behind, so `just mirror` asks the forge what upstream actually holds
