@@ -494,9 +494,11 @@ def budget_section(fields, guarded, verdict, now):
             detail += " · resets %s" % resets
         # Close to the line is worth saying before it refuses: the gate stands
         # a session down at 100% of the allowance, and nothing else on this
-        # screen would say the week is nearly spent.
+        # screen would say the week is nearly spent. Past the line it says
+        # nothing new — the over-budget problem below carries the same window
+        # and the same number, and the top line would print both.
         ratio = number(parts.get("ratio"))
-        if ratio is not None and ratio >= NEARLY_SPENT:
+        if ratio is not None and NEARLY_SPENT <= ratio < 100:
             verdict.watch("the %s budget is at %d%% of its allowance" % (label, ratio))
         # The label and the ratio in fixed columns, so the deciding number is
         # under the deciding number and not wherever the word before it ended.
@@ -1110,8 +1112,12 @@ def selftest():
         budget_pressure(read_budget(True, reading.replace("ratio=95", "ratio=40")))[0],
         "clear",
     )
-    rows = budget_section(read_budget(True, over), True, v, now)
-    check("over budget is a problem", [level for level, _ in v.found][-1:], [PROBLEM])
+    budget_section(read_budget(True, over), True, v, now)
+    check(
+        "over budget is a problem, and not also a watch saying it again",
+        v.found,
+        [(PROBLEM, "over budget — no unattended session starts")],
+    )
 
     # --- what is running now ---
     check(
