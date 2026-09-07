@@ -494,23 +494,17 @@ def recent(window, cost):
     lengths = collections.defaultdict(list)
     # Today's runs are folded in whatever the window is: its row is an addendum
     # below the break and belongs to no period, so `-d 14` keeps it out of the
-    # totals without taking it off screen.
-    #
-    # ADDED ONLY WHEN THE WINDOW STOPS SHORT OF TODAY, which is only when one was
-    # asked for. With no `-d`, `runs` was never filtered and already holds today,
-    # so adding it again drew every one of today's sessions twice -- the count
-    # and the awake column and the bar, while `mean` and `ctx+out` survived
-    # because doubling a list does not move its mean. That is what made the row
-    # read as plausible: the only witness on screen was the section above, whose
-    # total is three sessions larger than the sixteen day rows and was six.
-    addendum = window.today if window.until < datetime.date.today() else []
-    for record, run in window.runs + addendum:
+    # totals without taking it off screen. ADDED ONLY WHEN THE WINDOW STOPS
+    # SHORT OF TODAY, which is the only time `runs` does not already hold it.
+    short = window.until < datetime.date.today()
+    today_runs = window.today if short else []
+    today_records = window.today_records if short else []
+    for record, run in window.runs + today_runs:
         day = local_day(run["from"])
         counts[(day, record["kind"])] += 1
         if record["kind"] == "auto":
             lengths[day].append(run["to"] - run["from"])
     context = collections.defaultdict(list)
-    today_records = window.today_records if window.until < datetime.date.today() else []
     for record in window.transcripts("auto") + [r for r in today_records if r["kind"] == "auto"]:
         context[local_day(record["start"])].append(
             record["end_context"] + sum(u["output"] for u in record["usage"])
@@ -918,13 +912,10 @@ def selftest():
     )
 
     # THE SAME ROW ON THE PATH THAT IS NOT NARROWED, which is the default screen
-    # and `--all`. Every check above builds its window with `days=14`, where the
-    # filter has already taken today out of `runs` and adding it back is right.
-    # With no `-d` nothing was filtered, today was added to a list it was in, and
-    # one session read as two for as long as this file has existed. The fixtures
-    # that could have caught it are here -- `Window(span)` appears twice below --
-    # and neither puts a run on today, so the branch had no case rather than a
-    # failing one.
+    # and `--all`. Every other check on that row passes `days=14`, where the
+    # filter has already taken today out of `runs`; the one unfiltered window
+    # below asserts `.full`, which is computed from dates and cannot see a
+    # doubled count.
     def today_row(window):
         return [line for line in recent(window, cost) if "today, up to" in line][0].split()
 
