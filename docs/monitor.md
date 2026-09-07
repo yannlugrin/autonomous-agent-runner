@@ -921,6 +921,12 @@ line.** Every line opens with a number and a noun, so a section is scanned
 rather than read, and everything after the gap belongs to the figure before it.
 A breakdown wraps between items, never inside one.
 
+**The grammar is `host/lib/screen.py`, and `just status` is written in it too.**
+The heading, the headline-number-then-detail line, the `115h 40m` duration and
+the reader of the record store live there and are imported by both: a second
+copy of `fact` would be the one that starts wrapping differently, and a reader
+who has learnt one screen has learnt the other.
+
 **A table only where the rows are compared with each other** — the days and the
 weeks — which is the one thing a table is for.
 

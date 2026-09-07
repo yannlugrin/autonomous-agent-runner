@@ -33,7 +33,6 @@ import argparse
 import collections
 import datetime
 import importlib.util
-import json
 import math
 import os
 import statistics
@@ -68,16 +67,32 @@ SHORT = "unatt."
 LABEL = "%s time" % SHORT
 
 
-def load_cost():
-    """image/session-cost.py, the only price table there is."""
-    spec = importlib.util.spec_from_file_location(
-        "session_cost", os.path.join(CHECKOUT, "image/session-cost.py")
-    )
+def load_module(path, name):
+    """A host script beside this one, loaded by path: these run from a checkout
+    and are not an installed package."""
+    spec = importlib.util.spec_from_file_location(name, os.path.join(CHECKOUT, path))
     if spec is None or spec.loader is None:
-        sys.exit("Could not load image/session-cost.py")
+        sys.exit("Could not load %s" % path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+# The screen's grammar and the store's reader, shared with `just status` so the
+# two screens cannot drift apart.  see host/lib/screen.py
+screen_lib = load_module("host/lib/screen.py", "screen")
+WIDTH = screen_lib.WIDTH
+rule = screen_lib.rule
+fact = screen_lib.fact
+duration = screen_lib.duration
+when = screen_lib.when
+local_day = screen_lib.local_day
+load = screen_lib.load
+
+
+def load_cost():
+    """image/session-cost.py, the only price table there is."""
+    return load_module("image/session-cost.py", "session_cost")
 
 
 # --------------------------------------------------------------------------
@@ -152,30 +167,6 @@ def spellings(n):
 # --------------------------------------------------------------------------
 
 
-def load(root):
-    """Every sealed record that describes a real session."""
-    found = []
-    for base, _dirs, names in os.walk(root):
-        for name in sorted(names):
-            if not name.endswith(".json"):
-                continue
-            with open(os.path.join(base, name)) as handle:
-                record = json.load(handle)
-            # A probe is not a session, and no care about a window fixes a
-            # denominator.  see docs/monitor.md#a-probe-is-not-a-session
-            #
-            # A record with no runs has no timestamps at all — an undated
-            # transcript — so there is no day to place it on and nothing here
-            # could count it either way.
-            if record.get("started_by") and record["runs"]:
-                found.append(record)
-    return found
-
-
-def local_day(ts):
-    return datetime.date.fromtimestamp(ts)
-
-
 class Window:
     """The records and the runs the screen reports on, and the days they sit in.
 
@@ -240,48 +231,6 @@ class Window:
 # --------------------------------------------------------------------------
 # Rendering
 # --------------------------------------------------------------------------
-
-
-WIDTH = 78
-
-
-def rule(title):
-    """A section heading, and the screen's only structure.
-
-    A rule and not colour, and not bold: the operator is deutan colourblind, and
-    a pipe or a file has to carry the same structure a terminal does.
-    """
-    head = "── %s " % title.upper()
-    return ["", head + "─" * max(0, WIDTH - len(head)), ""]
-
-
-def fact(rows):
-    """A headline number, then what it is made of, on the same line.
-
-    Everything after the gap belongs to the figure before it, so what relates to
-    what needs no explaining, and a section opening every line with a number and
-    a noun is scanned rather than read.
-    see docs/monitor.md#the-shape-of-the-screen
-    """
-    width = max(len(head) for head, _detail in rows)
-    out = []
-    for head, detail in rows:
-        first, *rest = detail
-        out.append(("   " + head.ljust(width) + "   " + first).rstrip())
-        out += ["   " + " " * width + "   " + more for more in rest]
-    return out
-
-
-def duration(seconds):
-    """`115h 40m`, with the space: at a terminal's stroke weight `h` and `4` are
-    the same mark, and `115h40m` has to be parsed rather than read."""
-    if seconds >= 3600:
-        return "%dh %02dm" % (seconds // 3600, (seconds % 3600) // 60)
-    return "%dm" % (seconds // 60)
-
-
-def when(ts):
-    return datetime.datetime.fromtimestamp(ts).strftime("%m-%d %H:%M")
 
 
 def usd_of(record, cost, reprice=False):
