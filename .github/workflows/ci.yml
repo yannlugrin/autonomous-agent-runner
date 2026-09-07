@@ -62,6 +62,9 @@ jobs:
       - name: session-records selftest
         run: python3 host/monitor/session-records.py --selftest
 
+      - name: stats selftest
+        run: python3 host/monitor/stats.py --selftest
+
   docker-build:
     runs-on: ubuntu-latest
     steps:

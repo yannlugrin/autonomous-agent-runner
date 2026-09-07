@@ -753,3 +753,229 @@ session. Each of those makes the command and the store read different archives.
 `just read` is proved by a hex fragment of an id rather than by a listing
 position — a full uuid has dashes in it and that recipe takes hex — and the
 position is the ordering the `sessions` diff already proves.
+
+## The stats screen
+
+`just stats` is one screen answering "what has the agent been doing, and is that
+changing". It reads the sealed records and nothing else — no transcript, no jq
+filter, no volume — and one fact from outside them: which build is live, from
+`just deploy --state`, along with the agent's newest journal heading from this
+host's clone of its repository. Neither is required; the screen renders without
+either and says which line did not run. There is nothing in `.env` to set.
+
+`host/monitor/stats.sh` is the front, because the store may not exist yet and
+that is a state with a command that fixes it; `host/monitor/stats.py` is the
+arithmetic and the screen.
+
+| handle | what it does |
+| --- | --- |
+| `just stats` | the screen, over everything the records hold |
+| `just stats -d N` | over the last N **whole** days, ending yesterday, with ⌈N/7⌉ rows in the weekly table |
+| `just stats --all` | a row for every day of the window rather than the last seven |
+| `stats.py --selftest` | the speller, the periods, the shapes. In CI |
+
+### What every number counts
+
+**The unit is the run, and the transcript never appears on screen.** `chat
+--continue` appends to the file it resumes, so one archived transcript holds two
+runs today and the screen reports 7 chat sessions over 6 files without
+remarking on it — carrying a reconciliation that should never recur is noise on
+every future run of the command.
+
+**Two denominators live in one record and mixing them is silent.** `runs` is per
+run; `messages`, `end_context`, `usage`, `denials` and `subagents` are per
+transcript. Every per-transcript figure is a mean over the count of
+**transcripts**, never over the count of runs. The two differ by one today, so a
+mistake of this kind shows up in no number at all.
+
+**Durations are `to - from` per run, never `end - start`.** The one resumed
+transcript spans 8h 34m for 3h 25m of work, with fifteen unattended sessions
+inside the gap.
+
+**`started_by` is what separates a session from a probe**, and nothing else can.
+See "A probe is not a session" above.
+
+**`awake` is every session, and the detail names the parts.** The screen once
+said `115h 40m awake` in one section counting unattended runs only and `69h 51m
+awake` in another counting every run, neither stated. The split is on the line
+now — `128h 05m awake · 116h 33m unattended, 11h 31m chat` — and the per-session
+mean is unattended only, on a line of its own, because a conversation averages
+99 minutes against 12 and would swamp it.
+
+**Everything else in the daily and weekly tables is unattended**, so a
+conversation cannot swing a column on the two days one happened.
+
+### The periods
+
+**A period is whole days and today is never in one.** Today is a few hours old
+and the days beside it are twenty-four; on one list they read as comparable and
+the newest row is always the low bar. Today has a row of its own below a break,
+labelled with the clock — `today, up to 02:41`, which reads the same at any
+hour — and it is drawn whatever the window is, being an addendum that belongs to
+no period.
+
+**`-d N` is N complete days ending yesterday.** Counting back from today spent
+one of the N on however many hours today had lived, so `-d 14` covered thirteen
+days and a morning and the weekly table showed one row where two were asked for.
+
+**The default window runs to today, not to the last day a session ran.** A day
+the agent did not wake is still a day, and every day gets a row including the
+ones nothing ran on: a day missing from the table is indistinguishable from a
+day nothing happened on, and the second is the one worth seeing. An outage reads
+as rows of noughts with the hours showing as the longest it went without a
+session.
+
+**Awake and asleep close on the period exactly.** Midnight to midnight over the
+complete days the table shows, so seven days is 168 hours and `awake + asleep`
+is 168 hours, checkable against the dates on the rows. `asleep` is everything in
+the period that is not a session — not the sum of the gaps between them, which
+is short by the time before the first and after the last. A session crossing
+midnight is clipped at the boundary. The period ends at the last complete day
+and never at `now`: the records know nothing of a session running, so a period
+reaching to now would count its minutes as sleep and could name them the
+longest. **A silence that began today is therefore in no figure here**; `just
+status` answers for the current moment.
+
+**Every weekly row is seven complete days or it is not a row.** The table is
+read down a column, so rows of different length cannot sit under one heading —
+it once compared 6 days and 2 hours against a full week against the 3 days the
+archive started with, and the newest row read 209 sessions where seven whole
+days held 242. A week the archive does not cover in full is dropped rather than
+shown short, and rows carry their dates.
+
+**No block grows without bound.** The daily chart is seven rows and the weekly
+table four, and neither gains a row as the archive ages. `--all` is a reader asking
+for every day of the window, and is not that.
+
+### Nothing is measured against a setting
+
+**`--cooldown` is config, not a measurement, and no figure on this screen is
+built on it.** It decides how long the agent waits between sessions; it was 15
+minutes, it is 20, and it can be 30 tonight. Two figures were built on it and
+both were struck:
+
+- **A median gap is the setting read back off the screen.** Under `* * * * * just
+  run --cooldown N` the interval is N plus the container's teardown and the next
+  one's boot, so the line printed `median gap 20m` beside a `--cooldown 20`.
+- **A percentage against today's cooldown is worse, because it looks like a
+  measurement.** `+7% on the 20m cooldown` compares seven days of history
+  against a number read a second ago; raise the cooldown to 30 and tomorrow's
+  screen reports −30% with nothing changed but a crontab line. The operator's
+  ruling, 2026-09-07: *"it's config, not stat, you cannot use that number for
+  anything"*.
+
+**The share awake is the measure.** It falls when sessions stop running whatever
+the cooldown is, and it needs no source outside the records.
+
+One measurement worth keeping, because it will be re-derived otherwise: **a
+median is not an average, and "the time between two sessions" has two readings.**
+Over the last 7 days, end-to-next-start was 20.4m median against 21.4m mean, and
+start-to-next-start 36.4m against 41.3m. One pause moves the mean and not the
+median, and the agent's own journal reports a higher number than this screen
+ever did without either being wrong.
+
+### The count spelled out
+
+The opening line prints our count in words — `Cairnfield stands at its
+five-hundred-and-sixty-ninth session.` — and the agent's own journal headings
+carry the same number in the same idiom, so **the two agreeing is a check that
+costs nothing**. It is silent when they agree. On a mismatch it prints the
+heading and says which is which: **ours is the count, its heading is a label it
+maintains** — the heading was wrong by 34 for eleven hours on 2026-09-01 with
+nothing able to say so.
+
+**Compare by rendering, never by parsing.** There is no words-to-integer parser:
+the count is spelled out and the heading tested for that exact string, so the
+comparison cannot drift from the line printed above it.
+
+**The idiom was measured rather than guessed.** The journal on 2026-09-07 held
+522 distinct spellings across 756 headings and `spellings()` reproduces 521 of
+them; the miss is `(last session)`, not an ordinal. It found the thing a
+hand-written speller gets wrong: **the agent drops the leading `one` below a
+thousand** — `hundred-and-first`, never `one-hundred-and-first`, in all 86 of the
+spellings it has used between 100 and 199. Above a thousand both forms are
+accepted and only the shorter printed, because which it reaches for is its
+choice and an alarm that cries wolf is one nobody reads.
+
+**A journal that cannot be read is not agreement.** The line says the check did
+not run, and why.
+
+### The shape of the screen
+
+**Four titled sections**, in the order someone opens the screen to read them:
+what it has done in all, what the last week looked like, whether that is
+changing, and what it ran on. Nine blocks at one weight with no grouping is a
+page with no way in.
+
+**Inside a section a fact is a headline number, then its detail on the same
+line.** Every line opens with a number and a noun, so a section is scanned
+rather than read, and everything after the gap belongs to the figure before it.
+A breakdown wraps between items, never inside one.
+
+**A table only where the rows are compared with each other** — the days and the
+weeks — which is the one thing a table is for.
+
+**The bar is time awake, not a count of sessions.** How often it woke is mostly
+`--cooldown`; how long it worked is the work. Two days here ran 35 sessions each
+and differed by two and a half hours, which a count cannot show. The seven bars
+sum to the `unattended` half of the awake line beneath them.
+
+**Colour carries nothing** and neither does weight: the operator is deutan
+colourblind, and a pipe or a file has to carry the same structure a terminal
+does. Bar length is the only figure. `zebra` is not used — it exists so a row
+can be followed across ten columns, and the widest table here has seven.
+
+**A duration is written `115h 40m`, with the space.** At a terminal's stroke
+weight `h` and `4` are the same mark, and `115h40m` has to be parsed rather than
+read.
+
+### Money
+
+The header sums each session's own `usd` **plus its sub-agents'**. The record
+stores no total on purpose, because "what a session cost" means either the main
+chain or the main chain plus what it delegated to; this is the second, and
+sub-agents are $27.78 of $2532.
+
+The weekly `$/session` column **re-prices** each session's stored components
+against today's table rather than summing what is stored, so a column comparing
+weeks across a rate change is one ruler rather than two. A model
+`image/session-cost.py` no longer holds keeps its stored figure and is never
+priced as zero.
+
+`image/session-cost.py` is the only price table; `stats` restates no rate.
+Whatever prints money says what it is: API list rates for the same traffic, not
+money spent, and it does not convert into the subscription's allowance.
+
+### What the screen does not show
+
+Each was drafted and struck. The reason is here so it is not re-proposed.
+
+`334 refusals — 167 automode-blocked, 105 user-rejected, …` was removed on
+2026-09-07 and is **not** in the table below: the operator wants something shown
+for tools and is deciding what. The `denials` field is in every record and
+nothing reads it.
+
+| | why |
+| --- | --- |
+| a median or mean gap between sessions | it is `--cooldown` plus a minute of teardown and boot, so it reports the crontab back to the operator |
+
+| `28 sub-agents from 24 calls` | the disagreement between `subagents[]` and `agent_calls[]` is real and unjoinable, but it is a curiosity rather than a signal |
+| `N ran to fewer than 4 messages` | the archive holds only sessions that changed state, so the line can only report zero |
+| `N% of unattended sessions committed` | same reason. `1.9 commits a session` stays, being a distribution rather than a proportion of a curated set |
+| any transcript-versus-run count | the unit is the run; saying so on every run is noise about an anomaly that should not recur |
+| the journal counted against the archive | it counted a three-day mirror outage as forgetting and the 2026-08-25 compaction as omissions, and cannot tell either from a real gap by counting alone. That corpus belongs to the drift audit, which reads it with an agent |
+| an hour-of-day or weekday histogram | cron decides it; it would report the operator's own crontab back to them |
+| a cost breakdown, or `--by-day` | `just cost` and `just tools` own those |
+
+### A build that just went live has carried nothing
+
+The deploy section names the build `deploy --state` calls live, not the newest
+one the records have seen: right after a deploy those differ and the live one
+has zero sessions against it, which is the state the block most needs to show.
+With no answer from `deploy` it falls back to the newest seen and does not call
+it live.
+
+231 runs carry a null `runner_commit`, and that is correct rather than missing:
+`deploy.deployed` appears in the status snapshots only from 2026-08-28, because
+before that a build *was* a deploy. The clause saying so goes once those runs
+age out of the window.

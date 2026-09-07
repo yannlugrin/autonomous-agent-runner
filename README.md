@@ -391,6 +391,7 @@ the measurements.
 | `just drift-status` | the mirror ref, the two anchors and how far behind each is, and the last runs. It fetches first |
 | `just cost` | what the archived sessions cost, priced from their own transcripts. `--by-day`, `-d N`, or session ids. API list rates: weight, not an invoice |
 | `just tools` | how many times each tool was called, per day (`-d N`), in the archived transcripts; name tools for one line per day |
+| `just stats` | what the agent has been doing, and whether that is changing — one screen over the sealed records: how many unattended sessions and how long, the last seven days day by day, the weeks side by side, and which build carried what. `-d N` narrows it to the last N whole days, today excluded |
 | `just records` | one durable record per archived session — what it was, what it spent, what it committed, which runner built it. Every session end seals its own and publishes it to the archive's `cache` branch, so this is machinery rather than something to type; `--recheck`, `--rewrite` and `--prove` are what a person runs |
 
 ### release

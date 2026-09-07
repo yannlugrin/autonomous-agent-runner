@@ -405,6 +405,16 @@ cost $by_day="no" $days="0" *ARGS:
 records $recheck="no" $prove="no" $publish="yes" $rewrite="":
     @exec host/monitor/records.sh
 
+# no-exit-message: a store with no records in it is a state and not a defect,
+# and the script names the command that fills it.
+[doc("What the agent has been doing, and whether that is changing — one screen from the sealed records; -d N narrows it to N whole days, --all gives every one a row")]
+[group("monitor")]
+[no-exit-message]
+[arg("days", long, short="d", pattern='\d+', help="how many whole days back to report on, ending yesterday; 0 is everything the records hold, with four weeks in the weekly table")]
+[arg("all", long, value="yes", help="a row for every day of the window, not the last seven")]
+stats $days="0" $all="no":
+    @exec host/monitor/stats.sh
+
 [doc("Count tool calls per day in the archived session transcripts — one line per tool, or name tools for one line per day")]
 [group("monitor")]
 [no-exit-message]
