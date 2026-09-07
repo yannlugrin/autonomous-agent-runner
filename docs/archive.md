@@ -1552,78 +1552,30 @@ in a row is not: past that runs are being skipped or failing, whatever the last 
 
 ### A reading that failed is not a judgement
 
-Two readings in this recipe were taken as answers when they had failed, and both ended as
-`FAIL — THE BACKUP IS NOT RUNNING` on a mirror that had run twelve minutes earlier. Measured 2026-09-07, on
-this host's `date` (uutils coreutils 0.8.0), `gh` 2.100.0 and `jq` 1.8.1.
+Two readings were taken as answers when they had failed, and both ended as FAIL — THE BACKUP IS NOT RUNNING on
+a mirror that had just run. Measured 2026-09-07, with `date` (uutils coreutils 0.8.0), `gh` 2.100.0, `jq` 1.8.1:
 
-**The timestamp.** `date -d ""` is not an error here: the empty string reads as *today at 00:00*. So a
-`createdAt` that came back empty did not fail the arithmetic — it made the last run as old as the day, and
-`[ "$age" -ge 6 ]` is true every day after 06:00 UTC:
+- `date -d ""` is not an error here — the empty string is *today at 00:00*, so an empty `createdAt` made the
+  last run as old as the day and passed the six-hour threshold every day after 06:00 UTC.
+- `set -- $(… jq …)` leaves the positionals UNSET when jq parses nothing, and `case "$1"` under `set -u` is
+  then where the recipe *ends*: no verdict, exit 1, and `verify` printed `[FAIL] backup running` with no
+  reason at all. `gh api … 2>&1` folds stderr in, so any warning on a successful call poisons the JSON.
 
-    last run   : 2026-09-07 00:00:00 +0200
-    STALE      : 13 hours since the last run; it is scheduled hourly.
-        - no run for 13 hours, on an hourly schedule
-
-Reproduced by handing the run list an error body — `{"message":"Bad credentials"}` — which is the shape that
-arrives when `gh` fails and writes to stdout, the trap recorded one section up. On a `date` that rejects the
-empty string the same fault lands in the second symptom below instead.
-
-**The comparison.** `set -- $(… jq …)` splits three fields into `$1 $2 $3`, and an answer jq cannot parse
-leaves nothing to split, so the positionals stay UNSET. Under `set -u`, `case "$1"` is where the recipe
-*ends* — no verdict, exit 1:
-
-    == against the source ==
-    jq: parse error: Invalid numeric literal at line 1, column 3
-    host/archive/mirror.sh: line 212: $1: unbound variable
-
-`gh api … 2>&1` folds stderr into the answer so the else-branch can match on the message, which means any
-warning `gh` writes on a *successful* call poisons the JSON.
-
-**The symptom downstream is what makes this worth a record.** `verify` builds its reason from the lines under
-`== verdict ==`, and a recipe that died never printed one, so the screen read:
-
-      [FAIL] backup running
-
-and nothing else — a mechanism this probe could not tell from a stopped backup, on a backup that was running.
-Six probes green either side of it.
-
-So: `createdAt` is read with `// empty` and is what decides whether `gh` answered with a run list at all — no
-timestamp is `COULD NOT BE READ` and judges nothing, and the age is computed only from one that parsed. The
-comparison is read with `read -r` rather than `set --`, so the three fields are always assigned and an empty
-status is its own case. And `backup.sh` says so when it has nothing to say: a `FAIL` with no reasons now
-carries the last line the recipe printed, which is the bash error naming the line it died on.
-
-**And the exit status grew a third answer**, because an ok on a reading that failed is the same lie as a FAIL
-on one: 0 ran, 1 stopped, **2 could not be read**. The recipe prints `UNPROVEN` and the readings that failed;
-`verify` maps it to `LOOK` — unreachable is never ok there, and this is not a mechanism that stopped —
-and `just status` says the backup was neither seen running nor seen stopped. Only 1 stands a session down.
+So: `createdAt` is read with `// empty` and an age is computed only from a timestamp that parsed; fields are
+read with `read -r` and never `set --`; and the answer is three, not two — 0 ran, 1 stopped, 2 could not be
+read, which `verify` maps to `LOOK`. Only 1 stands a session down. A FAIL with no reasons carries the last
+line the recipe printed, which names the line it died on.
 
 ### The run is not the backup
 
-A run's conclusion covers every job in it, and only one of them is the backup. The workflow
-`examples/archive/` ships has the single job `mirror`; an archive is free to carry others beside it, and this
-one does — a job that copies the memory into Google Drive so a Claude Project can read it. Any job failing
-makes the whole run read `failure`.
+A run's conclusion covers every job in it. The workflow `examples/archive/` ships has the single job `mirror`;
+an archive may carry others — this one syncs the memory to Google Drive — and any of them failing makes the
+run read `failure`. Measured 2026-09-07: six runs in a row read failure with `mirror=success` in every one, so
+the recipe said THE BACKUP IS NOT RUNNING for six hours about a backup that was running.
 
-**Measured 2026-09-07.** `QUESTION.md` outgrew the Google Docs ceiling and the Drive job refused it, six runs
-in a row between 05:54 and 12:02 UTC. Every one of those runs had `mirror=success`: the memory was on the ref,
-on time, the whole morning. `just mirror-status` and `just verify` said **THE BACKUP IS NOT RUNNING** for six
-hours about a backup that was running, which is the failure this whole recipe exists to make credible and
-cannot afford to cry.
-
-So the jobs of a failed run are read — one extra call, and only when the run failed, so a healthy mirror still
-costs what it did — and the verdict is taken from the job named `mirror`:
-
-- it succeeded: the run's failure is somebody else's job, named on its own line under `OTHER JOB` with the log
-  command beside it, and **not** a problem. The exit status stays zero, so `verify` stays green. What that
-  other job is worth alarming about is the archive's business, not this host's, and GitHub already mails a
-  failed scheduled run to the repository's owner.
-- it failed, or the run holds no job by that name: the problem the recipe has always raised, worded for which
-  of the two it is. A job that could not be read is not a job that passed.
-
-The streak beside it counts *runs* and not that job's runs, which is what a hundred conclusions can answer in
-one call; it is a signal about the credential, not a count of backups lost. It is floored at one because the
-two calls are seconds apart and a run finishing between them would otherwise print a streak of nought.
+So a failed run has its jobs read — one call, only when the run failed — and the verdict is the job named
+`mirror`. Another job failing is a line and not a problem. A job that could not be read is not a job that
+passed, and lands with the ones that failed.
 
 ### Against the source
 
