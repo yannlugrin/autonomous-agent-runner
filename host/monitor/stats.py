@@ -494,16 +494,18 @@ def recent(window, cost):
     lengths = collections.defaultdict(list)
     # Today's runs are folded in whatever the window is: its row is an addendum
     # below the break and belongs to no period, so `-d 14` keeps it out of the
-    # totals without taking it off screen.
-    for record, run in window.runs + window.today:
+    # totals without taking it off screen. ADDED ONLY WHEN THE WINDOW STOPS
+    # SHORT OF TODAY, which is the only time `runs` does not already hold it.
+    short = window.until < datetime.date.today()
+    today_runs = window.today if short else []
+    today_records = window.today_records if short else []
+    for record, run in window.runs + today_runs:
         day = local_day(run["from"])
         counts[(day, record["kind"])] += 1
         if record["kind"] == "auto":
             lengths[day].append(run["to"] - run["from"])
     context = collections.defaultdict(list)
-    for record in window.transcripts("auto") + [
-        r for r in window.today_records if r["kind"] == "auto"
-    ]:
+    for record in window.transcripts("auto") + [r for r in today_records if r["kind"] == "auto"]:
         context[local_day(record["start"])].append(
             record["end_context"] + sum(u["output"] for u in record["usage"])
         )
@@ -908,6 +910,20 @@ def selftest():
         len(weekly(asked, cost, math.ceil(14 / 7))) - 1,
         2,
     )
+
+    # THE SAME ROW ON THE PATH THAT IS NOT NARROWED, which is the default screen
+    # and `--all`. Every other check on that row passes `days=14`, where the
+    # filter has already taken today out of `runs`; the one unfiltered window
+    # below asserts `.full`, which is computed from dates and cannot see a
+    # doubled count.
+    def today_row(window):
+        return [line for line in recent(window, cost) if "today, up to" in line][0].split()
+
+    check("the default screen counts today once", today_row(Window(span))[1], "1")
+    check("and does not double its awake column", " ".join(today_row(Window(span))[2:4]), "1h 00m")
+    check("--all counts today once too", today_row(Window(span, every=True))[1], "1")
+    # The negative control: the narrowed path was always right and stays right.
+    check("and so does -d 14, as it always did", today_row(asked)[1], "1")
 
     # `--all` gives every day of the window a row. The seven-row cap is on what
     # the screen does BY ITSELF, which is the fault it exists for; a reader
