@@ -5,7 +5,7 @@ set -uo pipefail
 # shellcheck source=SCRIPTDIR/../lib/root.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
 
-usage='Usage: just schedule [--enable [--cron "M H D M W"] [--cooldown MINUTES]] | --pause | --disable | --relocate | --state'
+usage='Usage: just schedule [--enable [--cron "M H D M W"]] | --pause | --disable | --relocate | --state'
 
 
 # --- which verb ---
@@ -24,16 +24,11 @@ for verb in enable pause disable relocate state; do
     mode="$verb"
 done
 
-# Not a `just` pattern on the recipe: a pattern is checked against the empty
-# DEFAULT too, which is how a value that was not said is told from one that was.
-case "$cooldown" in
-    ''|*[!0-9]*) [ -z "$cooldown" ] || { echo "--cooldown wants a number of minutes." >&2; exit 2; } ;;
-esac
-
-# Both describe an entry rather than install one. A flag that quietly turned the
-# report into an install is how a schedule nobody meant to touch gets replaced.
-if [ "$mode" != enable ] && { [ -n "$cron" ] || [ -n "$cooldown" ]; }; then
-    echo "--cron and --cooldown describe the entry; --enable is what installs it." >&2
+# It describes an entry rather than installing one. A flag that quietly turned
+# the report into an install is how a schedule nobody meant to touch gets
+# replaced.
+if [ "$mode" != enable ] && [ -n "$cron" ]; then
+    echo "--cron describes the entry; --enable is what installs it." >&2
     echo "$usage" >&2
     exit 2
 fi
@@ -108,11 +103,18 @@ load() {
     # Read out of the installed line, never rebuilt from this invocation's
     # defaults: a hand-edited hour or log path is what a report must tell.
     entry_cron="$(printf '%s' "$entry" | awk '{print $1, $2, $3, $4, $5}')"
-    entry_cooldown=0
+    # `just run --cooldown N` is what this recipe wrote until the cadence moved
+    # into <NAME>_WAKE_DEFAULT. The flag no longer exists, so a line still
+    # carrying it fails at parse time — every minute, into a log nobody reads.
+    # Stripped here, at the one place the entry is read, so that every path that
+    # rewrites it (--enable, --relocate, which `just deploy` calls) emits a
+    # clean line and the migration needs nothing typed.
+    # see docs/schedule.md#the-cadence-left-the-crontab
     case "$entry" in
-        *' --cooldown '*) t="${entry##* --cooldown }"; entry_cooldown="${t%% *}" ;;
+        *' --cooldown '*)
+            t="${entry##* --cooldown }"
+            entry="${entry%% --cooldown *} ${t#* }" ;;
     esac
-    case "$entry_cooldown" in ''|*[!0-9]*) entry_cooldown=0 ;; esac
     entry_log=''
     case "$entry" in *'>> '*) t="${entry##*>> }"; entry_log="${t%% *}" ;; esac
     # Whether this is a line this script would build here — what --enable may
@@ -155,7 +157,7 @@ report() {
     if [ "$had" = no ]; then
         echo "Nothing is scheduled. Sessions happen only when you start one."
         echo
-        echo "    just schedule --enable [--cron \"M H D M W\"] [--cooldown MINUTES]"
+        echo "    just schedule --enable [--cron \"M H D M W\"]"
         return
     fi
     if [ "${1:-}" != brief ]; then
@@ -167,11 +169,10 @@ report() {
     fi
     echo
     printf '  when      %s\n' "$entry_cron"
-    if [ "$entry_cooldown" -gt 0 ]; then
-        printf '  cooldown  %s minutes since the last session ended\n' "$entry_cooldown"
-    else
-        printf '  cooldown  none — every wake-up starts a session unless one is running\n'
-    fi
+    # How long a wake-up then waits is not in this line and never appears in the
+    # report: it is <NAME>_WAKE_DEFAULT, and `just verify` is where a reader is
+    # told what this installation set. Naming it here would be a second copy of
+    # a number this file does not own.
     printf '  log       %s\n' "$entry_log"
     if [ "$ours" = no ]; then
         echo
@@ -182,13 +183,9 @@ report() {
     echo
     crontab -l | grep -A1 -F "$marker"
     echo
-    if [ "$entry_cooldown" -gt 0 ]; then
-        echo "A wake-up that declines exits 75 and writes nothing, so the log stays a"
-        echo "record of sessions rather than of ticks. Nothing rotates it."
-    else
-        echo "A wake-up that stands down for a session already running is exit 75,"
-        echo "and says in the log which one. Nothing rotates that log."
-    fi
+    echo "A wake-up that declines exits 75 and writes nothing, so the log stays a"
+    echo "record of sessions rather than of ticks. Nothing rotates it."
+
     # An entry cron never reads is the failure this report is for: the crontab
     # looks the same either way, and so does a machine with nothing to do.
     case "$(cron_daemon)" in
@@ -227,7 +224,6 @@ state)
         [ "$paused" = yes ] && echo "state: paused" || echo "state: enabled"
         echo "daemon: $(cron_daemon)"
         echo "cron: $entry_cron"
-        echo "cooldown: $entry_cooldown"
     fi
     exit 0 ;;
 disable)
@@ -256,9 +252,10 @@ pause)
     exit 0 ;;
 relocate)
     # Called by `just deploy` once the deployed checkout exists. Only the
-    # directory and the PATH move — the expression, the cooldown, the log and
-    # whether it is paused all stay, because a deploy is not a decision about
-    # any of those, and relocating must never be the way a pause ends.
+    # directory and the PATH move — the expression, the log and whether it is
+    # paused all stay, because a deploy is not a decision about any of those,
+    # and relocating must never be the way a pause ends. A `--cooldown` left by
+    # an older installation is dropped, because the flag no longer exists.
     # see docs/release.md
     if [ "$had" = no ]; then
         echo "Nothing scheduled — nothing to relocate."
@@ -283,7 +280,7 @@ relocate)
         *' cd '*' && PATH='*) ;;
         *)  echo "The installed entry is not one this recipe wrote, so its directory cannot be moved safely:" >&2
             echo "  $entry" >&2
-            echo "Reinstall it: just schedule --enable [--cron …] [--cooldown N]" >&2
+            echo "Reinstall it: just schedule --enable [--cron …]" >&2
             exit 1 ;;
     esac
     moved="${entry%% cd *} cd $here && PATH=${entry#* && PATH=}"
@@ -302,12 +299,12 @@ esac
 
 
 # --- --enable, from here down ---
-# With neither --cron nor --cooldown it means "on" and nothing more, both paths
+# With no --cron it means "on" and nothing more, both paths
 # with a current PATH. Rebuilding the line from this invocation's defaults would
 # turn an `--enable` a fortnight after `--cron "*/20 * * * *"` into a silent
 # move back to the hour.
 
-if [ -z "$cron" ] && [ -z "$cooldown" ] && [ "$had" = yes ]; then
+if [ -z "$cron" ] && [ "$had" = yes ]; then
     fresh=$(with_current_path "$entry")
     if [ "$paused" = yes ]; then
         replace "$fresh" || exit 1
@@ -325,9 +322,9 @@ fi
 
 
 # --- --enable with an entry to build ---
-# What was not said is inherited from the entry that is there, so `--enable
-# --cooldown 15` moves the cooldown and leaves the hour where it was. The
-# defaults apply only when there is nothing to inherit.
+# What was not said is inherited from the entry that is there, so `--enable`
+# after a `--relocate` leaves the hour where it was. The default applies only
+# when there is nothing to inherit.
 #
 # Only from a line this recipe built, though: five fields cut off the front of
 # an arbitrary line are five fields whatever that line says. Refused rather than
@@ -343,10 +340,6 @@ fi
 if [ -z "$cron" ]; then
     [ "$ours" = yes ] && cron="$entry_cron" || cron='17 * * * *'
 fi
-if [ -z "$cooldown" ]; then
-    [ "$ours" = yes ] && cooldown="$entry_cooldown" || cooldown=0
-fi
-
 # Checked here rather than discovered by cron at the next tick: a wrong field
 # count lands as a valid line meaning something else entirely, and the symptom
 # is sessions at times nobody chose. Inherited values are checked too.
@@ -358,7 +351,7 @@ fi
 
 # A % in a crontab command means a newline unless escaped, so one here would cut
 # the line in half and feed the remainder to a command that asked for none.
-case "$cron$cooldown" in
+case "$cron" in
     *%*) echo "A % means a newline to cron. Escape it or leave it out." >&2; exit 2 ;;
 esac
 
@@ -373,9 +366,11 @@ esac
 # No timeout either — a session takes as long as it takes, and the price is that
 # a wedged one holds the lock until `just run --force`. see docs/sessions.md
 #
-# --cooldown makes the schedule a floor rather than a clock: cron wakes on the
-# expression and `run` decides whether the last session ended long enough ago.
-# see docs/schedule.md#the-cooldown-is-a-floor
+# The expression decides only when cron LOOKS. How long a wake-up then waits is
+# <NAME>_WAKE_DEFAULT, read by `just run` from .env — so this line never has to
+# be rewritten to change the cadence, and there is no way to install one whose
+# cadence was forgotten.
+# see docs/schedule.md#the-cadence-left-the-crontab
 
 log="$RUNNER_RUN_LOG"
 mkdir -p "$(dirname "$log")" 2>/dev/null || true
@@ -387,9 +382,7 @@ if [ ! -e "$here/justfile" ]; then
     exit 1
 fi
 
-runcmd='just run'
-[ "$cooldown" -gt 0 ] && runcmd="just run --cooldown $cooldown"
-line="$cron cd $here && PATH=$(cron_path) $runcmd >> $log 2>&1"
+line="$cron cd $here && PATH=$(cron_path) just run >> $log 2>&1"
 
 mkdir -p "$(dirname "$log")"
 replace "$line" || exit 1

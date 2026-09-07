@@ -19,6 +19,12 @@
 # told about the other's crash.
 RUNNER_LAST_RUN="${RUNNER_LAST_RUN:?not set — run this through 'just', which derives it from the agent name}"
 
+# The bounds a session's own request is held to, and the arithmetic over the
+# two stamps. Sourced rather than inlined because three readers need it and
+# only one of them is this file.
+# shellcheck source=SCRIPTDIR/wake-request.sh
+. "$(dirname -- "${BASH_SOURCE[0]}")/wake-request.sh"
+
 
 # --- what a record holds ---
 # `key=value` lines, appended in the order the facts become true. Not JSON, so
@@ -37,6 +43,14 @@ RUNNER_LAST_RUN="${RUNNER_LAST_RUN:?not set — run this through 'just', which d
 #              the rest of the envelope — evidence, and they decide nothing
 #   wedged     the session start already reported as a wedge, so a hang toasts
 #              once rather than once a minute
+#   asked_wake_after
+#              minutes the closing message asked to be woken in, ABSENT when it
+#              asked for nothing. What was asked, never what was allowed, and
+#              written whether or not the feature is armed: a run of records
+#              saying 240 beside a `wake_after` of 120 is a ceiling set too low,
+#              and nothing else here would ever say so
+#   wake_after the minutes that govern the next wake-up — that ask, clamped, or
+#              the default wait when there was no ask
 #
 # Why `reason` decides and `is_error` does not is in docs/budget.md, under
 # "The limit stops the session".
@@ -72,7 +86,31 @@ run_record_close() {
         printf 'ended=%s\n' "$(date +%s)"
         printf 'status=%s\n' "$status"
         run_envelope_fields "$envelope"
+        run_wake_fields "$envelope"
     } 2>/dev/null >> "$RUNNER_LAST_RUN" || true
+}
+
+
+# --- what the next wake-up will read ---
+# Decided here rather than where it is read, so the record holds the number
+# that was in force rather than one recomputed later against bounds that have
+# since moved. The default is the exception and stays live: it is read from
+# .env at the moment it applies, so changing it takes effect on the next
+# wake-up rather than on the one after.
+#
+# The one seam is arming the request: the record written by the last session
+# before it was armed holds that session's default, so the first wake-up after
+# arming waits that instead of the ask beside it. One session, at a number that
+# was a legitimate wait.
+
+run_wake_fields() {
+    local asked wake=""
+    asked=$(wake_asked "$(run_envelope_result "${1:-}")")
+    if [ -n "$asked" ]; then
+        printf 'asked_wake_after=%s\n' "$asked"
+        if wake_armed; then wake=$(wake_clamp "$asked") || wake=""; fi
+    fi
+    printf 'wake_after=%s\n' "${wake:-$(wake_default)}"
 }
 
 
@@ -146,6 +184,26 @@ run_record_verdict() {
     reason=$(run_record_field reason)
     [ "$reason" = completed ] && { printf 'clean\n'; return; }
     printf 'stopped %s\n' "${reason:-unknown}"
+}
+
+
+# --- when the last unattended session ended ---
+# As an ISO-8601 UTC instant, for the container to be told. It lives here
+# because the record is the only thing that knows it: the stamp session-lock.sh
+# keeps counts conversations too, so `<NAME>_LAST_SESSION_ENDED` cannot answer
+# "when did the last UNATTENDED one end", and neither can it be derived from
+# that variable and the chat one together.
+#
+# Nothing when the record has no ending — a session still running, one that was
+# killed, or no record at all — and a future instant reads as nothing for the
+# reason session-lock.sh gives: both readings decline to pretend.
+
+run_record_ended_at() {
+    local last
+    last=$(run_record_field ended)
+    case "$last" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$last" -le "$(date +%s)" ] || return 1
+    date -u -d "@$last" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null
 }
 
 

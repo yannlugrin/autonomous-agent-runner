@@ -3,7 +3,7 @@
 #
 # Runs on the host. The flags are declared on the recipe in the justfile and
 # arrive as environment variables: force, listen, wait, ignore_budget,
-# cooldown.
+# ignore_cooldown.
 #
 # shellcheck disable=SC2154  # the recipe's declared arguments reach this
 # script as exported environment variables, which shellcheck cannot see; a
@@ -38,8 +38,8 @@ fi
 # by hand is unchanged.
 #
 # 0 worked, 2 is a usage error only a terminal can produce, and 75 is the
-# routine stand-down — cooldown, held lock, over budget, a window with nothing
-# left — dozens of times a day,
+# routine stand-down — the wait, a held lock, over budget, a window with
+# nothing left — dozens of times a day,
 # so toasting it would teach anyone to dismiss the toast. Everything else is
 # worth being pulled away for.  see docs/sessions.md#what-wakes-the-operator
 
@@ -60,22 +60,55 @@ if [ "$RUNNER_IS_DEPLOYED" = no ]; then
     typed_flag --listen "$listen"
     typed_flag --wait "$wait"
     typed_flag --ignore-budget "$ignore_budget"
-    [ "$cooldown" -gt 0 ] && typed+=(--cooldown "$cooldown")
+    typed_flag --ignore-cooldown "$ignore_cooldown"
     forward_to_deployed run ${typed[@]+"${typed[@]}"}
 fi
 
 
-# --- the cooldown ---
-# First, because it is the one check that is pure arithmetic on this side: under
-# `* * * * * just run --cooldown 15` most invocations are this and nothing else,
-# and they should cost a file read. Silent when nothing is watching — a log that
-# is all skips is one nobody reads on the day it holds something.
+# --- the wait ---
+# First, because it is the one check that is pure arithmetic on this side: cron
+# wakes every minute and most invocations are this and nothing else, so they
+# should cost a file read. Silent when nothing is watching — a log that is all
+# skips is one nobody reads on the day it holds something.
+#
+# One clock, always: the end of the last UNATTENDED session, floored so nothing
+# starts within <NAME>_WAKE_MIN of a conversation. Arming the request decides
+# only whether the NUMBER can be the last session's own rather than the
+# default; it does not change what is measured, or turning it on would change
+# the cadence of an agent that never asks.
+#
+# The number is read off the record where a request was honoured, because that
+# is what was in force, and live from .env where it was not — so changing the
+# default reaches the next wake-up rather than the one after it.
+# see docs/schedule.md#a-session-asks-for-its-own-next-wake-up
 
-if [ "$cooldown" -gt 0 ]; then
+if [ "$ignore_cooldown" = yes ]; then
+    [ -t 1 ] && echo "Ignoring the wait."
+else
     source host/lib/session-lock.sh
-    idle=$(session_idle_minutes)
-    if [ "$idle" -lt "$cooldown" ]; then
-        [ -t 1 ] && echo "The last session ended ${idle}m ago; --cooldown ${cooldown} asks for ${cooldown}m."
+    asked=$(run_record_field asked_wake_after)
+    governs=$(wake_default)
+    why="the default wait is ${governs}m"
+
+    if wake_armed && [ -n "$asked" ]; then
+        governs=$(run_record_field wake_after)
+        case "$governs" in ''|*[!0-9]*) governs=$(wake_default) ;; esac
+        # What was asked and what it was held to, separately, whenever they
+        # differ: a clamp reported as the request is the record's one number
+        # that would read as the agent's own decision.
+        if [ "$asked" = "$governs" ]; then
+            why="the last session asked to be woken in ${governs}m"
+        elif [ "$asked" -gt "$governs" ]; then
+            why="the last session asked for ${asked}m, held to the ${governs}m ceiling"
+        else
+            why="the last session asked for ${asked}m, raised to the ${governs}m floor"
+        fi
+    fi
+
+    read -r left from <<<"$(wake_due "$governs" "$(run_record_field ended)" "$(chat_ended_epoch)")"
+    [ "$from" = chat ] && why="nothing starts within $(wake_min)m of a conversation"
+    if [ "$left" -gt 0 ]; then
+        [ -t 1 ] && echo "${left}m still to wait — $why. --ignore-cooldown starts one now."
         exit 75
     fi
 fi
@@ -83,7 +116,7 @@ fi
 
 # --- the page's heartbeat ---
 # The only one there is, and here rather than further down because everything
-# below can exit — and a cooldown minute, a dead daemon and a held lock are
+# below can exit — and a minute still to wait, a dead daemon and a held lock are
 # exactly the states worth seeing from a phone. Its own floor makes all but one
 # call in ten cost a file read, which is what makes `just run` the publisher
 # rather than a second crontab line.  see docs/archive.md
@@ -105,7 +138,7 @@ if ! lock_try; then
     # A session that hangs is the one failure nothing else reports: it never
     # reaches the end of this script, so it never trips the trap above, and
     # every wake-up afterwards lands here and exits 75 in silence — exactly what
-    # a healthy cooldown looks like.
+    # a healthy wait looks like.
     #
     # `auto` only, because a conversation legitimately runs for hours and the
     # operator is sitting in it. An explicit 0 turns the alarm off, which is
@@ -168,7 +201,7 @@ fi
 # --- the budget gate ---
 # What the session is told about its own cadence, and what the gate sees — one
 # reading, both in host/lib/session-env.sh; see docs/budget.md. After the lock
-# and the cooldown, so a wake-up that stands down on either never pays for it;
+# and the wait, so a wake-up that stands down on either never pays for it;
 # before --listen and the timestamp, so a run refused here has started no viewer
 # and stamped nothing.
 #
@@ -317,7 +350,7 @@ fi
 # failed, is in docs/budget.md#the-limit-stops-the-session.
 #
 # The record is opened here and nowhere earlier. Every wake-up that stands
-# down — cooldown, held lock, budget, a window with nothing left — has already
+# down — the wait, a held lock, budget, a window with nothing left — has already
 # exited above without touching it, which is what leaves an unconsumed stop
 # standing across as many refused wake-ups as it takes for one to run.
 

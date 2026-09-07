@@ -46,6 +46,22 @@ export AGENT_DOMAIN := env_var_or_default(agent_prefix + "_DOMAIN", "")
 # a newer model of the same tier is picked up without an edit.
 export AGENT_MODEL := env_var_or_default(agent_prefix + "_MODEL", "sonnet")
 
+# The cadence, in one place. WAKE_DEFAULT is how long a wake-up waits when the
+# session asked for nothing — the whole schedule for an installation that never
+# arms the rest — and there is a value in the code behind it, because unset
+# would mean the cron expression alone is the clock and that expression is
+# `* * * * *`. WAKE_REQUEST decides only whether a session may move that
+# number, between WAKE_MIN and WAKE_MAX — the floor defaulting to the wait
+# itself, the ceiling to six hours.
+#
+# Empty here rather than defaulted: host/lib/wake-request.sh decides what unset
+# means for all three, and it is the one place that does.
+# see docs/schedule.md#a-session-asks-for-its-own-next-wake-up
+export AGENT_WAKE_DEFAULT := env_var_or_default(agent_prefix + "_WAKE_DEFAULT", "")
+export AGENT_WAKE_REQUEST := env_var_or_default(agent_prefix + "_WAKE_REQUEST", "false")
+export AGENT_WAKE_MIN := env_var_or_default(agent_prefix + "_WAKE_MIN", "")
+export AGENT_WAKE_MAX := env_var_or_default(agent_prefix + "_WAKE_MAX", "")
+
 agent_home := env_var_or_default("AGENT_HOME", "/home" / agent_user)
 export AGENT_HOME := agent_home
 
@@ -230,7 +246,7 @@ export AGENT_PROJECT_DIR := replace(repo, "/", "-")
 # The arguments are declared, so `just` parses them and `just --usage <recipe>`
 # prints them. Each is exported and reaches its script as an environment
 # variable of the same name; a flag carries `yes` and its absence `no`, one
-# vocabulary across every script. `--cooldown` and the two counts carry a value.
+# vocabulary across every script. `--cron` and the two counts carry a value.
 #
 # Three recipes keep `*ARGS` because their shape cannot be declared: `chat`,
 # whose message is free text that may begin with a dash; `collect`, whose
@@ -249,9 +265,9 @@ default:
 
 # --------------------------------------------------------------- session ---
 
-# no-exit-message, because cron calls this every minute under --cooldown and
-# just's own "Recipe `run` failed with exit code 75" on each skip is 1440 lines
-# a day into a log nothing rotates. Every path that exits non-zero says why
+# no-exit-message, because cron calls this every minute and just's own
+# "Recipe `run` failed with exit code 75" on each skip is 1440 lines a day
+# into a log nothing rotates. Every path that exits non-zero says why
 # first, and the exit code reaches cron either way.
 [doc("One unattended session — --listen watches, --wait queues, --force ignores the lock")]
 [group("session")]
@@ -260,8 +276,8 @@ default:
 [arg("listen", long, value="yes", help="render the transcript as it is written")]
 [arg("wait", long, value="yes", help="queue behind the running session instead of standing down")]
 [arg("ignore_budget", long="ignore-budget", value="yes", help="start even when the account is over its allowance")]
-[arg("cooldown", long, pattern='\d+', help="minutes that must have passed since the last session ended")]
-run $force="no" $listen="no" $wait="no" $ignore_budget="no" $cooldown="0":
+[arg("ignore_cooldown", long="ignore-cooldown", value="yes", help="start now, whether the wait is the default or what the last session asked for")]
+run $force="no" $listen="no" $wait="no" $ignore_budget="no" $ignore_cooldown="no":
     @exec host/session/run.sh
 
 [doc("A conversation with the agent — waits for a running session; --continue resumes the last one, --force joins anyway")]
@@ -460,10 +476,11 @@ pin $image="no" $claude="no":
 
 # -------------------------------------------------------------- schedule ---
 
-# No pattern on --cron or --cooldown, unlike `run --cooldown`: a pattern is
-# checked against the default as well, and the default of both is empty — which
-# is how this recipe tells "not said" from a value. schedule.sh checks the
-# digits itself. An attribute run may not be interrupted by a comment, which is
+# No pattern on --cron: a pattern is checked against the default as well, and
+# the default is empty — which is how this recipe tells "not said" from a
+# value. The cadence is not here at all any more; it is <NAME>_WAKE_DEFAULT in
+# .env, so the schedule decides WHEN cron looks and .env decides how long a
+# wake-up waits. An attribute run may not be interrupted by a comment, which is
 # why this sits above the whole block.
 [doc("What is scheduled — --enable installs or resumes, --pause holds, --disable removes")]
 [group("schedule")]
@@ -473,8 +490,7 @@ pin $image="no" $claude="no":
 [arg("relocate", long, value="yes", help="point the installed entry at the deployed checkout")]
 [arg("state", long, value="yes", help="what is scheduled as parseable fields")]
 [arg("cron", long, help="the five cron fields, quoted: \"M H D M W\"")]
-[arg("cooldown", long, help="minutes since the last session ended before a wake-up starts one")]
-schedule $enable="no" $pause="no" $disable="no" $relocate="no" $state="no" $cron="" $cooldown="":
+schedule $enable="no" $pause="no" $disable="no" $relocate="no" $state="no" $cron="":
     @exec host/schedule/schedule.sh
 
 

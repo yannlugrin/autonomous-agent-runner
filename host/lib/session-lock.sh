@@ -93,13 +93,22 @@ chat_ended() {
     date +%s > "$RUNNER_LAST_CHAT_ENDED_AT" 2>/dev/null || true
 }
 
-# The same instant as ISO-8601 UTC, for the container to be told. A record in
-# the future is treated as no record, as with the session stamp above.
-chat_ended_at() {
+# That moment as an epoch, for the floor a conversation puts under the next
+# unattended session — host/lib/wake-request.sh does the arithmetic and this
+# file stays the one that knows the record's shape. A record in the future is
+# treated as no record, as with the session stamp above.
+chat_ended_epoch() {
     local last
     last=$(cat "$RUNNER_LAST_CHAT_ENDED_AT" 2>/dev/null) || last=""
     case "$last" in ''|*[!0-9]*) return 1 ;; esac
     [ "$last" -le "$(date +%s)" ] || return 1
+    printf '%s\n' "$last"
+}
+
+# The same instant as ISO-8601 UTC, for the container to be told.
+chat_ended_at() {
+    local last
+    last=$(chat_ended_epoch) || return 1
     date -u -d "@$last" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null
 }
 

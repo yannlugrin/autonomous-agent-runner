@@ -9,7 +9,7 @@ commands.
 
 | command | what it does |
 | --- | --- |
-| `just run` | one unattended session, whole — the opening message, the session, the backup push at its end, the collection afterwards. This is what cron calls. `--listen` renders it live, `--wait` queues behind a running one, `--force` starts a second beside it, `--ignore-budget` starts one over the allowance, `--cooldown N` starts one only if the last **ended** N minutes ago |
+| `just run` | one unattended session, whole — the opening message, the session, the backup push at its end, the collection afterwards. This is what cron calls. `--listen` renders it live, `--wait` queues behind a running one, `--force` starts a second beside it, `--ignore-budget` starts one over the allowance, `--ignore-cooldown` starts one whatever the wait |
 | `just chat "…"` | a conversation you sit in. It waits for a running session rather than standing down; `--continue` resumes the last **conversation**, which is not the last session |
 | `just shell` | a shell in the container, carrying the environment a session gets, without starting one. What bootstrap uses. `--build` looks inside the candidate instead |
 | `just test-container` | the same container with **no volume** — an empty home every run, for rehearsing recovery. Never where the agent runs |
@@ -132,8 +132,10 @@ therefore looks freshly touched precisely because nothing is running.
 So a session records its own end, and only its end, in
 `RUNNER_LAST_SESSION_ENDED_AT` under `~/.cache/<agent>` rather than beside the
 lock in `/tmp`: this record has to survive a reboot to mean anything, and a
-cooldown that forgets is a cooldown that lets a session start immediately
-after every restart. `--cooldown` on `just run` reads it.
+wait that forgets is a wait that lets a session start immediately after every
+restart. It is now read only for the conversation floor: what the unattended
+cadence counts from is the run record's `ended`, which conversations do not
+stamp.  see docs/schedule.md#a-session-asks-for-its-own-next-wake-up
 
 No record reads as "long ago", because the first run after an install or a
 reboot has to be allowed to happen. A record in the FUTURE means the clock
@@ -154,7 +156,7 @@ readings decline to pretend.
 A session that hangs is the one failure nothing else reports. It never reaches
 the end of `host/session/run.sh`, so it never exits and never trips the exit
 trap; every wake-up afterwards lands at the lock and exits 75 in silence,
-which is exactly what a healthy cooldown looks like.
+which is exactly what a healthy wait looks like.
 
 The threshold is measured rather than guessed: of 289 completed sessions
 recorded on the archive's status branch, the 90th percentile is 16 minutes and
@@ -268,6 +270,18 @@ in claude's words instead of ours.
 `RUNNER_LAST_CHAT_ENDED_AT` is a second, different fact, written at the END of
 a conversation: the moment the operator last spoke, told to the next session so
 it can tell silence from inactivity.
+
+**There are three instants and they answer three questions, which the names do
+not carry on their own.** `RUNNER_LAST_SESSION_ENDED_AT` counts every session —
+`chat.sh` stamps it as well as `run.sh` — so it is "when did anything last
+run". `RUNNER_LAST_CHAT_ENDED_AT` counts only conversations. Neither answers
+"when did the last **unattended** session end", and it cannot be derived from
+the pair: equal instants say the last one was a conversation and nothing more.
+That third instant lives in the run record, as `ended`, because the record is
+the only thing written by `run` and not by `chat` — and it is the clock a
+wake-up is measured against once a request is armed. A session is told all
+three: `<NAME>_LAST_SESSION_ENDED`, `<NAME>_LAST_CHAT_ENDED` and
+`<NAME>_LAST_AUTO_SESSION_ENDED`.
 
 ## Reading the volume for a conversation
 
@@ -589,12 +603,12 @@ first turn instead of none at all.
 One reading serves both what the session is told about its own cadence and what
 the gate sees: `host/lib/session-env.sh` — see docs/budget.md.
 
-`run` enforces it, after the lock and the cooldown so a wake-up that stands
+`run` enforces it, after the lock and the wait so a wake-up that stands
 down on either never pays for it, and before `--listen` and before the start
 timestamp so a run refused there has started no viewer and stamped nothing. It
 exits 75 whichever way it went, because both are an hour that started no
 session. Over budget is routine and says so only on a terminal, exactly as the
-cooldown does; a gate that could not tell is not routine and has already
+the wait does; a gate that could not tell is not routine and has already
 written its one line to stderr, which is where cron finds it.
 
 `chat` and `shell` read the verdict and deliberately do not enforce it: a
@@ -610,18 +624,26 @@ goes around the budget guard exactly as `--ignore-budget` does, and a session
 that can read where it stands is better placed than one left to infer it. No
 collection follows a shell: it produces no transcript.
 
-## The cooldown, and the page's heartbeat
+## The wait, and the page's heartbeat
 
-`--cooldown` is checked before the build and before the daemon probe, because
+The wait is checked before the build and before the daemon probe, because
 it is the one check that is pure arithmetic on this side: with
-`* * * * * just run --cooldown 15` in cron, most invocations are this and
+`* * * * * just run` in cron, most invocations are this and
 nothing else, and they should cost a file read. It is silent when nothing is
 watching — a skipped minute that announces itself writes 1440 lines a day into
 a log nothing rotates, and a log that is all skips is one nobody reads on the
 day it holds something.
 
+The number is `<NAME>_WAKE_DEFAULT`, or — where `<NAME>_WAKE_REQUEST` is armed
+and the last session asked — what that session asked for, clamped. It is
+measured from the last **unattended** session's end and floored by
+`<NAME>_WAKE_MIN` after a conversation, whether or not the request is armed:
+arming decides who chooses the number, never what is measured. The whole of it
+is in [`docs/schedule.md`](schedule.md#a-session-asks-for-its-own-next-wake-up);
+`--ignore-cooldown` starts a session whichever number was in force.
+
 `host/archive/publish-status.sh` is called immediately after, and that
-placement is the point: everything below it can exit — a cooldown minute
+placement is the point: everything below it can exit — a minute still to wait
 returns above, a dead daemon exits 69, a held lock stands down at 75 — and
 those are exactly the states worth seeing from a phone. Its own floor makes all
 but one call in ten cost a file read, so it is affordable on `* * * * *`, and
@@ -636,7 +658,7 @@ and is read on no other day. `host/schedule/notify.sh` is silent on a terminal,
 so a run typed by hand is unchanged. See docs/schedule.md.
 
 0 is a session that worked. 2 is a usage error, which only a terminal can
-produce. 75 is the routine stand-down — cooldown, held lock, over budget, a
+produce. 75 is the routine stand-down — the wait, a held lock, over budget, a
 window with nothing left —
 dozens of times a day, and toasting it would teach anyone to dismiss the toast
 without reading it. Everything else is worth being pulled away for: 69 is a
@@ -645,10 +667,12 @@ whatever the session itself exited.
 
 ## The bookkeeping after a session
 
-The session's end is recorded before the archiving, because what `--cooldown`
+The session's end is recorded before the archiving, because what the wait
 counts from is the session ending. It is recorded whatever the status, because
 a session that failed still ran. A conversation additionally records when the
-operator last spoke, which is a second fact.
+operator last spoke, which is a second fact — and, once a session can ask for
+its own next wake-up, a load-bearing one: that is the stamp the floor under a
+conversation is measured from.
 
 `just collect --push`, not a bare collect: a commit that only ever lands in the
 local archive checkout is a second copy on the same disk as the volume it
@@ -725,7 +749,7 @@ conversation for. Measured on 2026-09-04, by composing the message with a
 session up.
 
 **The latch is the file itself.** The record is replaced only when a session
-actually starts. Every wake-up that stands down — the cooldown, a held lock,
+actually starts. Every wake-up that stands down — the wait, a held lock,
 the budget, a window with nothing left — exits before the record is opened, so
 a stop stays unconsumed across as many refused wake-ups as it takes for one to
 run. That matters because a session stopped by a usage limit is followed by
@@ -1586,7 +1610,7 @@ Enabled-but-nothing-to-fire-it is the failure worth its own clause: the crontab
 reads the same either way. Scheduling is asked of `just schedule --state`
 rather than read out of the crontab, because what counts as paused is a prefix
 that recipe writes and a second reader would go on believing the old spelling.
-The hour and the cooldown stay there too; repeating them would be the second
+The hour stays there too; repeating it would be the second
 copy that goes stale.
 
 `host/release/check-agent-settings.sh` runs from `status` rather than from

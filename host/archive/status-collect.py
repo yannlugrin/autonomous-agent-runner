@@ -335,7 +335,14 @@ def main():
         "state": sched.get("state") or "unknown",
         "daemon": sched.get("daemon"),
         "cron": sched.get("cron"),
-        "cooldown": sched.get("cooldown"),
+        # Not a field of the crontab line any more — the cadence moved to
+        # <NAME>_WAKE_DEFAULT. Asked of the one file that decides what unset
+        # means, rather than defaulted here, which would be a second copy of
+        # that number.  see docs/schedule.md#the-cadence-left-the-crontab
+        "cooldown": (
+            run(["bash", "-c", ". host/lib/wake-request.sh && wake_default"], timeout=30)[1] or ""
+        ).strip()
+        or None,
         "error": None if sched.get("state") else (err or out or "no answer")[:200],
     }
     if schedule["error"]:

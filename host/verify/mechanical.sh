@@ -506,6 +506,9 @@ verdicts_from < <(docker compose run --rm -T --entrypoint sh agent -c '
 wrong=$(
     scratch=$(mktemp -d)
     (
+        # Its own scratch record: nothing here may reach the real one, and
+        # the other fixture probe in this section plants its own.
+        # shellcheck disable=SC2030,SC2031
         export RUNNER_LAST_RUN="$scratch/last-run"
         # shellcheck source=SCRIPTDIR/../lib/run-record.sh
         . host/lib/run-record.sh
@@ -550,6 +553,203 @@ if [ -z "$wrong" ]; then
     verdict ok "run record" "a stop, a clean end, a killed run and junk each read as themselves"
 else
     verdict FAIL "run record" "WRONG VERDICT — ${wrong%; }"
+fi
+
+
+# --- a session asking for its own next wake-up ---
+# The sentence, the two bounds and the two clocks, against fixtures, on the
+# host, in a scratch directory — nothing here goes near the volume or the
+# agent's home.
+#
+# Every branch is silent when it is wrong, and in both directions. A sentence
+# the parser stopped matching is a request ignored for as long as the feature
+# is armed, and it reads exactly like an agent that never asks; a clamp that
+# stopped clamping is the ceiling not there on the day something asks for a
+# week. The parse is the part that moves — it is prose, and prose is what an
+# upgrade changes the shape of.
+# see docs/verify.md#wake-request
+
+# In this shell as well as in the subshell below: the state check at the end of
+# this section asks what THIS installation has armed, and reads the setting here
+# rather than after the probe, which exports its own over it.
+# shellcheck source=SCRIPTDIR/../lib/wake-request.sh
+. host/lib/wake-request.sh
+wake_setting="${AGENT_WAKE_REQUEST:-false}"
+
+wrong=$(
+    scratch=$(mktemp -d)
+    (
+        # Its own scratch record: nothing here may reach the real one, and
+        # the other fixture probe in this section plants its own.
+        # shellcheck disable=SC2030,SC2031
+        export RUNNER_LAST_RUN="$scratch/last-run"
+        export AGENT_WAKE_REQUEST=true AGENT_WAKE_MIN=10 AGENT_WAKE_MAX=120
+        export AGENT_WAKE_DEFAULT=20
+        # shellcheck source=SCRIPTDIR/../lib/run-record.sh
+        . host/lib/run-record.sh
+        say() { printf '%s; ' "$1"; }
+        now=$(date +%s)
+
+        # --- the sentence ---
+        [ "$(wake_asked 'Wake me up in 30 minutes.')" = 30 ] || say "the sentence does not parse"
+        [ "$(wake_asked 'Done. Wake me up in 30 minutes.')" = 30 ] \
+            || say "a sentence after a full stop was not read"
+        [ "$(wake_asked "I won't ask you to wake me up in 30 minutes.")" = "" ] \
+            || say "a request declined mid-sentence was read as one"
+        [ "$(wake_asked 'The runner reads this as: wake me up in 5 minutes.')" = "" ] \
+            || say "the sentence quoted after a colon was read as a request"
+        [ "$(wake_asked $'Wake me up in 20 minutes\nWake me up in 40 minutes')" = 40 ] \
+            || say "the last sentence does not win"
+        [ "$(wake_asked 'Wake me up in 20 minutes. Wake me up in 60 minutes.')" = 60 ] \
+            || say "the last sentence on one line does not win"
+        [ "$(wake_asked 'Wake me up in 1 minute')" = 1 ] || say "the singular does not parse"
+        [ "$(wake_asked 'Wake me up in thirty minutes')" = "" ] || say "a word parsed as a number"
+        [ "$(wake_asked 'Wake me up in 30 hours')" = "" ] || say "hours parsed as minutes"
+        [ "$(wake_asked '')" = "" ] || say "an empty message asked for something"
+
+        # --- the bounds ---
+        [ "$(wake_clamp 5)" = 10 ] || say "the floor does not clamp"
+        [ "$(wake_clamp 900)" = 120 ] || say "the ceiling does not clamp"
+        [ "$(wake_clamp 60)" = 60 ] || say "a request inside the bounds was moved"
+        wake_armed || say "true with both bounds is not armed"
+        AGENT_WAKE_MIN=200 wake_armed && say "a floor above the ceiling still arms it"
+        AGENT_WAKE_REQUEST=yes wake_armed && say "'yes' arms it"
+        # An unset or mistyped ceiling falls back to the built-in rather than
+        # disarming: a mistyped number must not silently turn off the mechanism
+        # it was meant to configure. `0` is a typo here, unlike on the default.
+        [ "$(AGENT_WAKE_MAX='' wake_max)" = 360 ] || say "an unset ceiling is not the built-in"
+        [ "$(AGENT_WAKE_MAX=3six0 wake_max)" = 360 ] || say "a typo'd ceiling did not fall back"
+        [ "$(AGENT_WAKE_MAX=0 wake_max)" = 360 ] || say "a ceiling of 0 was taken literally"
+        # The refusal names the value the operator wrote. An unset floor follows
+        # the cadence, so a cadence above the ceiling disarms while nothing
+        # named the cadence is out of range — naming the floor there sends the
+        # reader to the one number they did not set.
+        # The bounds must contain the cadence, or a session is offered a range
+        # that excludes the wait it already gets — undescribable in one
+        # sentence to something with nobody to ask, so it is refused rather
+        # than reported. Both ends, and each refusal names what to change.
+        AGENT_WAKE_DEFAULT=600 AGENT_WAKE_MAX=360 wake_armed \
+            && say "a cadence above the ceiling still arms it"
+        AGENT_WAKE_DEFAULT=20 AGENT_WAKE_MIN=60 wake_armed \
+            && say "a floor above the cadence still arms it"
+        AGENT_WAKE_DEFAULT=600 AGENT_WAKE_MIN=15 AGENT_WAKE_MAX=1440 wake_armed \
+            || say "a cadence inside wide bounds does not arm"
+        case "$(AGENT_WAKE_DEFAULT=600 AGENT_WAKE_MAX=360 wake_disarmed_why)" in
+            "the cadence (600m) is above the ceiling"*"raise _WAKE_MAX to 600"*) ;;
+            *) say "a cadence above the ceiling does not name what to raise" ;;
+        esac
+        case "$(AGENT_WAKE_DEFAULT=20 AGENT_WAKE_MIN=60 wake_disarmed_why)" in
+            "the floor (60m) is above the cadence"*"lower _WAKE_MIN to 20"*) ;;
+            *) say "a floor above the cadence does not name what to lower" ;;
+        esac
+
+        # --- the two clocks ---
+        [ "$(wake_due 60 "$((now - 3600))" "")" = "0 none" ] || say "an elapsed wait still waits"
+        [ "$(wake_due 60 "$((now - 600))" "")" = "50 session" ] || say "the remaining wait is wrong"
+        [ "$(wake_due 60 "" "")" = "0 none" ] || say "no record does not read as long ago"
+        [ "$(wake_due 60 "$((now + 3600))" "")" = "0 none" ] || say "a future record stalls the session"
+        # A conversation floors the wait without moving the clock: three hours
+        # after the session that asked stands, five minutes after a chat does
+        # not.
+        [ "$(wake_due 180 "$((now - 7200))" "$((now - 3600))")" = "60 session" ] \
+            || say "a conversation moved the unattended clock, or is not named as the reason"
+        [ "$(wake_due 180 "$((now - 10800))" "$((now - 60))")" = "9 chat" ] \
+            || say "a conversation does not floor the wait"
+        [ "$(wake_due 0 "$((now - 60))" "")" = "0 none" ] || say "a wait of zero waits"
+
+        # --- what reaches the record ---
+        run_record_open probe-container
+        printf '{"type":"result","terminal_reason":"completed","result":"Committed.\\n\\nWake me up in 900 minutes."}\n' \
+            > "$scratch/asked"
+        run_record_close 0 "$scratch/asked" probe-container
+        [ "$(run_record_field asked_wake_after)" = 900 ] || say "the ask is not recorded raw"
+        [ "$(run_record_field wake_after)" = 120 ] || say "the recorded wait is not clamped"
+
+        # The instant the container is told, which only the record can answer:
+        # an ending reads back as ISO-8601, an open record as nothing at all.
+        case "$(run_record_ended_at)" in
+            [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*Z) ;;
+            *) say "a closed record does not render an instant" ;;
+        esac
+        run_record_open probe-container
+        [ -z "$(run_record_ended_at)" ] || say "an open record rendered an instant"
+
+        printf '{"type":"result","terminal_reason":"completed","result":"Committed. Nothing else."}\n' \
+            > "$scratch/silent"
+        run_record_close 0 "$scratch/silent" probe-container
+        [ "$(run_record_field asked_wake_after)" = "" ] || say "silence recorded an ask"
+        [ "$(run_record_field wake_after)" = 20 ] || say "silence did not fall back to the default"
+
+        # --- what the container is told ---
+        # Six values, always six, never empty. That is the contract: a session
+        # must never have to tell an intended state from a line that broke, and
+        # an absent or empty variable is exactly that ambiguity. `none` says
+        # there is no such number, and only MAX and ASKED can ever say it.
+        want="WAKE_DEFAULT WAKE_MIN WAKE_REQUEST WAKE_MAX WAKE_ASKED WAKE_GRANTED"
+        for state in armed disarmed; do
+            if [ "$state" = armed ]; then out=$(wake_report 900 360)
+            else out=$(AGENT_WAKE_REQUEST=false wake_report 900 360); fi
+            for key in $want; do
+                case "$out" in
+                    *"$key="*) ;;
+                    *) say "$state: $key is not reported at all" ;;
+                esac
+                value=$(printf '%s\n' "$out" | sed -n "s/^$key=//p")
+                [ -n "$value" ] || say "$state: $key is reported empty"
+            done
+            [ "$(printf '%s\n' "$out" | wc -l)" = 6 ] || say "$state: not six lines"
+        done
+        granted() { sed -n 's/^WAKE_GRANTED=//p'; }
+        [ "$(wake_report 900 360 | granted)" = 360 ] \
+            || say "a clamped ask is not reported as granted"
+        # Asking for nothing is accepting the default, not declining to be
+        # woken: reporting `none` there would say the opposite.
+        [ "$(wake_report '' '' | granted)" = 20 ] \
+            || say "no ask did not report the default as granted"
+        [ "$(AGENT_WAKE_REQUEST=false wake_report 900 360 | granted)" = 20 ] \
+            || say "an ask that governed nothing was reported as granted"
+        [ "$(AGENT_WAKE_REQUEST=false wake_report 900 360 | sed -n 's/^WAKE_ASKED=//p')" = 900 ] \
+            || say "a disarmed ask is not reported to the session"
+        # The floor and the default apply whether or not the request is armed:
+        # arming decides who chooses the number, never what is measured.
+        [ "$(AGENT_WAKE_REQUEST=false wake_report '' '' | sed -n 's/^WAKE_MIN=//p')" = 10 ] \
+            || say "the floor is not reported when the request is not armed"
+        # An unset floor is the default wait, which is what makes an
+        # installation that sets only the default behave as --cooldown did.
+        [ "$(AGENT_WAKE_MIN='' wake_min)" = 20 ] || say "an unset floor is not the default wait"
+        [ "$(AGENT_WAKE_DEFAULT=nonsense wake_default)" = 60 ] \
+            || say "a typo'd default did not fall back to the built-in"
+
+        # Disarmed, the ask is still recorded — that is how the operator sees an
+        # agent asking for something it is not being given — and it governs
+        # nothing.
+        run_record_open probe-container
+        AGENT_WAKE_REQUEST=false run_record_close 0 "$scratch/asked" probe-container
+        [ "$(run_record_field asked_wake_after)" = 900 ] || say "a disarmed ask is not recorded"
+        [ "$(run_record_field wake_after)" = 20 ] || say "a disarmed ask governed the next wake-up"
+    )
+    rm -rf "$scratch"
+)
+
+if [ -z "$wrong" ]; then
+    verdict ok "wake request" "the sentence, both bounds, both clocks and the record agree"
+else
+    verdict FAIL "wake request" "WRONG — ${wrong%; }"
+fi
+
+# What this installation has actually armed, which is a state and not a defect:
+# armed, a session decides its own cadence within the bounds; `true` with a
+# ceiling missing or below the floor is the case that would otherwise be
+# silent, since a request is then read, recorded and ignored.
+
+if ! wake_armed; then
+    if [ "$wake_setting" = true ]; then
+        verdict FAIL "wake bounds" "asked for but not armed — $(wake_disarmed_why)"
+    else
+        verdict ok "wake bounds" "every wake-up waits $(wake_default)m; a session cannot set its own ($(wake_disarmed_why))"
+    fi
+else
+    verdict LOOK "wake bounds" "a session may set its own next wake-up, $(wake_min)–$(wake_max) minutes; silence waits $(wake_default)m, inside that range"
 fi
 
 

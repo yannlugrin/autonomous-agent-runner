@@ -519,7 +519,7 @@ def recent(window, cost):
     # is the one worth seeing.
     partial = datetime.date.today()
     # THE BAR IS TIME AWAKE, NOT A COUNT OF SESSIONS. How often it woke is mostly
-    # `--cooldown`; how long it worked is the work. Two days here ran 35 sessions
+    # the cadence; how long it worked is the work. Two days here ran 35 sessions
     # each and one of them was two and a half hours busier, which a count cannot
     # show. The bars sum to the `unattended` half of the awake figure below.
     # Over the days that are DRAWN, today included: the bars share one scale or
@@ -615,11 +615,11 @@ def weekly(window, cost, weeks):
 def sleep(window):
     """How the window's complete days divided into working and sleeping.
 
-    NOTHING HERE IS MEASURED AGAINST A SETTING. `--cooldown` decides how long the
+    NOTHING HERE IS MEASURED AGAINST A SETTING. The cadence decides how long the
     agent waits and it is config, not a measurement: a median gap is that setting
     read back off the screen, and a percentage against today's value compares
     history to a number read a second ago. The share awake falls when sessions
-    stop running whatever the cooldown is.
+    stop running whatever the cadence is.
 
     `awake` and `asleep` close on the period exactly, so the pair can be checked
     against a clock, which makes this the one place a conversation's time is
@@ -1072,7 +1072,7 @@ def selftest():
     )
 
     # The cadence is the last seven days and not the archive's life: the
-    # `--cooldown` on the crontab line has changed, and the older setting
+    # <NAME>_WAKE_DEFAULT has changed, and the older setting
     # outvotes the present one over a long enough history.
     # Seven complete days ending yesterday, one hour of session at noon each.
     # The period is midnight to midnight over those days — 168 hours exactly, of
@@ -1087,7 +1087,7 @@ def selftest():
     check("the longest sleep is the longest", "without a session was 23h 00m" in told, True)
 
     # The daily bar is time awake and not a count of sessions: how often it woke
-    # is mostly `--cooldown`, how long it worked is the work. Two days that ran
+    # is mostly the cadence, how long it worked is the work. Two days that ran
     # the same number of sessions must not draw the same bar.
     busy = [on(yesterday, minutes=120), on(yesterday - datetime.timedelta(days=1), minutes=20)]
     quiet_day, busy_day = recent(Window(busy), cost)[1:3]

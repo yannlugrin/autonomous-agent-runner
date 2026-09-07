@@ -661,8 +661,10 @@ def render():
         bits = [word]
         if sched.get("cron"):
             bits.append('<span class="mono">%s</span>' % e(sched["cron"]))
+        # The cadence is <NAME>_WAKE_DEFAULT rather than a flag on the crontab
+        # line; the snapshot's key kept its name so an older page still renders.
         if (sched.get("cooldown") or "0") not in ("0", ""):
-            bits.append("cooldown %s min" % e(sched["cooldown"]))
+            bits.append("every %s min" % e(sched["cooldown"]))
         add('<p class="age">%s</p>' % " · ".join(bits))
 
         if generated:

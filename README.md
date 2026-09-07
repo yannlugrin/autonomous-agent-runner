@@ -316,11 +316,11 @@ called it with `--push`; by hand it commits only.
 The newest session, rendered whole. `just sessions` is the listing that
 number is a row of.
 
-Then `just schedule --enable --cron "* * * * *" --cooldown 60`, when you mean
+Then `just schedule --enable --cron "* * * * *"`, when you mean
 it to run without you: an hour after each session ends, and never two at
 once. The budget guard in `.env` is what keeps a schedule from taking your
 week; read [`docs/budget.md`](docs/budget.md) before you loosen either, and
-[`docs/schedule.md`](docs/schedule.md) for what the cooldown does to the
+[`docs/schedule.md`](docs/schedule.md) for what the cadence does to the
 cron expression beside it.
 
 ## Commands
@@ -334,7 +334,7 @@ shows every option with what each one does.**
 
 | | |
 | --- | --- |
-| `just run` | one unattended session, then archive its transcript and push it. `--listen` renders it live, `--wait` queues behind a running one, `--force` starts a second beside it, `--ignore-budget` starts one over the allowance, `--cooldown N` starts one only if the last **ended** N minutes ago |
+| `just run` | one unattended session, then archive its transcript and push it. `--listen` renders it live, `--wait` queues behind a running one, `--force` starts a second beside it, `--ignore-budget` starts one over the allowance, `--ignore-cooldown` starts one whatever the wait |
 | `just chat "…"` | a conversation. It waits for a running session rather than refusing; `--continue` resumes the last *conversation*, which is not the last session |
 | `just shell` | a shell in the container, carrying the same environment a session gets. This is what bootstrap uses. `--build` looks inside a candidate instead of the deployed image |
 | `just test-container` | the same container with **no volume** — an empty home every run, for rehearsing the morning the volume is gone. Never where the agent runs |
@@ -408,12 +408,14 @@ the measurements.
 
 ### schedule
 
-[`docs/schedule.md`](docs/schedule.md) — the crontab entry, the cooldown, the wedge alarm.
+[`docs/schedule.md`](docs/schedule.md) — the crontab entry, the cadence, the wedge alarm.
 
 | | |
 | --- | --- |
-| `just schedule` | what is scheduled right now — the hour, the cooldown, the line itself, and whether cron is running to read it |
-| `just schedule --enable` | install the entry, or bring a paused one back. `--cron "…"`, `--cooldown N`, `--pause`, `--disable`, `--relocate` |
+| `just schedule` | what is scheduled right now — the hour, the line itself, and whether cron is running to read it |
+| `just schedule --enable` | install the entry, or bring a paused one back. `--cron "…"`, `--pause`, `--disable`, `--relocate` |
+| `<NAME>_WAKE_DEFAULT` | **the cadence**, in minutes — how long a wake-up waits when the session asked for nothing. `60` unless set |
+| `<NAME>_WAKE_REQUEST` | exactly `true` lets a session move that number from its closing message, clamped between `<NAME>_WAKE_MIN` (the cadence unless set) and `<NAME>_WAKE_MAX` (`360` unless set) |
 
 ### verify
 
@@ -431,11 +433,23 @@ it stood, `--pause` comments it out where it is so the crontab stays the only
 copy of it, `--disable` removes it. What `--enable` and `--relocate` do
 rewrite is the `PATH` the line carries: cron's own is `/usr/bin:/bin`, and a
 `just` upgraded into another directory is one an installed line goes on not
-finding. `--cooldown N` turns the schedule into a floor rather than a clock —
-`--cron "* * * * *" --cooldown 60` starts a session an hour after the
-previous one *ended*, wherever that falls. Start there: every session spends
-your account's allowance, and a cooldown of fifteen minutes is a working day
-of sessions by lunchtime. [`docs/schedule.md`](docs/schedule.md)
+finding. **The expression says when cron looks; `<NAME>_WAKE_DEFAULT` in
+`.env` says how long a wake-up then waits** — `--cron "* * * * *"` with a
+default of 60 starts a session an hour after the previous one *ended*, wherever
+that falls, and the number changes with an edit rather than a reinstall. Start
+there: every session spends your account's allowance, and a wait of fifteen
+minutes is a working day of sessions by lunchtime.
+[`docs/schedule.md`](docs/schedule.md)
+
+**A session can move that cadence, within bounds you set.** Arm
+`<NAME>_WAKE_REQUEST=true` with a `<NAME>_WAKE_MAX`, and a session ending its
+closing message with a line reading `Wake me up in 90 minutes` gets 90 minutes
+instead of the default. This is the one place the agent's own output changes
+what the runner does with nobody reading it in between, so the two bounds are
+the whole of the containment: the floor guards your account, the ceiling guards
+against an agent that goes quiet and is never missed. Arming decides only who
+chooses the number — the clock, the floor and the default apply either way.
+[`docs/schedule.md`](docs/schedule.md#a-session-asks-for-its-own-next-wake-up)
 
 **One session at a time**, and the lock is held by whoever starts one rather
 than by cron. `run` stands down at once and exits 75; `chat` waits, showing
@@ -551,7 +565,7 @@ through `vault`, and by shape otherwise. [`docs/vault.md`](docs/vault.md)
       image.md             the volume, the entrypoint, the pin, the hardening
       monitor.md           the drift audit — what it reads, and its two anchors
       release.md           build, verify, deploy, and the base image pin
-      schedule.md          the crontab entry, the cooldown, the wedge alarm
+      schedule.md          the crontab entry, the cadence, the wedge alarm
       sessions.md          the lock, the forwarder, what a session is told, the readers
       vault.md             the wrapper, its refusals, and where the login comes from
       verify.md            every probe, and the measured failure each exists for
@@ -709,7 +723,7 @@ can reach them by accident.
 | **1** | it failed: the session errored, the build broke, a check found something |
 | **2** | a usage error only a person at a terminal can produce — contradictory flags, or a `--force` with no terminal to ask on. Never alerted |
 | **69** | the docker daemon was not answering, or the image is missing. **Nothing was attempted** |
-| **75** | an hour that started no session on purpose: the cooldown had not elapsed, the lock was held, the account was over budget, or a question was answered *no*. This is what cron has always read as a skipped hour, and it is silent unless there is a terminal — 1440 lines a day of "not yet" is a log nobody reads on the day it holds something |
+| **75** | an hour that started no session on purpose: the wait had not elapsed, the lock was held, the account was over budget, or a question was answered *no*. This is what cron has always read as a skipped hour, and it is silent unless there is a terminal — 1440 lines a day of "not yet" is a log nobody reads on the day it holds something |
 | **78** | the entrypoint stopped because something only a human can supply is missing: no key GitHub knows, no repository, no login. **Nothing started** |
 
 An unattended run says so on the Windows desktop rather than only in its log:

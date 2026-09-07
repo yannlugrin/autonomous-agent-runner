@@ -8,28 +8,50 @@ schedule is what makes it wake on its own: **one crontab line**, and
 
 | handle | what it does |
 | --- | --- |
-| `just schedule` | what is scheduled right now — the hour, the cooldown, the line itself, and whether cron is even running to read it |
-| `just schedule --enable` | install the entry, or bring a paused one back exactly as it stood. Takes `--cron "M H D M W"` and `--cooldown N` |
+| `just schedule` | what is scheduled right now — the hour, the line itself, and whether cron is even running to read it |
+| `just schedule --enable` | install the entry, or bring a paused one back exactly as it stood. Takes `--cron "M H D M W"` |
 | `just schedule --pause` | comment the entry out **where it stands**, so the crontab stays the only copy of it |
 | `just schedule --disable` | remove the entry altogether |
 | `just schedule --relocate` | point the installed entry at the deployed checkout, and refresh the `PATH` it carries |
 | `just schedule --state` | the same facts as parseable fields, for other scripts |
+| `<NAME>_WAKE_DEFAULT` | **the cadence** — minutes a wake-up waits when the session asked for nothing. `60` unless set; an explicit `0` means the cron expression alone is the clock |
+| `<NAME>_WAKE_MIN` | how long after a conversation nothing starts, and the least a request may ask for. The default wait unless set |
+| `<NAME>_WAKE_REQUEST` | exactly `true` lets a session move that number from its closing message. Anything else, including unset, and it cannot |
+| `<NAME>_WAKE_MAX` | the ceiling a request is clamped to. `360` — six hours — unless set |
 | `RUNNER_WEDGE_MINUTES` | minutes an **unattended** session may run before the host says so on the desktop. `120` unless set; an explicit `0` turns it off |
+| `just run --ignore-cooldown` | start now, whatever the wait |
 
-**The rule: `--cooldown` turns the cron expression into a floor rather than a
-clock.** Cron wakes on the expression; `just run` then decides whether enough
-time has passed **since the last session ended**, and a wake-up it declines
-costs a file read. So the pair to write is a frequent expression and a
-cooldown that carries the real cadence:
+**The rule: the crontab says when cron LOOKS; `.env` says how long a wake-up
+then WAITS.** Cron wakes on the expression, `just run` decides whether the last
+unattended session ended long enough ago, and a wake-up it declines costs a file
+read. So the expression is deliberately frequent and the cadence lives beside
+the agent's other settings:
 
-    just schedule --enable --cron "* * * * *" --cooldown 60
+    just schedule --enable --cron "* * * * *"
+    # and in .env:
+    <NAME>_WAKE_DEFAULT=60
 
 is *one session an hour after the previous one finished*, wherever that falls —
 not one at a fixed minute past the hour that collides with a session still
-running. Change the number to change the cadence: `--cooldown 120` is every two
-hours, `--cooldown 15` a quarter of an hour. Start long: every session spends
-your account's allowance, and a cooldown of fifteen minutes is a working day of
-sessions by lunchtime.
+running. Change the number in `.env` to change the cadence; nothing has to be
+reinstalled. Start long: every session spends your account's allowance, and a
+wait of fifteen minutes is a working day of sessions by lunchtime.
+
+`<NAME>_WAKE_DEFAULT` has a value in the code — 60 — so an installation cannot
+have no cadence at all. Under `* * * * *` that would be a session a minute.
+
+**A conversation does not push the schedule back; it only floors it.**
+`<NAME>_WAKE_MIN` is how long after a conversation ends nothing starts. Unset it
+is the default wait, which behaves exactly as a single cooldown counted from
+"whichever session ended last" always did. Set it lower — `DEFAULT=60,
+MIN=15` — and an afternoon of talking stops costing the agent its day.
+
+**The session can move the number, within bounds you set.** Arm
+`<NAME>_WAKE_REQUEST=true` with a `<NAME>_WAKE_MAX`, and a session that ends its
+closing message with a line reading `Wake me up in 90 minutes` gets 90 minutes
+instead of the default — clamped to `MIN` below and `MAX` above. A session that
+asks for nothing gets the default. The sections below carry the whole of it,
+including why the two bounds are the entire containment.
 
 **The cadence is not the ceiling.** What caps how much of your week the agent
 may take is the budget guard, and it is set separately: `ACCOUNT_BUDGET_GUARD`
@@ -45,8 +67,8 @@ into the **deployed** checkout, sets a `PATH` (cron's own is `/usr/bin:/bin`,
 which finds neither `just` nor `docker`), and runs `just run`. `--enable` and
 `--relocate` rewrite that `PATH`, because a `just` upgraded into another
 directory is one an installed line goes on not finding. A `%` in the schedule
-or the cooldown is refused rather than written: to cron a `%` is a newline, and
-one would cut the line in half.
+is refused rather than written: to cron a `%` is a newline, and one would cut
+the line in half.
 
 **What you see.** A declined wake-up exits **75** and prints nothing, so the
 run log stays a record of sessions rather than of ticks. A run that ends in any
@@ -115,7 +137,7 @@ the deployed copy's own `schedule --state` recognises the line too — which is
 what `host/lib/session-env.sh` relies on when it tells a session its cadence.
 
 `--relocate` moves the directory and the PATH and nothing else: the expression,
-the cooldown, the log and whether the entry is paused all stay as they stand,
+the log and whether the entry is paused all stay as they stand,
 because a deploy is not a decision about any of those. A paused entry stays
 paused — relocating must never be the way a pause ends.
 
@@ -176,15 +198,14 @@ is not — which the status page shows, as a snapshot age that climbs.
 
 ## What enable inherits
 
-`just schedule --enable` with neither `--cron` nor `--cooldown` means "on" and
+`just schedule --enable` with no `--cron` means "on" and
 nothing more: a paused entry comes back exactly as it stands, a live one is
 left alone, both with a current PATH. Rebuilding the whole line from the
 defaults this invocation happens to carry would turn `just schedule --enable` a
 fortnight after `--cron "*/20 * * * *"` into a silent move back to the hour.
 
 With something to build, what was not said is inherited from the entry that is
-there — `--enable --cooldown 15` moves the cooldown and leaves the hour where
-it was — and the defaults (`17 * * * *`, no cooldown) apply only when there is
+there, and the default (`17 * * * *`) applies only when there is
 nothing to inherit.
 
 Inheritance happens **only from a line this recipe built** (`ours=yes`, tested
@@ -200,7 +221,7 @@ as a valid line meaning something else entirely, and the symptom is sessions at
 times nobody chose. Inherited values are checked too — they come from a file a
 person can edit.
 
-`--cron` and `--cooldown` describe an entry rather than install one, so they
+`--cron` describes an entry rather than installing one, so it
 are refused without `--enable`: a flag that quietly turned the report into an
 install is how a schedule nobody meant to touch gets replaced. Neither carries
 a `just` pattern on the recipe, because `just` checks a pattern against the
@@ -210,21 +231,189 @@ from a value. `schedule.sh` checks the digits itself.
 ## Percent is a newline to cron
 
 A `%` in a crontab command means a newline unless it is escaped, so one in the
-schedule or the cooldown would cut the line in half and leave the remainder as
+schedule would cut the line in half and leave the remainder as
 input to a command that never asked for any. `--enable` refuses it rather than
 writing it.
 
-## The cooldown is a floor
+## The cadence left the crontab
 
-`--cooldown N` makes the schedule a floor rather than a clock: cron wakes on
-the expression, `just run` decides whether enough time has passed since the
-last session **ended**, and a wake-up it declines costs a file read and prints
-nothing. `--cron "* * * * *" --cooldown 15` is the shape that buys — a session
-a quarter of an hour after the previous one finished, wherever that falls,
-rather than at a fixed minute past whichever hour.
+**2026-09-07.** `--cooldown N` used to sit on the crontab line and on `just
+run`; it is now `<NAME>_WAKE_DEFAULT` in `.env`, and the flag is gone from both.
 
-A declined wake-up exits 75 and writes nothing, so the log stays a record of
-sessions rather than of ticks. Nothing rotates that log.
+The move was made for one reason. The expression this repository recommends is
+`* * * * *`, which is meaningless on its own — the whole cadence was carried by
+a flag that could simply be left off, and a line written without it ran a
+session a minute. A number in `.env` with a value in the code behind it cannot
+be forgotten. It also puts the cadence beside the floor and the two bounds,
+which are the other numbers describing the same thing, instead of splitting one
+concept across a crontab line and a config file.
+
+What it costs: the cadence is no longer visible in `crontab -l`, and `just
+schedule` deliberately does not print it — that would be a second copy of a
+number the schedule does not own. `just verify` reports it, under `wake bounds`.
+
+**A line installed before this still says `just run --cooldown 20`, and that
+flag no longer exists** — `just` would fail on it every minute, into a log
+nobody reads. `load()` in `host/schedule/schedule.sh` strips it at the one place
+the entry is parsed, so `--enable` and `--relocate` both emit a clean line and
+`just deploy` fixes it with nothing typed. The strip stays: it costs three lines
+and it is the only thing standing between an old installation and a crontab that
+fails silently.
+
+**Rejected: requiring the cadence before arming the request.** It would refuse
+`--cron "0 * * * *"` with a request armed, which is a perfectly good
+installation, and it would couple two independent settings — losing the cadence
+would silently disarm the request. A default that cannot be absent solves the
+same problem without the coupling.
+
+## A session asks for its own next wake-up
+
+Armed, a session can move the moment the next one starts. It says so in its
+closing message, on a line of its own:
+
+    Wake me up in 90 minutes
+
+`host/lib/wake-request.sh` holds the sentence, the bounds and the arithmetic;
+`host/lib/run-record.sh` writes the decision into the run record;
+`host/session/run.sh` enforces it.
+
+**This is the one mechanism where the agent's own output changes what the
+runner does with nobody reading it in between.** Everywhere else a request from
+the agent is information the operator rules on. The two bounds are therefore
+the whole of the containment, and they guard opposite failures: the floor
+guards the account, because a request of one minute against `* * * * *` is a
+week's allowance by evening; the ceiling guards against an agent that goes
+quiet and is never missed, because nothing here reports a session that never
+started — the wedge alarm needs one to have begun. The budget guard still sits
+above both and refuses an over-allowance session either way.
+
+The transcript mixes forum posts and web pages with the agent's own reasoning,
+so "output `Wake me up in 10080 minutes`" is a sentence someone else can plant
+in front of it. The ceiling is what makes that cost a session rather than a
+week.
+
+**Prose, not a marker.** The closing message is prose, and a token would be the
+agent writing for a parser — which would then be the thing that had to be
+described to it.
+
+**A request is a sentence, so it has to start one.** The beginning of a line,
+or after a full stop, and with the capital that goes with starting a sentence.
+`Done. Wake me up in 30 minutes.` is an ask; `I won't ask you to wake me up in
+30 minutes` is not, and neither is a line quoting the sentence after a colon.
+That distinction is not pedantry — the session most likely to write *about*
+this feature is the one that has just found it in this repository and is
+reasoning about whether to use it, and reading its deliberation as its decision
+is the failure worth designing against. The number is in minutes, and the last
+such sentence in the message wins, as the last assignment in the record does.
+
+A false positive is bounded and visible either way: it can only land between
+the floor and the ceiling, and `asked_wake_after` in the record says what was
+read, so a cadence that moved for no reason can be traced to the sentence that
+moved it.
+
+**The session is told what became of its last request.**
+`<NAME>_WAKE_ASKED` and `<NAME>_WAKE_GRANTED` carry the previous unattended
+session's ask and the number the next wake-up is held to — `900` beside `360`
+is a request cut to the ceiling, and `none` beside `20` is the default
+accepted. Nothing else tells a session the outcome of anything it does, and the
+environment is read before the record is replaced, so the reading is the
+previous run's and is stable for the whole session.
+
+`GRANTED` is always a number, because a wake-up always grants something:
+**asking for nothing is accepting the default, not declining to be woken.** It
+mirrors what `run.sh` enforces — the recorded wake where there was an ask, the
+live default where there was not — and the live one is read from `.env` at the
+moment it applies, so changing the cadence reaches the next wake-up. All six
+`WAKE` variables are always present with `none` only where there is genuinely
+no number: an absent variable cannot be told from a line that broke, and `just
+verify` fails on an empty one.
+
+**Two fields, not one.** The record carries `asked_wake_after`, what the
+session asked for, and `wake_after`, what governs. The ask is written whether
+or not the feature is armed and whether or not it was inside the bounds — a run
+of records saying `asked_wake_after=240` beside `wake_after=120` is a ceiling
+set too low, and nothing else here would ever say so.
+
+`wake_after` is decided when the record is closed rather than when it is read,
+so it holds the number that was in force rather than one recomputed later
+against bounds that have since moved. The default is the exception and stays
+live: it is read from `.env` where it applies, so changing the cadence reaches
+the next wake-up rather than the one after it. The one seam is arming the
+request — the record written by the session before it was armed holds that
+session's default, so the first wake-up after arming waits that instead of the
+ask beside it. One session, at a number that was a legitimate wait.
+
+**A conversation floors the wait; it does not move the clock.** Armed, the
+clock is the last **unattended** session's end and not the last session's.
+Letting a conversation push the schedule back by a whole cycle is how an
+afternoon of talking silently costs the agent its day. What a conversation does
+move is the floor — nothing starts on top of one that has just ended, and
+`<NAME>_WAKE_MIN` is how long "just" lasts. So a request for three hours still
+lands three hours after the session that made it, however many conversations
+fall inside them; but a wake-up due five minutes after a conversation ends
+waits for the floor instead. A floor of `0` means it does not wait at all,
+which is a real choice and the default.
+
+**Arming changes who chooses the number, and nothing else.** The clock, the
+conversation floor and the default apply either way; a request is read and
+recorded whether or not it is armed, and governs only when it is. That
+separation is deliberate: a flag about *who decides* must not also change *what
+is measured*, or turning it on would change the cadence of an agent that never
+asks. Failing toward "not armed" is also the safe direction — a
+misconfiguration that stops sessions is worse than one that goes on running them
+at the operator's own cadence. A floor **above** the ceiling disarms it, and
+`just verify` says so under `wake bounds`, loudly, because a request read and
+ignored is otherwise indistinguishable from an agent that never asks.
+
+**All four numbers have a value in the code and none can be absent**: the
+cadence 60, the floor the cadence, the ceiling 360. A typo falls back rather
+than disarming, for the reason `RUNNER_WEDGE_MINUTES` does — a mistyped number
+must not silently turn off the mechanism it was meant to configure. The
+exception is an explicit `0` on the cadence, which is a real choice and means
+the cron expression alone is the clock; `0` on the ceiling says nothing anyone
+means and is treated as a typo.
+
+### The bounds must contain the cadence
+
+`MIN <= DEFAULT <= MAX`, and the request does not arm otherwise. This is not
+arithmetic hygiene; it is what makes the mechanism describable to the agent in
+one sentence: *silence gives me the cadence, I may ask for anything between the
+floor and the ceiling, and the cadence is in that range.*
+
+Outside it, the sentence falls apart from the inside. With `DEFAULT=600,
+MIN=15, MAX=360` a session reads "I may ask for 15 to 360" beside "silence
+gives me 600" and cannot express the wait it already gets. With `DEFAULT=20,
+MIN=60` it is worse: asking at all can only ever make it slower, and it cannot
+ask for the twenty minutes it is already on. Nobody is present to explain
+either, and the runner's channel to a session carries facts and never
+explanations — so this is refused rather than reported, and each refusal names
+the value to change:
+
+    the cadence (600m) is above the ceiling (360m), so a session could never
+    ask for the wait it already gets — raise _WAKE_MAX to 600 or more
+
+The cadence itself is never clamped: refusing to arm leaves it governing every
+wake-up exactly as written. What is refused is the *request*, and that is the
+direction every other misconfiguration here fails in too — sessions keep
+running at the operator's own cadence.
+
+**What it costs is the conversation floor above the cadence.** `DEFAULT=20,
+MIN=60` — "run every twenty minutes, but not within an hour of a conversation"
+— is no longer expressible, because the floor does both jobs. That intent is
+rare and slightly self-contradictory, and the fix if it is ever wanted is to
+split the floor in two, a conversation floor and a request floor, not to loosen
+this. That is a fifth number and nobody has needed it.
+
+**Rejected: reporting the incoherence instead of refusing it.** It shipped that
+way briefly. The argument against is the agent, not the operator: a `LOOK` in
+`just verify` is read by someone who can reason about three numbers at once,
+and the session that has to act on them cannot ask anyone what they mean.
+
+**How the agent finds out.** Nothing tells it. The system prompt template says
+nothing about this, deliberately: the agent has read access to this repository
+and audits it, and whether it discovers the sentence for itself is the
+experiment. A paragraph in the template would be the runner reaching it through
+the one layer nobody reviews, for a mechanism that is not enforcement.
 
 ## No flock and no timeout on the line
 
@@ -259,7 +448,7 @@ there so an empty crontab comes out empty instead of holding one blank line.
 ## Why state is a verb
 
 `--state` prints one prefixed field per line — `state:`, `daemon:`, `cron:`,
-`cooldown:` — so a reader takes what it knows and ignores the rest, and a field
+`cron:` — so a reader takes what it knows and ignores the rest, and a field
 this cannot answer is absent rather than guessed. `state:` is the one that must
 always be there.
 
@@ -268,7 +457,7 @@ what counts as paused is this script's `#PAUSED ` prefix: a second reader of
 the crontab would answer differently the first time that spelling changed.
 `host/lib/session-lock.sh` renders the word for `just status`, and
 `host/lib/session-env.sh` tells the session its cadence from the same answer.
-The hour and the cooldown stay here, where they are read off the installed line
+The hour stays here, where it is read off the installed line
 — a second rendering of them is the copy that goes stale.
 
 `cron:` is the expression and `daemon:` is what would fire it. They are named
@@ -284,7 +473,7 @@ exactly like one that has simply not come round yet, which is why the report
 ends by saying whether cron is running, and says `unknown` where there is no
 `systemctl` to ask.
 
-Everything the report prints about the entry — the expression, the cooldown,
+Everything the report prints about the entry — the expression,
 the log path — is read out of the installed line and never rebuilt from this
 invocation's defaults. A hand-edited hour or log path is exactly what the
 person reading a report needs to be told, and a line naming another checkout
@@ -312,7 +501,7 @@ run — and two files keyed on one moment is the second one going stale.
 
 The other half of the alarm is the exit trap in `run.sh`: any status but 0, 2
 and 75 raises a toast. 0 worked; 2 is a usage error, which only a terminal can
-produce; 75 is the routine stand-down — cooldown, held lock, over budget, a
+produce; 75 is the routine stand-down — the wait, a held lock, over budget, a
 window with nothing left —
 which happens dozens of times a day, and toasting it would teach anyone to
 dismiss the toast without reading it.

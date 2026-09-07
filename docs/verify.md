@@ -596,6 +596,73 @@ vouch for.
 Proved by breaking it: with `api_error` added to the clean branch, the probe
 reports `WRONG VERDICT — an api_error run is not a stop`.
 
+## Wake request
+
+`wake request` proves the sentence a session uses to set its own next wake-up,
+the two bounds it is clamped to, the two clocks the wait is measured against,
+and what all of that leaves in the run record and in the container's
+environment. Fixtures, on the host, in a scratch directory: nothing in it goes
+near the volume or the agent's home.
+
+Every branch is silent when it is wrong, and in both directions. **A sentence
+the parser stopped matching is a request ignored for as long as the feature is
+armed, and it reads exactly like an agent that never asks** — which is also
+what a working installation looks like most days. A clamp that stopped clamping
+is the ceiling not being there on the day something asks for a week.
+
+The parse is the part that moves, because it is prose. Five of its fixtures are
+the ones that earn their place. `I won't ask you to wake me up in 30 minutes`
+must NOT match and neither must the same sentence quoted after a colon, or a
+session reasoning about the feature is read as using it — and the session most
+likely to reason about it is the one that has just discovered it. `Done. Wake
+me up in 30 minutes.` must match, or the natural way to write it is silently
+dropped. The last of two must win, on one line and across two, or a session
+that changes its mind is read on its first thought. `1 minute` must parse, or
+every request of one minute disappears. And `30 hours` must not, or a unit the
+parser never supported reads as minutes.
+
+The record fixtures prove the two fields separately. A closing message asking
+for 900 with a ceiling of 120 must leave `asked_wake_after=900` beside
+`wake_after=120` — the ask raw, the decision clamped. Disarmed, the same
+message must still record the ask and must leave `wake_after` at the default:
+that is the state the operator watches to see an agent asking for something it
+is not being given.
+
+It also pins the contract on what reaches the container: six values, always
+six, never empty, `none` where there is no number. Both failure shapes are
+proved to be caught — a line that stops being emitted, and one emitted empty —
+because they are the two ways a session loses the ability to tell an intended
+state from a broken one, and neither has any other symptom.
+
+Four of those assertions guard one mistake in particular, which was made while
+this was being written: reporting `GRANTED` as `none` when nothing was asked. A
+wake-up always grants something, and asking for nothing is accepting the
+default rather than declining to be woken — so `none` there is a false
+statement about the mechanism, in the channel that exists to carry true ones.
+The fixtures also pin that the floor and the default are reported whether or
+not the request is armed — arming decides who chooses the number, never what is
+measured — and that an unset floor is the default wait, which is what makes an
+installation that sets only `<NAME>_WAKE_DEFAULT` behave as a single cooldown
+always did.
+
+`wake bounds` is the state beside it, and it is `LOOK` when the request is
+armed — a session deciding its own cadence is something only the operator can
+rule on. `true` with a floor above the ceiling is `FAIL`, because that is the case that
+would otherwise be silent: the request is read, recorded, and ignored. A
+ceiling that is merely absent or mistyped falls back to its built-in instead —
+a mistyped number must not turn off the mechanism it was meant to
+configure. Either way the line names the default wait, which is the one
+number no other command prints.
+
+A cadence outside `[MIN, MAX]` is the third `FAIL`, and it is about the agent
+rather than the arithmetic: a session offered a range that excludes the wait it
+already gets cannot be told what the mechanism does in one sentence, and there
+is nobody present to ask. The fixtures pin both ends and pin that each refusal
+names the value to change — `raise _WAKE_MAX to 600 or more`, `lower _WAKE_MIN
+to 20 or less` — because a refusal that states a rule without naming the fix
+sends the reader back to the documentation for something the tool already
+knows.
+
 ## Recovery shapes
 
 `recovery shapes` runs `host/session/session-recovery.py --selftest`: the record

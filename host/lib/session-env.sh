@@ -27,6 +27,18 @@ _env_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=SCRIPTDIR/session-lock.sh
 source "$_env_here/session-lock.sh"
 
+# For wake_armed and the two bounds. Functions and defaults only, like the
+# file above it.
+# shellcheck source=SCRIPTDIR/wake-request.sh
+source "$_env_here/wake-request.sh"
+
+# For run_record_ended_at, the one thing that knows when the last UNATTENDED
+# session ended. Sourced before the record is opened, so what it reads is the
+# previous run's; `run.sh` opens this run's only once the container is about to
+# start.
+# shellcheck source=SCRIPTDIR/run-record.sh
+source "$_env_here/run-record.sh"
+
 
 # --- the schedule ---
 # Asked of `just schedule` rather than read out of the crontab here, for the
@@ -35,8 +47,8 @@ source "$_env_here/session-lock.sh"
 # One call, because each one is a process.
 #
 # Underscored names throughout: this is sourced into a recipe that has its own
-# `cooldown` and its own `state`, and a plain name here would quietly overwrite
-# the one the caller is using.
+# `state`, and a plain name here would quietly overwrite the one the caller is
+# using.
 
 _env_sched="$(just schedule --state 2>&1)"
 _env_field() { printf '%s\n' "$_env_sched" | sed -n "s/^$1: //p"; }
@@ -58,8 +70,6 @@ esac
 # is my cadence, when it runs" is a question a held schedule still has an
 # answer to. Empty when there is no line to read one off.
 _env_cron="$(_env_field cron)"
-_env_cooldown="$(_env_field cooldown)"
-case "$_env_cooldown" in ''|*[!0-9]*) _env_cooldown=0 ;; esac
 
 
 # --- the budget guard ---
@@ -157,9 +167,6 @@ SESSION_ENV=(
     # cron on purpose: another scheduler would be another variable, not the
     # same one holding something that is not a cron expression.
     -e "${AGENT_PREFIX:?set by just}_SCHEDULE_CRON=$_env_cron"
-    # Minutes that must have passed since the last session ended. 0 means
-    # none, and then every wake-up starts one.
-    -e "${AGENT_PREFIX:?set by just}_SCHEDULE_COOLDOWN=$_env_cooldown"
     # ISO-8601 UTC, or `unknown` — no record survives a cleared cache, and
     # the first session after one has nothing true to say here.
     -e "${AGENT_PREFIX:?set by just}_LAST_SESSION_ENDED=$(session_ended_at || echo unknown)"
@@ -167,7 +174,32 @@ SESSION_ENV=(
     # most sessions are the schedule's, so "nobody has talked to me in three
     # days" is not answerable from the line above.
     -e "${AGENT_PREFIX:?set by just}_LAST_CHAT_ENDED=$(chat_ended_at || echo unknown)"
+    # And when the last UNATTENDED one ended, which neither of the two above
+    # answers: the first counts conversations, the second counts only those.
+    # This is the clock a wake-up is measured against once a request is armed.
+    -e "${AGENT_PREFIX:?set by just}_LAST_AUTO_SESSION_ENDED=$(run_record_ended_at || echo unknown)"
 )
+
+# The whole cadence: the default wait, the floor, whether a session may move
+# the number and between what bounds, and what the last one asked for and was
+# given. Six values, always all six, `none` where there is genuinely no number —
+# see wake_report, which decides them, and VARIABLES.md for why an absent
+# variable is not an acceptable way to say "nothing here".
+#
+# The crontab no longer carries a cadence, so there is no <NAME>_SCHEDULE_COOLDOWN
+# beside these: <NAME>_SCHEDULE_CRON says when cron looks, and WAKE_DEFAULT says
+# how long a wake-up then waits.
+#
+# What will actually happen rather than what .env says, for the same reason the
+# schedule state above is: a ceiling nobody set disarms this, and a session told
+# `true` on that host would be reading the setting rather than the mechanism.
+#
+# Read before the record is opened, so the ask reported is the previous
+# session's — the one whose request this session's own start was waiting on.
+while IFS= read -r _env_line; do
+    SESSION_ENV+=(-e "${AGENT_PREFIX:?set by just}_$_env_line")
+done < <(wake_report "$(run_record_field asked_wake_after)" \
+                     "$(run_record_field wake_after)")
 
 # What the host read, passed on only when it actually read something. Absent
 # is meaningful: the entrypoint takes an absent ACCOUNT_USAGE_SESSION as its
