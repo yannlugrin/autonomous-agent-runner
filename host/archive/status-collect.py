@@ -60,6 +60,12 @@ def fields(text):
     return out
 
 
+def minutes(value):
+    """A count of minutes off a `key: value` line, or None for anything else —
+    a blank the shell wrote for a field the record does not carry included."""
+    return int(value) if (value or "").strip().isdigit() else None
+
+
 def from_lock_library():
     """The session facts, asked of session-lock.sh rather than of docker.
 
@@ -88,6 +94,15 @@ def from_lock_library():
         [ -n "$c" ] && [ "$(printf '%s' "$c" | cut -f1)" = "$(run_record_field container)" ] \
             && running=yes
         printf 'last_run: %s\n' "$(run_record_verdict "$running")"
+        # What that run asked for and what it was granted, with the session id
+        # that says which run they belong to. Here because this branch is the
+        # only durable copy: the run record holds one run and the next session
+        # replaces it, and the session's own transcript says nothing about what
+        # the runner did with its closing message.
+        # see docs/monitor.md#the-wait-a-session-was-granted
+        printf 'session_id: %s\n' "$(run_record_field session)"
+        printf 'asked_wake_after: %s\n' "$(run_record_field asked_wake_after)"
+        printf 'wake_after: %s\n' "$(run_record_field wake_after)"
     """
     code, out, err = run(["bash", "-c", script, "--", ROOT])
     if code != 0 and not out:
@@ -327,6 +342,13 @@ def main():
         # word when the sample could not answer, so the renderer never has to
         # tell a verdict from a failure to reach one.
         "run": lock.get("last_run") or None,
+        # Which run the two below belong to, and what they were, in minutes.
+        # Null is "not answered" and never a wait of zero, which is a real
+        # setting; `asked_wake_after` is null whenever the session asked for
+        # nothing, which is what its absence from the run record means.
+        "session_id": lock.get("session_id") or None,
+        "asked_wake_after": minutes(lock.get("asked_wake_after")),
+        "wake_after": minutes(lock.get("wake_after")),
     }
 
     code, out, err = run(["just", "schedule", "--state"], timeout=60)

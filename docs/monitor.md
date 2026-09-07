@@ -630,6 +630,87 @@ is what a run IS — see "One file is not always one run" — so it sits on the 
 rather than on the record, and `runner_commit` sits there with it, because two
 runs of one transcript can have started on two images.
 
+### The wait a session was granted
+
+**Two numbers per run: what the session asked for, and what the next wake-up
+actually counted.** `asked_wake_after` is the minutes its closing message asked
+to be woken in, raw; `wake_after` is what governed — that ask clamped to the
+bounds, or the default wait when there was no ask. They are the run record's own
+two fields under the same names, so the two stores speak one vocabulary rather
+than two.  see [`docs/schedule.md`](schedule.md#a-session-asks-for-its-own-next-wake-up)
+
+**Neither is in the transcript**, for the same reason the runner commit is not:
+the decision is taken by the host after the process is gone, and nothing the
+session wrote could know it. Unlike the runner, it is durable nowhere else
+either — `~/.cache/<agent>/last-run` holds one run and the next session replaces
+it, so the snapshot is the only lasting copy there can be.
+
+**Joined on the session id, never on time.** `publish-status` puts the run
+record's `session`, `asked_wake_after` and `wake_after` into every snapshot's
+`last_session`, and that id is the transcript's own — the same string the record
+is filed under. The join is therefore exact, and a session cannot be handed its
+neighbour's numbers by a snapshot that landed between two runs. The **earliest**
+snapshot carrying an id wins: every snapshot until the next session starts
+carries the same run record, and a later one could be reading a record rewritten
+since.
+
+**A transcript resumed by `chat --continue` holds several runs under one id, and
+the ask belongs to the last of them** — that is the run that ended where the run
+record was written. The others fall back like everything before them.
+
+**The fallback is the default then in force**, `schedule.cooldown` from the
+latest snapshot at or before the run's end. That field is `--cooldown N` off the
+crontab line until 2026-09-07 and `<NAME>_WAKE_DEFAULT` after it, and both are
+one fact: how long the runner waits when the session asked for nothing. Every
+session before 2026-09-07 asked for nothing because it could not, so
+`asked_wake_after` is null across the whole archive up to then and `wake_after`
+is the setting that was live.
+
+**Storing what was in force is not the figure that was struck.** "Nothing is
+measured against a setting" below rejected a median gap and a percentage against
+*today's* cooldown, both of which read history against a number read a second
+ago. This is the opposite: the number that was true when the session ran, kept
+beside it, so a later reading never has to reach for the live one.
+
+### The wait before the status branch
+
+The first snapshot is **2026-08-24T17:51Z**, and 102 of the 595 records on
+2026-09-07 are older. Those get the wait read off the runs themselves rather than
+a null, and it is a reading and not an estimate: **under a wait of N, the
+shortest end-to-next-start of a day IS N.** The daily minima are three flat
+plateaus with nothing between them — 0.6m on 08-22, 10.1m through the afternoon
+of 08-24, 15.2m from 08-25 to 09-02.
+
+Where the reading overlaps the snapshots the two agree exactly, which is what
+makes it trustworthy where they do not: the snapshots say 10 at 08-24 17:51Z and
+15 from 08-25 00:11Z, and the gaps over those same hours say 10.1–11.3m and
+15.2–16.2m.
+
+Backwards from there, `--cooldown` was added by `e9b5f9d` on 2026-08-23 and the
+first gap it actually spaced is the 15.4m at 15:54:02Z. Everything up to the run
+that ended at 15:38:39Z ran with **no wait at all** — 0.6m, 3.4m and 137m sit
+side by side there, which is a schedule being switched on and off rather than a
+cadence. Zero is stored for those, and zero is a real setting: `null` is what a
+reading that could not be made looks like, and the two must not be one value.
+
+`BEFORE_SNAPSHOTS` in `host/monitor/session-records.py` is the whole table — two
+instants and their minutes. To re-measure it: group every record's runs by UTC
+day and take the smallest positive `next start − this end`.
+
+### Reseal is the exception to written-once
+
+A record is written once, and `publish_records` enforces it: a commit that
+modifies a file rather than adding one is refused, naming `--rewrite` as the one
+way. That is what keeps `cache` a branch of additions — git stores whole blobs,
+and a store rewritten on every run would push the whole of itself each time.
+
+**A field added to the record after most of it was written is the case that
+cannot satisfy it.** `just records --reseal` is that path: it writes exactly what
+`--recheck` reports as differing and leaves every record that already matches on
+the disk it is on, so the push carries only what moved. Never on a schedule and
+never on a session end — it is asked for by name, and `--recheck` is its
+rehearsal.
+
 ### What a usage row is keyed by
 
 `(model, speed, geo)`, and not by model alone. `dollars()` in

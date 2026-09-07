@@ -5,6 +5,8 @@
     session-records.py --seal         write a record for every session that can
     session-records.py --recheck      re-derive every record and diff, writing nothing
     session-records.py --rewrite ID   replace one record, after its transcript changed
+    session-records.py --reseal       write what --recheck reports, for a field
+                                      that was added to every record at once
     session-records.py --selftest     prove the arithmetic and stop
 
 Runs on the host, under `just records`, which is what fetches the two joined
@@ -13,8 +15,9 @@ the archive's `sessions` and `status` branches, and this host's own clone of
 the agent's repository. It writes nothing outside RUNNER_RECORDS_DIR.
 
 WHAT A RECORD IS. One archived transcript: when it ran, what it was, what it
-spent, which commits it made, and which version of the runner it ran under —
-assembled once, when every field in it is final.
+spent, which commits it made, which version of the runner it ran under, and what
+the next wake-up was counting when it ended — assembled once, when every field in
+it is final.
 
 ONE TRANSCRIPT IS NOT ALWAYS ONE RUN. `just chat --continue` appends to the
 transcript it resumes, so a file can hold two runs with hours between them, and
@@ -40,11 +43,12 @@ reader's job, not the store's.
 
 WHY IT EXISTS. Everything about a session is otherwise re-derived from its raw
 transcript on every read — six seconds over the whole archive today, growing by
-about forty transcripts a day. Two of the facts worth keeping are not in the
+about forty transcripts a day. Three of the facts worth keeping are not in the
 transcript at all and have to be joined in from elsewhere: which commits the
-session made, and which runner built its container. One of those is joined
-against a source the agent is free to rewrite, so a sealed record is the only
-lasting witness to it.
+session made, which runner built its container, and what the runner did with its
+closing message afterwards. One is joined against a source the agent is free to
+rewrite, and one has no other durable home at all, so a sealed record is the only
+lasting witness to both.
 
 SEALING is the whole of "written once". A record is written when every field in
 it is final, and the three conditions are exact rather than a wait:
@@ -113,6 +117,48 @@ STATUS_FILE = "snapshot.json"
 MEMORY_REFS = "refs/remotes/source/*"
 
 CHECKOUT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# How long the runner waited between sessions before the `status` branch existed
+# to record it — its first snapshot is 2026-08-24T17:51Z and 102 of the sessions
+# here ran before that. Read off the runs themselves rather than estimated:
+# under a wait of N the shortest end-to-next-start of a day IS N, and the three
+# eras below show minima of 0.6m, 15.2m and 10.1m with nothing in between. Where
+# the reading overlaps the first snapshots the two agree exactly, which is what
+# makes it a reading.
+#
+# `--cooldown` was added by e9b5f9d on 2026-08-23 and the first gap it actually
+# spaced is the 15.4m at 15:54:02Z, so everything up to the run that ended at
+# 15:38:39Z ran with no wait at all — gaps there are 0.6m, 3.4m and 137m, which
+# is a schedule being switched on and off rather than a cadence.
+#   see docs/monitor.md#the-wait-before-the-status-branch
+BEFORE_SNAPSHOTS = (
+    (1787499519, 15),  # 2026-08-23T15:38:39Z, the first run a wait followed
+    (1787572255, 10),  # 2026-08-24T11:50:55Z
+)
+NO_WAIT = 0
+
+
+def before_snapshots(when):
+    """The wait in force at `when`, for a run older than every snapshot."""
+    minutes = NO_WAIT
+    for since, value in BEFORE_SNAPSHOTS:
+        if when >= since:
+            minutes = value
+    return minutes
+
+
+def as_minutes(value):
+    """A count of minutes, or None. Everything else — a blank the shell wrote
+    for a field the record does not carry, a word — reads as "not answered",
+    because a wait of zero is a real setting and must not be what a missing
+    reading looks like."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -646,12 +692,20 @@ class Memory:
         return shas, {"files": len(files), "insertions": insertions, "deletions": deletions}
 
 
-class Deploys:
-    """Which runner was live when, from the archive's `status` branch.
+class Snapshots:
+    """What the archive's `status` branch says was true when.
+
+    Three series out of ONE pass over the branch, because they are read together
+    and it is 1596 blobs on 2026-09-07:
+
+      the runner that was live      `deploy.deployed`, asked of a run's START
+      the wait then in force        `schedule.cooldown`, asked of a run's END
+      the wait one run was granted  `last_session`, joined on the session id
 
     NOT in the transcript and not recoverable from it: the system prompt does
     tell every session which runner commit built its container, and the system
-    prompt is not stored.
+    prompt is not stored; and nothing a session writes says what the runner did
+    with its closing message after the process was gone.
 
     `deploy.deployed` and never `deploy.head`: head is main's last commit and
     moves whether or not anything was deployed, while deployed is the branch
@@ -664,6 +718,9 @@ class Deploys:
         self.head = None
         self.at = []
         self.rows = []
+        self.cadence_at = []
+        self.cadence = []
+        self.granted = {}
         ref = next(
             (
                 r
@@ -675,7 +732,7 @@ class Deploys:
         if ref is None:
             return
         self.head = git(archive, "rev-parse", ref).strip()
-        series = {}
+        series, cadence = {}, {}
         specs = ["%s:%s" % (sha, STATUS_FILE) for sha in git_lines(archive, "rev-list", ref)]
         for _spec, text in batch_blobs(archive, specs):
             try:
@@ -687,9 +744,27 @@ class Deploys:
                 continue
             deploy = snapshot.get("deploy") or {}
             series[when] = (deploy.get("deployed"), deploy.get("image_deployed"))
+            cadence[when] = as_minutes((snapshot.get("schedule") or {}).get("cooldown"))
+            last = snapshot.get("last_session") or {}
+            run = last.get("session_id")
+            if run:
+                # The EARLIEST snapshot carrying a session id, because every
+                # snapshot until the next session starts carries the same run
+                # record and a later one could be reading a record rewritten
+                # since. rev-list walks newest first, so the test is explicit.
+                seen = self.granted.get(run)
+                if seen is None or when < seen[0]:
+                    self.granted[run] = (
+                        when,
+                        as_minutes(last.get("asked_wake_after")),
+                        as_minutes(last.get("wake_after")),
+                    )
         for when in sorted(series):
             self.at.append(when)
             self.rows.append(series[when])
+        for when in sorted(cadence):
+            self.cadence_at.append(when)
+            self.cadence.append(cadence[when])
 
     @property
     def latest(self):
@@ -709,13 +784,39 @@ class Deploys:
         index = bisect.bisect_right(self.at, when) - 1
         return self.rows[index] if index >= 0 else (None, None)
 
+    def wait_at(self, when):
+        """The wait in force when a run ended — what the next wake-up counted.
+
+        `schedule.cooldown` is `--cooldown N` off the crontab line until
+        2026-09-07 and <NAME>_WAKE_DEFAULT after it, and both are the same fact:
+        how long the runner waits when the session asked for nothing. A run
+        older than every snapshot falls back on the reading above.
+        """
+        if when is None:
+            return None
+        index = bisect.bisect_right(self.cadence_at, when) - 1
+        if index >= 0:
+            return self.cadence[index]
+        return before_snapshots(when)
+
+    def granted_to(self, session):
+        """What one run asked for, and what it was granted — joined on the id
+        the run record carries, so no time arithmetic is involved and a session
+        cannot be handed its neighbour's numbers.
+
+        Empty for every session before <NAME>_WAKE_REQUEST existed, and for
+        every conversation: only an unattended run writes that record.
+        """
+        row = self.granted.get(session)
+        return (None, None) if row is None else (row[1], row[2])
+
 
 # --------------------------------------------------------------------------
 # The record
 # --------------------------------------------------------------------------
 
 
-def build(archive, session, main, subs, sizes, memory, deploys):
+def build(archive, session, main, subs, sizes, memory, snapshots):
     chain = chain_of(archive, sizes[main][0])
     blob, size = sizes[main]
 
@@ -803,19 +904,33 @@ def build(archive, session, main, subs, sizes, memory, deploys):
     # sixteen commits belonging to fifteen other sessions, in the one case this
     # archive holds. The runner is asked of each run's start for the same
     # reason: two runs of one transcript can have started on two images.
-    for run in runs:
+    # What the next wake-up was counting after this run, and what the session
+    # itself asked for. The ask is joined on the session id and so belongs to
+    # the run that actually wrote the run record — the LAST one, since a
+    # transcript resumed by `chat --continue` holds several under one id and
+    # only the last of them ended where that record was written. The wait falls
+    # back to the default then in force, which is what governed a session that
+    # asked for nothing and every session before asking existed.
+    #   see docs/monitor.md#the-wait-a-session-was-granted
+    last_run = len(runs) - 1
+    for index, run in enumerate(runs):
         if run["from"] is None:
             run["commits"] = None
             run["commit_stat"] = None
             run["runner_commit"] = None
             run["runner_image"] = None
+            run["asked_wake_after"] = None
+            run["wake_after"] = None
             continue
         run["commits"], run["commit_stat"] = memory.within(run["from"], run["to"])
-        run["runner_commit"], run["runner_image"] = deploys.live_at(run["from"])
+        run["runner_commit"], run["runner_image"] = snapshots.live_at(run["from"])
+        asked, granted = snapshots.granted_to(session) if index == last_run else (None, None)
+        run["asked_wake_after"] = asked
+        run["wake_after"] = granted if granted is not None else snapshots.wait_at(run["to"])
     return record
 
 
-def sealed(record, memory, deploys):
+def sealed(record, memory, snapshots):
     """What is still holding a record back, or None when nothing is.
 
     Not "has it been a while" — three exact conditions, each of which can only
@@ -828,7 +943,7 @@ def sealed(record, memory, deploys):
         return None
     if memory.fetched_at is None or memory.fetched_at <= record["end"]:
         return "memory"
-    if deploys.latest is None or deploys.latest <= record["start"]:
+    if snapshots.latest is None or snapshots.latest <= record["start"]:
         return "status"
     return None
 
@@ -884,10 +999,10 @@ def orphans(archive, root):
     return found
 
 
-def seal(archive, clone, root, state_path, only=None, dry_run=False):
+def seal(archive, clone, root, state_path, only=None, dry_run=False, reseal=False):
     index, sizes = archive_index(archive)
     memory = Memory(clone)
-    deploys = Deploys(archive)
+    snapshots = Snapshots(archive)
 
     wanted = sorted(index) if only is None else [only]
     written, waiting, differs, same = [], [], [], 0
@@ -896,13 +1011,13 @@ def seal(archive, clone, root, state_path, only=None, dry_run=False):
         main, subs = index[session]
         target = os.path.join(root, record_path(main))
         stored_here = os.path.exists(target)
-        if only is None and not dry_run and stored_here:
+        if only is None and not dry_run and not reseal and stored_here:
             continue
-        if dry_run and not stored_here:
+        if (dry_run or reseal) and not stored_here:
             waiting.append((session, "no record"))  # nothing to compare against
             continue
-        record = build(archive, session, main, subs, sizes, memory, deploys)
-        holding = sealed(record, memory, deploys)
+        record = build(archive, session, main, subs, sizes, memory, snapshots)
+        holding = sealed(record, memory, snapshots)
         if holding and dry_run:
             # A record is stored and its own source no longer reaches past it,
             # which means that source moved backwards — a clone remade, or the
@@ -913,7 +1028,7 @@ def seal(archive, clone, root, state_path, only=None, dry_run=False):
         if holding:
             waiting.append((session, holding))
             continue
-        if dry_run:
+        if dry_run or reseal:
             try:
                 with open(target) as handle:
                     stored = json.load(handle)
@@ -922,17 +1037,22 @@ def seal(archive, clone, root, state_path, only=None, dry_run=False):
                 continue
             if stored == record:
                 same += 1
-            else:
-                differs.append((session, fields_that_differ(stored, record)))
+                continue
+            differs.append((session, fields_that_differ(stored, record)))
+            # A reseal writes exactly what a recheck reports and nothing else:
+            # a record that already matches is left on the disk it is on, so
+            # the publish pushes the ones that moved rather than all of them.
+            if reseal:
+                written.append(write(root, main, record))
             continue
         written.append(write(root, main, record))
 
     if not dry_run:
-        save_state(state_path, archive, memory, deploys, root)
-    return written, waiting, differs, same, (memory, deploys)
+        save_state(state_path, archive, memory, snapshots, root)
+    return written, waiting, differs, same, (memory, snapshots)
 
 
-def why_waiting(waiting, memory, deploys):
+def why_waiting(waiting, memory, snapshots):
     """One line naming what the sessions without a record are waiting for."""
     if not waiting:
         return "nothing waiting"
@@ -941,7 +1061,7 @@ def why_waiting(waiting, memory, deploys):
         counts[holding] = counts.get(holding, 0) + 1
     said = []
     for holding, n in sorted(counts.items()):
-        latest = {"memory": memory.fetched_at, "status": deploys.latest}.get(holding)
+        latest = {"memory": memory.fetched_at, "status": snapshots.latest}.get(holding)
         when = time.strftime("%Y-%m-%d %H:%MZ", time.gmtime(latest)) if latest else "nothing there"
         said.append("%d waiting on the %s (last read %s)" % (n, holding, when))
     return ", ".join(said)
@@ -952,7 +1072,7 @@ def fields_that_differ(stored, fresh):
     return ", ".join(n for n in names if stored.get(n) != fresh.get(n)) or "(equal but reordered)"
 
 
-def save_state(path, archive, memory, deploys, root):
+def save_state(path, archive, memory, snapshots, root):
     """What the sealing was done against, so a record can be audited against its
     sources later and staleness is visible rather than silent.
 
@@ -967,8 +1087,8 @@ def save_state(path, archive, memory, deploys, root):
             {
                 "sealed_at": int(time.time()),
                 "sessions": git(archive, "rev-parse", SESSIONS_REF).strip(),
-                "status": deploys.head,
-                "status_latest": deploys.latest,
+                "status": snapshots.head,
+                "status_latest": snapshots.latest,
                 "memory": memory.head,
                 "memory_fetched_at": memory.fetched_at,
                 "records": kept,
@@ -1131,6 +1251,30 @@ def selftest():
     check("a refused model has no rates", row["rates"], None)
     check("a refused model has no price", row["usd"], None)
 
+    # The wait, whose three sources answer in a fixed order and whose fallback
+    # is a real setting rather than a blank: nothing downstream could tell a
+    # wait of 0 from a reading that failed.
+    check("a blank is not a wait", as_minutes(""), None)
+    check("a word is not a wait", as_minutes("none"), None)
+    check("zero is a wait", as_minutes("0"), 0)
+    check("a string of minutes is a wait", as_minutes("20"), 20)
+    check("a negative is not a wait", as_minutes(-5), None)
+    check("true is not a wait", as_minutes(True), None)
+
+    check("before --cooldown existed, no wait", before_snapshots(1787499518), 0)
+    check("the first run a wait followed", before_snapshots(1787499519), 15)
+    check("the day it dropped to ten", before_snapshots(1787572255), 10)
+
+    snapshots = Snapshots.__new__(Snapshots)
+    snapshots.at, snapshots.rows = [], []
+    snapshots.cadence_at, snapshots.cadence = [1787593898, 1787630000], [10, 15]
+    snapshots.granted = {"abc": (1788806300, 90, 60)}
+    check("a run older than every snapshot reads the table", snapshots.wait_at(1787499600), 15)
+    check("a run inside the snapshots reads the branch", snapshots.wait_at(1787600000), 10)
+    check("the latest snapshot at or before wins", snapshots.wait_at(1788000000), 15)
+    check("what one run asked and was granted", snapshots.granted_to("abc"), (90, 60))
+    check("a run that asked nothing is empty", snapshots.granted_to("zzz"), (None, None))
+
     if failures:
         print("session-records --selftest FAILED (%d of %d)" % (len(failures), len(ran)))
         for line in failures:
@@ -1153,6 +1297,11 @@ def main():
         "--recheck", action="store_true", help="re-derive every record and diff it, writing nothing"
     )
     parser.add_argument("--rewrite", metavar="ID", help="replace one session's record")
+    parser.add_argument(
+        "--reseal",
+        action="store_true",
+        help="write every record that --recheck reports as differing",
+    )
     parser.add_argument("--selftest", action="store_true", help="prove the arithmetic and stop")
     args = parser.parse_args()
 
@@ -1186,6 +1335,16 @@ def main():
         # went permanently red on it is one nobody reads by the third week. A
         # record disagreeing with a transcript that is still there is the fault.
         return 1 if differs else 0
+
+    if args.reseal:
+        _w, waiting, differs, same, _sources = seal(archive, clone, root, state, reseal=True)
+        for session, why in differs:
+            print("REWROTE  %s — %s" % (session[:8], why))
+        print(
+            "%d record(s) rewritten, %d already current, %d not sealed yet"
+            % (len(differs), same, len(waiting))
+        )
+        return 0
 
     if args.rewrite:
         index, _sizes = archive_index(archive)

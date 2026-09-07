@@ -2,7 +2,7 @@
 # Seal one durable record per archived session, and publish them.
 #
 # Runs on the host. Every declared argument arrives as an environment variable:
-# the flags recheck, prove and publish, and the value rewrite.
+# the flags recheck, reseal, prove and publish, and the value rewrite.
 #
 # What a record holds and when it may be written is host/monitor/session-records.py;
 # this is the half that has to be here. The two sources are fetched here — the
@@ -99,7 +99,18 @@ publish_records() {
 
     [ -d "$STORE" ] || return 0
     if [ "$publish" != yes ]; then
-        say "Not published: --no-publish. 'just records' without it pushes them."
+        # A reseal that publishes nothing leaves the store holding records the
+        # branch does not, and the ordinary path cannot close that gap — it
+        # refuses a file it did not add. Said here, or it surfaces instead as a
+        # RECORDS_NOT_SEALED line at every session end from then on.
+        if [ "$why" = rewritten ]; then
+            say "Not published: --no-publish. The store now holds records '$BRANCH' does not,"
+            say "and an ordinary 'just records' refuses to publish a file it did not add."
+            say "Rehearse against a store of your own — RUNNER_RECORDS_DIR=<dir> — and publish"
+            say "with 'just records --reseal'."
+        else
+            say "Not published: --no-publish. 'just records' without it pushes them."
+        fi
         return 0
     fi
     if [ "$why" != rewritten ] && ! publish_needed; then
@@ -156,14 +167,16 @@ If it is checked out elsewhere, remove that worktree."
         return 0
     fi
 
-    # Nothing on this branch is ever rewritten: a record is written once, when
-    # every field in it is final, and a file that would change here means one of
-    # them was not. `--rewrite` is the one path allowed to change one.
+    # Nothing on this branch is rewritten by an ordinary run: a record is
+    # written once, when every field in it is final, and a file that would
+    # change here means one of them was not. Two paths are allowed to change
+    # one, and both say `rewritten` — `--rewrite <id>` for a transcript a redact
+    # ruling moved, `--reseal` for a field added to every record at once.
     changed=$(git -C "$wt" diff --cached --name-status | grep -v '^A' || true)
     if [ -n "$changed" ] && [ "$why" != rewritten ]; then
         printf '%s\n' "REWRITE REFUSED — these are already on '$BRANCH' and would change:" >&2
         printf '%s\n' "$changed" | sed 's/^/    /' >&2
-        printf '%s\n' "A record is written once. 'just records --rewrite <id>' is the one way." >&2
+        printf '%s\n' "A record is written once. '--rewrite <id>' changes one, '--reseal' the store." >&2
         return 1
     fi
 
@@ -209,6 +222,25 @@ A record is sealed against what is on origin, so there is nothing to seal.
 if [ "$recheck" = yes ]; then
     say "Re-deriving every stored record against the sources as they stand."
     records --recheck
+    exit $?
+fi
+
+
+# --- every record brought up to date ---
+# The one path that rewrites the store wholesale, for a field ADDED to the
+# record after most of it was written. It writes exactly what `--recheck`
+# reports and nothing else, so the audit is the rehearsal: run that first, read
+# what it says will change, then run this.
+#
+# Never on a schedule and never on a session end. A store written once is what
+# makes `cache` a branch of additions, and this is the exception that has to be
+# asked for by name.  see docs/monitor.md#reseal-is-the-exception-to-written-once
+
+if [ "$reseal" = yes ]; then
+    sync_memory || exit 1
+    git -C "$ARCHIVE" fetch --quiet origin sessions status 2>/dev/null || true
+    records --reseal || exit $?
+    publish_records rewritten
     exit $?
 fi
 

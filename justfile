@@ -421,7 +421,8 @@ cost $by_day="no" $days="0" *ARGS:
 [arg("prove", long, value="yes", help="render what sessions, read, tools and cost print today from the records alone, and diff")]
 [arg("publish", long="no-publish", value="no", help="write the records here and push nothing to the archive")]
 [arg("rewrite", long, help="replace one session's record, for a transcript a redact ruling changed after it sealed")]
-records $recheck="no" $prove="no" $publish="yes" $rewrite="":
+[arg("reseal", long, value="yes", help="write every record --recheck reports as differing, for a field added to the record after most of it was written")]
+records $recheck="no" $prove="no" $publish="yes" $rewrite="" $reseal="no":
     @exec host/monitor/records.sh
 
 # no-exit-message: a store with no records in it is a state and not a defect,
