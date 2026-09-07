@@ -127,8 +127,15 @@ fi
 # see docs/archive.md#the-key-goes-on-before-the-secret-goes-in
 
 echo
-if mirror=$(host/archive/mirror.sh 2>&1); then
+mirror=$(host/archive/mirror.sh 2>&1); code=$?
+if [ "$code" -eq 0 ]; then
     echo "Backup: the mirror is running."
+elif [ "$code" -eq 2 ]; then
+    # Not the alarm: nothing here saw it stop. Said anyway, because a page that
+    # prints nothing about the backup reads as a page that checked it.
+    echo "Backup: could not be read — neither running nor stopped, as far as this went."
+    printf '%s\n' "$mirror" | sed -n 's/^    - /  /p'
+    echo "  'just mirror-status' has the detail."
 else
     echo "Backup: THE MIRROR IS NOT RUNNING — the agent's memory is not being archived."
     printf '%s\n' "$mirror" | sed -n 's/^    - /  /p'

@@ -1189,6 +1189,23 @@ container and without a session, with the identical `env BWS_PROBE=1 bws
 no content path behind it, so a `deny` can only come from the layer the check
 is named for.
 
+### backup running
+
+The one probe in the suite that judges a thing outside the image, and the one that needs the network. It runs
+`host/archive/mirror.sh` — `just mirror-status` — and reads its exit status rather than recomputing anything:
+two implementations of "is the backup running" is one that drifts. What it proves is that the agent's memory
+is still being copied where a rewrite of its repository cannot reach it; it failed silently for three days in
+September 2026 with every other signal green, which is why it is a FAIL here and not a note.
+
+Three answers, because the recipe has three: **0** ran, **1** stopped, **2** could not be read. `ok` and
+`FAIL` carry the recipe's own reasons, one per line under its verdict. **2** is `LOOK` — unreachable is never
+ok here, and a reading that failed is not a mechanism that stopped.
+
+A `FAIL` with **no reason** means the recipe died before it reached a verdict rather than judging anything,
+and the probe now says so, carrying the last line the recipe printed. That line is the bash error naming the
+line it died on. See docs/archive.md#a-reading-that-failed-is-not-a-judgement, which is the fault that made
+this necessary, and docs/archive.md#the-run-is-not-the-backup for why a failed *run* is not a failed backup.
+
 ### backup asks
 
 The backup hook is the path everything takes to origin, and it asks the guard

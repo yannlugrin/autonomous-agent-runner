@@ -1550,6 +1550,54 @@ captured as if it were the answer. The exit status is the only thing worth testi
 The mirror is scheduled hourly and GitHub drops scheduled runs under load, so a missed hour is normal and six
 in a row is not: past that runs are being skipped or failing, whatever the last conclusion was.
 
+### A reading that failed is not a judgement
+
+Two readings in this recipe were taken as answers when they had failed, and both ended as
+`FAIL — THE BACKUP IS NOT RUNNING` on a mirror that had run twelve minutes earlier. Measured 2026-09-07, on
+this host's `date` (uutils coreutils 0.8.0), `gh` 2.100.0 and `jq` 1.8.1.
+
+**The timestamp.** `date -d ""` is not an error here: the empty string reads as *today at 00:00*. So a
+`createdAt` that came back empty did not fail the arithmetic — it made the last run as old as the day, and
+`[ "$age" -ge 6 ]` is true every day after 06:00 UTC:
+
+    last run   : 2026-09-07 00:00:00 +0200
+    STALE      : 13 hours since the last run; it is scheduled hourly.
+        - no run for 13 hours, on an hourly schedule
+
+Reproduced by handing the run list an error body — `{"message":"Bad credentials"}` — which is the shape that
+arrives when `gh` fails and writes to stdout, the trap recorded one section up. On a `date` that rejects the
+empty string the same fault lands in the second symptom below instead.
+
+**The comparison.** `set -- $(… jq …)` splits three fields into `$1 $2 $3`, and an answer jq cannot parse
+leaves nothing to split, so the positionals stay UNSET. Under `set -u`, `case "$1"` is where the recipe
+*ends* — no verdict, exit 1:
+
+    == against the source ==
+    jq: parse error: Invalid numeric literal at line 1, column 3
+    host/archive/mirror.sh: line 212: $1: unbound variable
+
+`gh api … 2>&1` folds stderr into the answer so the else-branch can match on the message, which means any
+warning `gh` writes on a *successful* call poisons the JSON.
+
+**The symptom downstream is what makes this worth a record.** `verify` builds its reason from the lines under
+`== verdict ==`, and a recipe that died never printed one, so the screen read:
+
+      [FAIL] backup running
+
+and nothing else — a mechanism this probe could not tell from a stopped backup, on a backup that was running.
+Six probes green either side of it.
+
+So: `createdAt` is read with `// empty` and is what decides whether `gh` answered with a run list at all — no
+timestamp is `COULD NOT BE READ` and judges nothing, and the age is computed only from one that parsed. The
+comparison is read with `read -r` rather than `set --`, so the three fields are always assigned and an empty
+status is its own case. And `backup.sh` says so when it has nothing to say: a `FAIL` with no reasons now
+carries the last line the recipe printed, which is the bash error naming the line it died on.
+
+**And the exit status grew a third answer**, because an ok on a reading that failed is the same lie as a FAIL
+on one: 0 ran, 1 stopped, **2 could not be read**. The recipe prints `UNPROVEN` and the readings that failed;
+`verify` maps it to `LOOK` — unreachable is never ok there, and this is not a mechanism that stopped —
+and `just status` says the backup was neither seen running nor seen stopped. Only 1 stands a session down.
+
 ### The run is not the backup
 
 A run's conclusion covers every job in it, and only one of them is the backup. The workflow

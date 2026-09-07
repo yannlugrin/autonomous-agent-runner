@@ -28,6 +28,11 @@ backup_job=mirror
 # is idle, and describing both in the same words is how three days passed.
 # see docs/archive.md#the-key-goes-on-before-the-secret-goes-in
 problems=()
+# What could not be READ, which is neither a working backup nor a stopped one.
+# Kept apart from the problems above because the two want opposite answers from
+# whoever reads the exit status: a stopped backup must stand a session down, and
+# a reading that failed must not.  see docs/archive.md#a-reading-that-failed-is-not-a-judgement
+unproven=()
 
 
 # --- who is mirroring whom ---
@@ -138,8 +143,10 @@ echo
 echo "== the workflow =="
 if ! command -v gh >/dev/null 2>&1; then
     echo "  gh is not installed — cannot read the run history."
+    unproven+=("gh is not installed, so no run history could be read")
 elif [ -z "$archive" ]; then
     echo "  could not derive the archive slug from origin — cannot read the run history."
+    unproven+=("the archive slug could not be derived from origin, so no run history could be read")
 else
     # gh writes an error body to stdout, so `2>/dev/null` hides only half of a
     # failure and the other half is captured as if it were the answer. The exit
@@ -160,12 +167,22 @@ else
 
     run=$(gh run list --repo "$archive" --workflow "$workflow" --limit 1 \
             --json databaseId,status,conclusion,createdAt,url 2>/dev/null)
+    # `// empty` and not `.[0].createdAt`: this is what says whether gh
+    # answered with a run list at all, and everything below turns on it.
+    created=$(printf '%s' "$run" | jq -r '.[0].createdAt // empty' 2>/dev/null)
     if [ -z "$run" ] || [ "$run" = "[]" ]; then
         echo "  last run   : never"
+    elif [ -z "$created" ]; then
+        # gh answered with something that is not a run list — an error body on
+        # stdout, a truncated read — and an age taken from a timestamp that is
+        # not there is not an age.  see docs/archive.md#a-reading-that-failed-is-not-a-judgement
+        echo "  last run   : COULD NOT BE READ — gh answered, but not with a run list."
+        echo "               The schedule is not judged below. Read it by hand:"
+        echo "                 gh run list --repo $archive --workflow $workflow"
+        unproven+=("gh answered with something that is not a run list, so the schedule was not read")
     else
         # GitHub answers in UTC and this is read by a person, so it is turned
         # round here — the age below stays arithmetic on the raw value.
-        created=$(printf '%s' "$run" | jq -r '.[0].createdAt')
         printf '  last run   : %s  %s\n' \
             "$(date -d "$created" '+%Y-%m-%d %H:%M:%S %z' 2>/dev/null || printf '%s' "$created")" \
             "$(printf '%s' "$run" | jq -r '.[0] | "\(.status)/\(.conclusion // "-")"')"
@@ -173,11 +190,19 @@ else
         # Hourly, and GitHub drops scheduled runs under load, so a missed hour
         # is normal and six in a row is not: past that runs are being skipped
         # or failing, whatever the last conclusion was.
-        age=$(( ( $(date -u +%s) - $(date -u -d "$created" +%s) ) / 3600 ))
-        [ "$age" -ge 6 ] && {
-            printf '  STALE      : %s hours since the last run; it is scheduled hourly.\n' "$age"
-            problems+=("no run for $age hours, on an hourly schedule")
-        }
+        #
+        # The parse is tested rather than assumed: a timestamp this host cannot
+        # read leaves `age` unset, and reading it under `set -u` would end the
+        # recipe mid-screen with no verdict at all.
+        if when=$(date -u -d "$created" +%s 2>/dev/null); then
+            age=$(( ( $(date -u +%s) - when ) / 3600 ))
+            [ "$age" -ge 6 ] && {
+                printf '  STALE      : %s hours since the last run; it is scheduled hourly.\n' "$age"
+                problems+=("no run for $age hours, on an hourly schedule")
+            }
+        else
+            printf '  age        : UNKNOWN — %s is not a timestamp this host can read.\n' "$created"
+        fi
 
         # A failing run is the whole reason this recipe judges, and the run
         # is not the backup: a workflow may carry jobs beside the mirror, and
@@ -249,20 +274,25 @@ else
     # One call, both outcomes read from it. The failures are not noise here —
     # the two below are the loudest signals this recipe has.
     if raw=$(gh api "repos/$source/compare/$base...main" 2>&1); then
-        # Split on purpose: three fields off one line, into $1 $2 $3.
-        # shellcheck disable=SC2046
-        set -- $(printf '%s' "$raw" | jq -r '"\(.status) \(.ahead_by) \(.behind_by)"')
-        case "$1" in
+        # Three fields off one line, and `read` rather than `set --`: an answer
+        # that is not a comparison leaves nothing to split, and the positionals
+        # are then UNSET — read under `set -u`, that ends the recipe here, with
+        # no verdict and nothing on the screen to say why.
+        #   see docs/archive.md#a-reading-that-failed-is-not-a-judgement
+        read -r how ahead behind <<<"$(printf '%s' "$raw" \
+            | jq -r '"\(.status) \(.ahead_by) \(.behind_by)"' 2>/dev/null)"
+        case "$how" in
             identical) echo "  current — $source@main is exactly what is mirrored." ;;
-            ahead)     printf '  behind by %s commit(s).\n' "$2"
+            ahead)     printf '  behind by %s commit(s).\n' "$ahead"
                        if [ ${#problems[@]} -eq 0 ]; then
                            echo "  The next hourly run fast-forwards."
                        else
-                           problems+=("$2 commit(s) of $AGENT_NAME's memory are NOT mirrored")
+                           problems+=("$ahead commit(s) of $AGENT_NAME's memory are NOT mirrored")
                        fi ;;
-            diverged)  printf '  DIVERGED — %s ahead, %s behind. Upstream rewrote history and no run\n' "$2" "$3"
+            diverged)  printf '  DIVERGED — %s ahead, %s behind. Upstream rewrote history and no run\n' "$ahead" "$behind"
                        echo "  has seen it yet. The next run marks the tip above before resetting." ;;
-            *)         printf '  %s (ahead %s, behind %s)\n' "$1" "$2" "$3" ;;
+            '')        echo "  could not be read — $source answered, but not with a comparison." ;;
+            *)         printf '  %s (ahead %s, behind %s)\n' "$how" "$ahead" "$behind" ;;
         esac
     else
         case "$raw" in
@@ -290,13 +320,24 @@ fi
 # that rather than parsing this screen, so the judgement lives in one place.
 # The mirror is the agent's memory outliving a repository the agent may rewrite
 # — a backup that has stopped is a FAIL here, never a note.
+#
+# Three answers and not two: 0 ran, 1 stopped, 2 could not be read. Not proven
+# is not proven, and an ok on a reading that failed is the same lie as a FAIL
+# on one.  see docs/archive.md#a-reading-that-failed-is-not-a-judgement
 
 echo
-if [ ${#problems[@]} -eq 0 ]; then
+if [ ${#problems[@]} -eq 0 ] && [ ${#unproven[@]} -eq 0 ]; then
     echo "== verdict =="
     echo "  ok — the backup is running."
     echo
     echo "Run it now:  gh workflow run $workflow --repo ${archive:-<the archive>}"
+elif [ ${#problems[@]} -eq 0 ]; then
+    echo "== verdict =="
+    echo "  UNPROVEN — nothing here says the backup stopped, and nothing says it ran."
+    for u in "${unproven[@]}"; do printf '    - %s\n' "$u"; done
+    echo
+    echo "Run it now:  gh workflow run $workflow --repo ${archive:-<the archive>}"
+    exit 2
 else
     echo "== verdict =="
     echo "  FAIL — THE BACKUP IS NOT RUNNING."
