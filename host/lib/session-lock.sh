@@ -56,6 +56,18 @@ session_idle_minutes() {
     echo $(( (now - last) / 60 ))
 }
 
+# The same moment as an epoch, for the arithmetic `just status` does over it —
+# whether the mirror had a session end to be dispatched by. Here, like the two
+# readings below, because this file is the one place that knows the record's
+# format. A future stamp reads as no stamp, for the reason given below.
+session_ended_epoch() {
+    local last
+    last=$(cat "$RUNNER_LAST_SESSION_ENDED_AT" 2>/dev/null) || last=""
+    case "$last" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$last" -le "$(date +%s)" ] || return 1
+    printf '%s\n' "$last"
+}
+
 # The same moment as an ISO-8601 UTC instant, for the container to be told.
 # Here rather than beside its reader because this file is the one place that
 # knows the format of that record. A future record reads as no record: there it

@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
-# Whether a session is running, what it has spent, whether scheduling is on,
-# what the review gate is holding, and what is live.
+# Is everything right — the live facts, and then the screen.
 #
 # Runs on the host. No arguments.
+#
+# This half answers only what a shell owns: whether a container is up, what the
+# schedule says, when the next wake-up may start, how the last run ended. Every
+# one of those already has an implementation in host/lib/ that `run`, `chat` and
+# `listen` share, and a second spelling of any of them is two recipes describing
+# different machines. They go to host/session/status.py as `key: value` lines,
+# and it composes the screen and asks the remaining owners itself.
+# see docs/sessions.md#where-just-status-gets-its-answers
 set -uo pipefail
 # shellcheck source=SCRIPTDIR/../lib/root.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
@@ -23,173 +30,66 @@ source host/lib/run-record.sh
 # instant would find it held and stand down.
 # see docs/sessions.md#where-just-status-gets-its-answers
 
-c=$(session_container)
-if [ -n "$c" ]; then
-    # Whether a session will start on its own, on the same line as what is
-    # running now; `session_absent_line` below carries the same clause.
-    scheduling=$(scheduling_phrase)
-    since=$(session_started || echo "")
-    if [ -n "$since" ]; then
-        printf 'A session is running: %s, started %s, up %s. %s\n' \
-            "$(session_kind)" "$(date -d "@$since" +%H:%M)" \
-            "$(elapsed $(( $(date +%s) - since )))" "$scheduling"
+facts() {
+    local c started idle sched state daemon left from governs due why
+
+    c=$(session_container)
+    if [ -n "$c" ]; then
+        printf 'running: yes\n'
+        printf 'kind: %s\n' "$(session_kind)"
+        printf 'container: %s\n' "${c%%$'\t'*}"
+        started=$(session_started || echo "")
+        [ -n "$started" ] && printf 'started: %s\n' "$started"
     else
-        # Running but unreadable: docker answered `ps` and not `inspect`. Say
-        # the half that is known rather than nothing.
-        printf 'A session is running: %s. %s\n' "$(session_kind)" "$scheduling"
+        printf 'running: no\n'
+        printf 'idle: %s\n' "$(session_idle_minutes)"
+        # A shell or a probe is not a session and holds no lock, but "nothing
+        # is running" while you are sitting in a container is misleading.
+        printf 'other: %s\n' "$(service_container)"
+        # The wait in force and the sentence that explains it, from the
+        # function `run` stands a wake-up down on. Only when nothing is
+        # running: while a session is up, the number that governs the next one
+        # has not been written yet — it is decided when this one ends.
+        { read -r left from governs due; read -r why; } <<<"$(wake_state \
+            "$(run_record_field asked_wake_after)" "$(run_record_field wake_after)" \
+            "$(run_record_field ended)" "$(chat_ended_epoch)")"
+        printf 'wake_left: %s\nwake_from: %s\nwake_governs: %s\nwake_due: %s\nwake_why: %s\n' \
+            "$left" "$from" "$governs" "$due" "$why"
     fi
-    printf '  %s\n' "$(printf '%s' "$c" | tr '\t' ' ')"
-    echo
-    # --since, so a session that has not written its first line yet says so
-    # rather than reporting the previous session's numbers as this one's.
-    host/session/session-stats.py --since "${since:-0}" || true
-else
-    # The same sentence `just listen` ends on, from the same implementation: two
-    # recipes answering "is anything running?" differently is a bug you only
-    # find by holding them side by side.
-    session_absent_line
-    # A stop nobody has been told about yet, which is the state worth seeing
-    # here: it may sit for hours while wake-ups stand down on the same limit
-    # that caused it. Said only when there is one — a clean end is every other
-    # day and a line saying so would be a line nobody reads.
-    # see docs/sessions.md#recovering-a-session-that-was-stopped
-    last_run=$(run_record_verdict no)
-    case "$last_run" in
-    stopped*) printf '  The last run was stopped (%s). The next session opens with what it was doing.\n' \
-                  "${last_run#stopped }" ;;
-    esac
-    # A shell or a probe is not a session and holds no lock, but "nothing is
-    # running" while you are sitting in a container is a misleading answer.
-    other=$(service_container)
-    [ -n "$other" ] && printf '  A container is up that is not a session: %s\n' "$other"
-    echo
-    host/session/session-stats.py || true
-fi
 
+    # The bounds, whether or not one is running: they are what a session may
+    # ask for, and the screen says so beside the wait it would otherwise get.
+    printf 'wake_default: %s\n' "$(wake_default)"
+    printf 'wake_min: %s\n' "$(wake_min)"
+    printf 'wake_max: %s\n' "$(wake_max)"
+    if wake_armed; then printf 'wake_armed: yes\n'; else printf 'wake_armed: no\n'; fi
 
-# --- what the budget gate sees ---
-# Asked of the gate itself rather than recomputed here: it is the only place the
-# arithmetic lives. It also renews the container's access token, which is why
-# looking at status once a week keeps the unattended path alive on a schedule
-# that has been paused.  see docs/budget.md
-#
-# 2>&1 because the two halves go to different places on purpose: the numbers to
-# stdout, the one line it writes when it cannot tell to stderr. An empty answer
-# is not "no limits" — no docker, no credential, a gate that could not start.
+    # How the last unattended run ended, and when the last session of any kind
+    # did — the second is what tells the mirror's judgement whether a run it
+    # was owed had anything to dispatch it.
+    printf 'last_run: %s\n' "$(run_record_verdict "$([ -n "$c" ] && echo yes || echo no)")"
+    printf 'session_ended: %s\n' "$(session_ended_epoch || echo "")"
 
-echo
-echo "Budget:"
-# Read in both guard states, as session-env.sh does: off, the read is advisory
-# and the session is still told these numbers. Exactly `true` arms it, the one
-# comparison session-env.sh makes.
-if [ "${ACCOUNT_BUDGET_GUARD:-}" = true ]; then
-    budget=$(python3 ./image/claude-usage.py 2>&1)
-    guard_line="ACCOUNT_BUDGET_GUARD is on: a session over the line is refused."
-else
-    budget=$(python3 ./image/claude-usage.py --advisory 2>&1)
-    guard_line="ACCOUNT_BUDGET_GUARD is off: nothing on this host refuses a session on budget; a session is told these numbers for information only."
-fi
-if [ -n "$budget" ]; then
-    printf '%s\n' "$budget" | sed 's/^/  /'
-else
-    echo "  the reading did not answer — run 'just verify' to see why."
-fi
-echo "  $guard_line"
+    # Asked of `just schedule --state` rather than read out of the crontab,
+    # because what counts as paused is a prefix that recipe writes; a missing
+    # answer is not "nothing scheduled".  see docs/schedule.md
+    sched=$(just schedule --state 2>&1)
+    state=$(printf '%s\n' "$sched" | sed -n 's/^state: //p')
+    daemon=$(printf '%s\n' "$sched" | sed -n 's/^daemon: //p')
+    printf 'scheduling: %s\n' "${state:-unknown}"
+    printf 'daemon: %s\n' "${daemon:-unknown}"
+    # How often the line fires, which is how long a wake-up that was due has to
+    # have happened in. Derived by the recipe that owns the expression, and
+    # `unknown` for a line this repository did not write.
+    printf 'cron_every: %s\n' "$(printf '%s\n' "$sched" | sed -n 's/^every: //p')"
 
-
-# --- what the review gate is holding back ---
-# Asked of the collection script rather than scanned again here: one rule, one
-# implementation. It costs a couple of seconds, because answering means
-# extracting the transcripts and scanning them; it stops before staging
-# anything, so it is safe beside a running session.  see docs/archive.md
-#
-# A missing line is not a zero. No archive to read the ledger from, no docker, a
-# scan that could not run: reporting "none waiting" for any of those is the gate
-# failing silently.
-
-echo
-pending=$(host/archive/collect.sh --held 2>&1 \
-    | sed -n 's/^waiting-on-review: //p')
-if [ -z "$pending" ]; then
-    echo "Transcripts: the review gate did not answer — run 'just collect' to see why."
-elif [ "$pending" -eq 0 ]; then
-    echo "Transcripts: none waiting on review."
-else
-    printf "Transcripts: %s waiting on review, held out of the archive — 'just collect' prints what and why.\n" "$pending"
-fi
-
-
-# --- is the memory still being backed up ---
-# The verdict only, from the recipe that decides it. Said here because a mirror
-# that has stopped looks exactly like one that is idle, and this screen is
-# where the operator looks when they look at all — it was three days dead in
-# September 2026 with every other line on this page green.
-# see docs/archive.md#the-key-goes-on-before-the-secret-goes-in
-
-echo
-mirror=$(host/archive/mirror.sh 2>&1); code=$?
-if [ "$code" -eq 0 ]; then
-    echo "Backup: the mirror is running."
-elif [ "$code" -eq 2 ]; then
-    # Not the alarm: nothing here saw it stop. Said anyway, because a page that
-    # prints nothing about the backup reads as a page that checked it.
-    echo "Backup: could not be read — neither running nor stopped, as far as this went."
-    printf '%s\n' "$mirror" | sed -n 's/^    - /  /p'
-    echo "  'just mirror-status' has the detail."
-else
-    echo "Backup: THE MIRROR IS NOT RUNNING — the agent's memory is not being archived."
-    printf '%s\n' "$mirror" | sed -n 's/^    - /  /p'
-    echo "  'just mirror-status' has the detail."
-fi
-echo
-
-
-# --- whether the agent has granted itself anything ---
-# Here rather than in `verify` because it is a fact about the volume and not
-# about the image: verify proves the candidate on a twin with no volume, and
-# would answer this about a world nobody lives in. It spends no budget — no
-# session, one `--entrypoint python3` container.
-#
-# It reports and never refuses: a settings edit that stood a session down would
-# let the agent lock itself out of its own container.
-
-host/release/check-agent-settings.sh || true
-echo
-
-
-# --- what is live ---
-# What cron runs, and how far it is behind what is here — from the one recipe
-# that decides the branch, the tags and the path.
-
-ds=$(just deploy --state 2>/dev/null)
-field() { printf '%s\n' "$ds" | sed -n "s/^$1: //p"; }
-
-if [ -z "$ds" ]; then
-    echo "Deployed: unknown — 'just deploy --state' did not answer."
-elif [ "$(field worktree)" = absent ]; then
-    echo "Deployed: nothing yet — 'just deploy' creates $RUNNER_DEPLOYED on its first run."
-else
-    d=$(field deployed); a=$(field ahead); di=$(field image_deployed)
-    case "$a" in
-        0) behind="up to date with main" ;;
-        -|'') behind="no deployed branch" ;;
-        *) behind="$a commit(s) behind main" ;;
-    esac
-    # The image is named and nothing is claimed about it: `deploy` builds from
-    # the deployed checkout, so the two cannot differ and there is no comparison
-    # left to report; the candidate belongs to `verify`.  see docs/release.md
-    if [ "$di" = "-" ]; then img="no image tagged deployed"
-    else img="image $di"
+    # Read the way session-env.sh reads it: exactly `true` arms the guard, and
+    # one comparison made the same way on both sides is the whole of it.
+    if [ "${ACCOUNT_BUDGET_GUARD:-}" = true ]; then
+        printf 'budget_guard: on\n'
+    else
+        printf 'budget_guard: off\n'
     fi
-    echo "Deployed: $d, $behind; $img."
-    # The subjects, and not only the count: this is where a person decides
-    # whether a deploy is worth doing, and the commit messages are what say so.
-    # Uncapped on purpose — a backlog long enough to scroll is the thing worth
-    # seeing, not noise to fold behind its own count.
-    field commit | sed 's/^/  /'
-    dc=$(field dropped_commit)
-    if [ -n "$dc" ]; then
-        echo "  Live and NOT in main — a deploy would drop:"
-        printf '%s\n' "$dc" | sed 's/^/    /'
-    fi
-fi
+}
+
+facts | host/session/status.py

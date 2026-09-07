@@ -48,7 +48,7 @@ if [ "$found" -eq 0 ]; then
     # Nothing to collect is a failure for a collection and an answer for a
     # count: a caller reading a non-zero exit as "could not tell" would report
     # a fresh volume as a broken gate.
-    [ "$HELD" = true ] && { echo 'waiting-on-review: 0'; exit 0; }
+    [ "$HELD" = true ] && { echo 'waiting-on-review: 0'; held_cache 0; exit 0; }
     die "No transcripts found in the volume. Nothing to do."
 fi
 

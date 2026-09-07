@@ -119,15 +119,18 @@ done <<< "$(printf '%s\n' "$flagged_at" | sed '/^$/d')"
 
 
 # --- the count, without the collection ---
-# `just status` asks the gate for this rather than carrying its own copy of the
-# scan. It stops here — nothing staged, no worktree, no commit — so it is safe
-# to run beside a live session, and it prints one machine-shaped line rather
-# than leaving a caller to take the tail, which would be the gitleaks hint.
+# The count, for whoever wants it without a collection. It stops here — nothing
+# staged, no worktree, no commit — so it is safe to run beside a live session,
+# and it prints one machine-shaped line rather than leaving a caller to take the
+# tail, which would be the gitleaks hint. `just status` reads what the last
+# collection wrote to RUNNER_REVIEW_HELD instead: this path starts a container
+# and scans the volume for a number that only a session ending can change.
 # see docs/archive.md#the-count-without-the-collection
 
 if [ "$HELD" = true ]; then
-    printf 'waiting-on-review: %s\n' \
-        "$(printf '%s\n' "$unreviewed" | sed '/^$/d' | wc -l)"
+    held_now=$(printf '%s\n' "$unreviewed" | sed '/^$/d' | wc -l)
+    printf 'waiting-on-review: %s\n' "$held_now"
+    held_cache "$held_now"
     exit 0
 fi
 

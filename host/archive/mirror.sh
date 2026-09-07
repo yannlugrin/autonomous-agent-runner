@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # How the mirror is doing — is it running, is it current, was anything rewound.
-# Runs on the host, against the archive checkout. No arguments.
+# Runs on the host, against the archive checkout.
+#
+#     mirror.sh                   the screen
+#     mirror.sh --state [<epoch>] the same reading as `key: value` lines, for
+#                                 `just status`; the epoch is when the last
+#                                 session ended, which is what decides whether
+#                                 a due run is late or merely waiting
+#
+# --state runs exactly the same code and prints instead of the screen, so the
+# two cannot disagree; the exit status is the verdict either way.
 #
 # Everything here reads. Each of the archive's two records has exactly one
 # writer, and a second writer on a record whose whole value is that it has one
@@ -14,6 +23,18 @@ set -uo pipefail
 
 need_archive
 
+# --state sends the screen to /dev/null and keeps descriptor 3 for the state
+# block, rather than putting a condition around forty prints: one code path,
+# and a fact that reaches the screen and not the block cannot exist.
+as_state=no
+session_ended_at=""
+case "${1:-}" in
+    --state) as_state=yes; session_ended_at="${2:-}" ;;
+    "") ;;
+    *) echo "Usage: mirror.sh [--state [<last session end, epoch>]]" >&2; exit 2 ;;
+esac
+if [ "$as_state" = yes ]; then exec 3>&1 1>/dev/null; else exec 3>/dev/null; fi
+
 ref="refs/archive/$AGENT_USER"
 workflow="${AGENT_ARCHIVE_WORKFLOW:-mirror-$AGENT_USER.yml}"
 # The job inside that workflow that IS the backup. Named rather than derived:
@@ -22,6 +43,15 @@ workflow="${AGENT_ARCHIVE_WORKFLOW:-mirror-$AGENT_USER.yml}"
 # says nothing about whether the memory was mirrored.
 #   see docs/archive.md#the-run-is-not-the-backup
 backup_job=mirror
+
+# What --state reports, declared here because `set -u` reaches them whatever
+# path the reading took: a fact that could not be read must arrive empty rather
+# than absent, so the block always has the same shape.
+tip_written=""
+tip_commits=""
+workflow_state=""
+last_run=""
+last_conclusion=""
 
 # What is wrong, collected as it is found and judged at the end. This recipe
 # used to only describe; a backup that has stopped reads exactly like one that
@@ -88,6 +118,8 @@ else
     # from this line — the workflow section decides it, and the verdict says so.
     printf '  written    : %s  (by %s)\n' "$when" "$AGENT_NAME"
     printf '  commits    : %s\n' "$(git -C "$ARCHIVE" rev-list --count "$ref")"
+    tip_written=$(git -C "$ARCHIVE" log -1 --format=%ct "$ref")
+    tip_commits=$(git -C "$ARCHIVE" rev-list --count "$ref")
 fi
 echo
 
@@ -152,6 +184,7 @@ else
     # failure and the other half is captured as if it were the answer. The exit
     # status is the only thing worth testing.
     if state=$(gh api "repos/$archive/actions/workflows/$workflow" --jq .state 2>/dev/null); then
+        workflow_state="$state"
         case "$state" in
             active) echo "  state      : active" ;;
             disabled_inactivity)
@@ -187,6 +220,7 @@ else
             "$(date -d "$created" '+%Y-%m-%d %H:%M:%S %z' 2>/dev/null || printf '%s' "$created")" \
             "$(printf '%s' "$run" | jq -r '.[0] | "\(.status)/\(.conclusion // "-")"')"
         printf '               %s\n' "$(printf '%s' "$run" | jq -r '.[0].url')"
+        last_conclusion=$(printf '%s' "$run" | jq -r '.[0].conclusion // .[0].status')
         # Hourly, and GitHub drops scheduled runs under load, so a missed hour
         # is normal and six in a row is not: past that runs are being skipped
         # or failing, whatever the last conclusion was.
@@ -195,10 +229,12 @@ else
         # read leaves `age` unset, and reading it under `set -u` would end the
         # recipe mid-screen with no verdict at all.
         if when=$(date -u -d "$created" +%s 2>/dev/null); then
+            last_run="$when"
             age=$(( ( $(date -u +%s) - when ) / 3600 ))
             [ "$age" -ge 6 ] && {
-                printf '  STALE      : %s hours since the last run; it is scheduled hourly.\n' "$age"
-                problems+=("no run for $age hours, on an hourly schedule")
+                printf '  STALE      : %s hours since the last run. A session end asks for one,\n' "$age"
+                printf '               and GitHub fires the schedule when it feels like it.\n'
+                problems+=("no run for $age hours, and sessions have been ending")
             }
         else
             printf '  age        : UNKNOWN — %s is not a timestamp this host can read.\n' "$created"
@@ -315,6 +351,50 @@ else
 fi
 
 
+# --- what --state prints ---
+# The lateness judgement is here and not in the screen that shows it, for the
+# reason the verdict below is: one place decides, everyone else reads.
+#
+# THE MIRROR IS NOT ON A CLOCK. GitHub fires the workflow's schedule when it
+# feels like it — two of the last twelve runs here — and what actually runs it
+# is a session ending more than AGENT_ARCHIVE_MIRROR_COOLDOWN minutes after the
+# last run. So a run that is due and has not happened is NOT late: it is
+# waiting for a session to end. It is late only when one has ended since, which
+# means a dispatch was owed and did not arrive — and that failure says so on
+# stderr, where cron is the only reader.
+#
+# The grace is for the seconds between a session ending and its run appearing
+# in the list: without it every `just status` in the minute after a session
+# would report a backup that is fine as late.
+GRACE=300
+
+emit_state() {
+    local verdict="$1" cooldown due="" late=no p u
+    cooldown="${AGENT_ARCHIVE_MIRROR_COOLDOWN:-}"
+    case "$cooldown" in ''|*[!0-9]*) cooldown="" ;; esac
+    [ -n "$last_run" ] && [ -n "$cooldown" ] && due=$(( last_run + cooldown * 60 ))
+    if [ -n "$due" ] && [ -n "$session_ended_at" ] \
+       && [ "$session_ended_at" -gt "$due" ] \
+       && [ "$session_ended_at" -gt "$last_run" ] \
+       && [ "$(( $(date +%s) - session_ended_at ))" -gt "$GRACE" ]; then
+        late=yes
+    fi
+    {
+        printf 'verdict: %s\n' "$verdict"
+        printf 'workflow: %s\n' "${workflow_state:-unknown}"
+        printf 'last_run: %s\n' "$last_run"
+        printf 'conclusion: %s\n' "$last_conclusion"
+        printf 'cooldown: %s\n' "$cooldown"
+        printf 'due: %s\n' "$due"
+        printf 'late: %s\n' "$late"
+        printf 'tip_written: %s\n' "$tip_written"
+        printf 'tip_commits: %s\n' "$tip_commits"
+        for p in "${problems[@]}"; do printf 'problem: %s\n' "$p"; done
+        for u in "${unproven[@]}"; do printf 'unproven: %s\n' "$u"; done
+    } >&3
+}
+
+
 # --- the verdict ---
 # Last, and it decides the exit status: `just status` and `just verify` read
 # that rather than parsing this screen, so the judgement lives in one place.
@@ -327,11 +407,13 @@ fi
 
 echo
 if [ ${#problems[@]} -eq 0 ] && [ ${#unproven[@]} -eq 0 ]; then
+    emit_state running
     echo "== verdict =="
     echo "  ok — the backup is running."
     echo
     echo "Run it now:  gh workflow run $workflow --repo ${archive:-<the archive>}"
 elif [ ${#problems[@]} -eq 0 ]; then
+    emit_state unproven
     echo "== verdict =="
     echo "  UNPROVEN — nothing here says the backup stopped, and nothing says it ran."
     for u in "${unproven[@]}"; do printf '    - %s\n' "$u"; done
@@ -339,6 +421,7 @@ elif [ ${#problems[@]} -eq 0 ]; then
     echo "Run it now:  gh workflow run $workflow --repo ${archive:-<the archive>}"
     exit 2
 else
+    emit_state stopped
     echo "== verdict =="
     echo "  FAIL — THE BACKUP IS NOT RUNNING."
     for p in "${problems[@]}"; do printf '    - %s\n' "$p"; done

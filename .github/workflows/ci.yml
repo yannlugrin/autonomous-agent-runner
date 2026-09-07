@@ -65,6 +65,9 @@ jobs:
       - name: stats selftest
         run: python3 host/monitor/stats.py --selftest
 
+      - name: status selftest
+        run: python3 host/session/status.py --selftest
+
   docker-build:
     runs-on: ubuntu-latest
     steps:

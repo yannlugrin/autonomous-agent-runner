@@ -123,6 +123,9 @@ export RUNNER_LAST_SESSION_ENDED_AT := env_var_or_default("RUNNER_LAST_SESSION_E
 # in three days" from "no session has run".
 export RUNNER_LAST_CHAT_ID := env_var_or_default("RUNNER_LAST_CHAT_ID", runner_cache / "last-chat")
 export RUNNER_LAST_CHAT_ENDED_AT := env_var_or_default("RUNNER_LAST_CHAT_ENDED_AT", runner_cache / "last-chat-ended")
+# What the review gate is holding, written by `collect` and read by `status`:
+# the count changes only when a session ends, and that is when `collect` runs.
+export RUNNER_REVIEW_HELD := env_var_or_default("RUNNER_REVIEW_HELD", runner_cache / "review-held")
 export RUNNER_SNAPSHOT_PUBLISHED_AT := env_var_or_default("RUNNER_SNAPSHOT_PUBLISHED_AT", runner_cache / "status-published")
 export RUNNER_SNAPSHOT_LOCK := env_var_or_default("RUNNER_SNAPSHOT_LOCK", "/tmp" / agent_user + "-status-publish.lock")
 
@@ -317,7 +320,7 @@ listen $all="no" $wait="no" $live="no" $remote="no" $summary="yes" $n="20":
 read $id $subagent="" $full="no":
     @exec host/session/read.sh
 
-[doc("Whether a session is running, what it has spent, whether scheduling is on, what the gate is holding")]
+[doc("Whether anything needs attention: what is running, the budget, the backup, the gate, what is live")]
 [group("session")]
 status:
     @exec host/session/status.sh

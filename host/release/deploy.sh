@@ -45,6 +45,13 @@ if [ "$state" = yes ]; then
     echo "dropped: ${dropped:--}"
     echo "image_candidate: ${cid:--}"
     echo "image_deployed: ${did:--}"
+    # When this build went live, from the reflog of the branch this recipe
+    # resets: a deploy IS that reset, so the log of it is already kept and
+    # needs no stamp of its own. The image's own `Created` is not this — a
+    # build whose layers all cache keeps the date of the one it reused, which
+    # read 23 hours old for a deploy 35 minutes old.
+    echo "deployed_at: $(git -C "$here" reflog show --date=unix --format='%gd' refs/heads/deployed 2>/dev/null \
+        | head -1 | sed -E 's/^.*\{([0-9]+)\}$/\1/')"
     # `commit:` repeated rather than a `git log` block pasted in: this output is
     # parsed twice, and a subject beginning `word: ` would enter either reader as
     # a field of its own. see docs/release.md#--state-is-parsed-twice

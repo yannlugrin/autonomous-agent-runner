@@ -55,6 +55,27 @@ held='#PAUSED '
 # line goes on not finding. see docs/schedule.md#the-path-the-entry-carries
 cron_path() { printf '%s:/usr/local/bin:/usr/bin:/bin' "$(dirname "$(command -v just)")"; }
 
+# How often the entry fires, in minutes, for a reader measuring a wake-up that
+# never happened against how long it had to happen in. Derived here because this
+# is the file that owns the expression.
+#
+# Two spellings and no more: `*` and `*/N` in the minute field, with the four
+# other fields `*`. That is what this repository installs and what `--enable`
+# writes; anything else is somebody's own line, and the honest answer for it is
+# `unknown` — a period guessed from a list or a fixed hour would be a number a
+# screen then judges lateness against.
+cron_every() {
+    local minute rest
+    minute="${1%% *}"
+    rest="${1#* }"
+    [ "$rest" = "* * * *" ] || { printf 'unknown\n'; return; }
+    case "$minute" in
+        '*')        printf '1\n' ;;
+        '*/'[0-9]*) printf '%s\n' "${minute#*/}" ;;
+        *)          printf 'unknown\n' ;;
+    esac
+}
+
 # The same entry with a current PATH and nothing else touched.
 with_current_path() {
     local line="$1" rest
@@ -224,6 +245,7 @@ state)
         [ "$paused" = yes ] && echo "state: paused" || echo "state: enabled"
         echo "daemon: $(cron_daemon)"
         echo "cron: $entry_cron"
+        echo "every: $(cron_every "$entry_cron")"
     fi
     exit 0 ;;
 disable)

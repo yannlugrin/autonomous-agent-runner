@@ -134,6 +134,27 @@ cleanup() {
 trap cleanup EXIT
 
 
+# --- what the review gate is holding, for a screen that cannot pay for this ---
+# `just status` used to ask `--held`, which starts a container and scans the
+# volume for a number that only a session ending can change — and a session
+# ending is exactly when this runs. Both endings write it: the collection
+# below, and the `--held` count in rule.sh, which is what refreshes it by hand.
+#
+# The count and the instant, because a count on its own cannot be told from a
+# stale one and a reader must be able to say how old its answer is. Best effort
+# throughout: a cache that could not be written costs a screen its shortcut,
+# and a collection that failed on its own bookkeeping costs the archive a
+# transcript.  see docs/archive.md#the-count-without-the-collection
+
+held_cache() {
+    [ -n "${RUNNER_REVIEW_HELD:-}" ] || return 0
+    mkdir -p "$(dirname "$RUNNER_REVIEW_HELD")" 2>/dev/null \
+        && printf 'count=%s\nat=%s\n' "$1" "$(date +%s)" \
+             > "$RUNNER_REVIEW_HELD" 2>/dev/null || true
+    return 0
+}
+
+
 # --- the stages, in order ---
 # Each one is a file named for what it does, and each reads what the one above
 # it left in this shell.
@@ -148,5 +169,8 @@ trap cleanup EXIT
 . host/archive/rule.sh           # --held, --approve, --redact, and the proof
 # shellcheck source=SCRIPTDIR/report.sh
 . host/archive/report.sh         # what is held, and what the run read
+
+held_cache "$held"
+
 # shellcheck source=SCRIPTDIR/archive.sh
 . host/archive/archive.sh        # the worktree, the commit, the push

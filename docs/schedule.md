@@ -277,6 +277,39 @@ closing message, on a line of its own:
 `host/lib/run-record.sh` writes the decision into the run record;
 `host/session/run.sh` enforces it.
 
+**A wait that has elapsed is not a session that started.** `run` is fired by
+cron and stands itself down, and nothing on the way in reports a wake-up that
+never happened: on 2026-09-07 a defect in this feature kept every session from
+starting for half an hour, and `just status` said "next now — the default wait
+is 30m" throughout, which is what a healthy machine says one second before a
+session begins.
+
+So the elapsed case is measured rather than described. The wait's own instant
+comes back from `wake_state`, and a session that has not started by **due + one
+firing of the crontab line + a minute** is late. The line's period is `every:`
+from `just schedule --state`; where that is `unknown` nothing is judged.
+
+**Late is not the same as broken, and the budget is the reason it usually is
+not.** Three states are shown and none of them is a fault: the gate refusing a
+session outright — that is the gate working, and it says so in its own section;
+a schedule paused or without a daemon, which replaces the line entirely; and a
+budget *near* its line, which is the subtle one. The allowance climbs through
+the window, so a wake-up refused at 21:06 is admitted at 21:30 with nothing
+changed but the clock, and reading only "is it over right now" reports the
+half-hour in between as a session that went missing. Measured 2026-09-07 on a
+week sitting at 100% of its allowance, where the screen first said a session had
+been due for 31 minutes and none had started. At or above 90% of an allowance
+the wait is still shown as overdue — that is worth seeing — and the reason
+given is the budget. Below that, nothing having started is a problem, because
+then there is nothing left to explain it.
+
+**The wait and the sentence explaining it are one function, `wake_state`.** Two
+readers say it: `run`, before it stands a wake-up down, and `just status`, when
+it answers "when does the next one start". A screen that recomputed the wait
+would be the copy that drifts, and it is the copy nobody runs by hand. It takes
+the record's two fields and the two stamps as arguments and reads no file, so
+the verify probe proves it with strings and epochs.
+
 **This is the one mechanism where the agent's own output changes what the
 runner does with nobody reading it in between.** Everywhere else a request from
 the agent is information the operator rules on. The two bounds are therefore
@@ -448,7 +481,7 @@ there so an empty crontab comes out empty instead of holding one blank line.
 ## Why state is a verb
 
 `--state` prints one prefixed field per line — `state:`, `daemon:`, `cron:`,
-`cron:` — so a reader takes what it knows and ignores the rest, and a field
+`every:` — so a reader takes what it knows and ignores the rest, and a field
 this cannot answer is absent rather than guessed. `state:` is the one that must
 always be there.
 
@@ -459,6 +492,14 @@ the crontab would answer differently the first time that spelling changed.
 `host/lib/session-env.sh` tells the session its cadence from the same answer.
 The hour stays here, where it is read off the installed line
 — a second rendering of them is the copy that goes stale.
+
+`every:` is how many minutes the line waits between firings, derived here
+because this is the file that owns the expression. Two spellings and no more:
+`*` and `*/N` in the minute field, with the four other fields `*` — what
+`--enable` writes and what this repository recommends. Anything else is
+somebody's own line and the answer is `unknown`, because a period guessed from
+a list or a fixed hour is a number `just status` would then judge a missing
+session against.
 
 `cron:` is the expression and `daemon:` is what would fire it. They are named
 apart because they are different facts, and the reader that confuses them

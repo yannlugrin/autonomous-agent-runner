@@ -84,10 +84,11 @@ esac
 
 
 # --- agent settings ---
-# That the agent has not granted itself anything. `status` runs the same script
-# with `|| true`, which is right for a status line and wrong for a proof — here
-# its answer becomes a verdict. 0 clean, 1 a permissions block was found, 2 the
-# container did not answer; both non-zero are FAIL.
+# That the agent has not granted itself anything. This is the script's one
+# caller since 2026-09-07 — `status` printed it too, with `|| true`, which was
+# right for a status line and wrong for a proof. Here its answer becomes a
+# verdict. 0 clean, 1 a permissions block was found, 2 the container did not
+# answer; both non-zero are FAIL.
 # see docs/verify.md#the-agent-has-granted-itself-nothing
 
 out=$(host/release/check-agent-settings.sh 2>&1); rc=$?
@@ -656,6 +657,20 @@ wrong=$(
         [ "$(wake_due 180 "$((now - 10800))" "$((now - 60))")" = "9 chat" ] \
             || say "a conversation does not floor the wait"
         [ "$(wake_due 0 "$((now - 60))" "")" = "0 none" ] || say "a wait of zero waits"
+
+        # The same arithmetic as an instant, which is what `just status`
+        # measures a wake-up that never happened against: an elapsed wait says
+        # `0 none` above and cannot say whether it elapsed a minute ago or an
+        # hour. A wrong instant here is a screen that cries wolf, or one that
+        # stays quiet through exactly the fault it was given the number for.
+        [ "$(wake_due_at 60 "$((now - 600))" "")" = "$((now + 3000))" ] \
+            || say "the due instant is not the wait it was computed from"
+        [ "$(wake_due_at 60 "" "")" = 0 ] || say "no record does not read as no instant"
+        # Four fields and the sentence, in that order: `status` reads them
+        # positionally, and a field added in the middle would land inside the
+        # one before it with nothing failing.
+        [ "$(wake_state 900 120 "$((now - 600))" "" | head -1)" = "110 session 120 $((now + 6600))" ] \
+            || say "the wake state line changed shape"
 
         # --- what reaches the record ---
         run_record_open probe-container

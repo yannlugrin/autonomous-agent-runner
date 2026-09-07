@@ -178,6 +178,7 @@ travels into the image and is reported there as such.
 | `RUNNER_LAST_CHAT_ENDED_AT` | Epoch seconds when a conversation last **ended**. Surfaced to the agent as `<NAME>_LAST_CHAT_ENDED`. |
 | `RUNNER_RUN_LOG` | Where cron writes what an unattended run printed. Named in the crontab line `schedule` installs. |
 | `RUNNER_CACHE_DIR` | The host cache directory, `~/.cache/<agent>`, and the default root of every stamp and log below. Holds the scan cache `collect` keys on a fingerprint of this volume's secrets. Per agent: a shared directory would have two agents invalidating each other's on every run. |
+| `RUNNER_REVIEW_HELD` | How many transcripts the review gate is holding, and when that was counted — written by `collect` at every session end, read by `status`. The count changes only when a session ends, and asking `collect --held` for it costs a container start and a scan of the volume. A missing file is not a zero: `status` says the gate did not answer. |
 | `RUNNER_SNAPSHOT_PUBLISHED_AT` | When the status snapshot was last pushed to the archive's `status` branch. |
 | `RUNNER_SNAPSHOT_COOLDOWN` | Minutes between publishes, default `10`. Checked before the collection, because collecting costs a container start: a floor tested after the expensive part is not a floor. |
 | `RUNNER_SNAPSHOT_LOCK` | One writer per branch. |

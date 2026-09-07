@@ -1231,6 +1231,14 @@ Nothing to collect is a failure for a collection and an answer for a count: `--h
 `waiting-on-review: 0`, because a caller that read a non-zero exit as "could not tell" would
 report a fresh volume as a broken gate.
 
+**`just status` no longer asks it.** Counting means a container against the volume and a gitleaks scan of
+every transcript in it — 2.4 seconds of a 7.7-second screen, for a number that changes only when a session
+ends. A session ending is exactly when `collect` runs, so `collect` writes the count and the instant to
+`RUNNER_REVIEW_HELD` and the screen reads that, saying how old it is. `--held` stays: it is what a person
+runs to count now, and what fills the cache on an installation where no session has ended since it was
+cleared. A missing cache is not a zero — the screen says the count has not been taken here, and names
+`--held`.
+
 `just collect` declares no options of its own. `--approve <hash> <why>` and `--redact <hash> <why>`
 take two values each and repeat, which a declared option cannot express, so everything reaches
 `collect.sh` as it was typed — and a note is a sentence, which is why it travels as
@@ -1625,6 +1633,27 @@ wrong.
 
 `gh workflow run`'s own stdout is held back: it says "Created workflow_dispatch event for $WORKFLOW at main",
 which is the script's own line with more words.
+
+### Late, and merely due
+
+**The mirror is not on a clock, so "overdue" is not a fault by itself.** What runs it is a session ending
+more than `AGENT_ARCHIVE_MIRROR_COOLDOWN` minutes after the last run; the schedule fires when GitHub feels
+like it — two of the last twelve runs on 2026-09-07 were `schedule`, the rest `workflow_dispatch`. So a run
+that is due and has not happened is usually a machine with nothing to say, and calling that a broken backup
+is how a real alarm stops being believed.
+
+It is late when a session HAS ended since the run was due and no run followed: a dispatch was owed and did
+not arrive. That failure is otherwise silent — `run.sh` writes `MIRROR_NOT_DISPATCHED` to stderr, and cron
+is the only reader. The grace is five minutes, for the seconds between a session ending and its run
+appearing in `gh run list`; without it every `just status` in the minute after a session would report a
+backup that is fine as late.
+
+`mirror.sh --state [<last session end>]` prints that judgement and the instants behind it as `key: value`
+lines, for `just status`. It runs exactly the same code as the screen — stdout to `/dev/null`, the block on
+descriptor 3 — so the two cannot disagree, and the exit status is the same verdict either way. The epoch is
+handed in rather than read here, because `host/lib/session-lock.sh` is the one place that knows the shape of
+that stamp. The 6-hour staleness rule is unchanged and outside all of this: nothing at all for six hours is
+a problem whatever has been ending.
 
 
 ## The archive's setup

@@ -321,11 +321,11 @@ here agree.
 ## The agent has granted itself nothing
 
 `host/release/check-agent-settings.sh` reports whether a `permissions` block
-has appeared in a settings file the agent can write. `just status` runs the
-same script with `|| true`, which is right for a status line and wrong for a
-proof — here its exit status becomes a verdict instead of disappearing: 0
-clean, 1 a block was found, 2 the container did not answer. Both 1 and 2 are
-`FAIL`. The script itself only reports, but a grant left in place is exactly
+has appeared in a settings file the agent can write. This is its one caller:
+`just status` printed it too until 2026-09-07, with `|| true`, which was right
+for a status line and wrong for a proof. Here its exit status becomes a verdict
+instead of disappearing: 0 clean, 1 a block was found, 2 the container did not
+answer. Both 1 and 2 are `FAIL`. The script itself only reports, but a grant left in place is exactly
 the drift this run must not pass on. See docs/boundary.md.
 
 

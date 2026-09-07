@@ -340,7 +340,7 @@ shows every option with what each one does.**
 | `just test-container` | the same container with **no volume** — an empty home every run, for rehearsing the morning the volume is gone. Never where the agent runs |
 | `just listen` | the running session from its first line, live — or, with nothing running, the tail of the last one. `--all` lifts the read ceiling, `--wait` waits for the next, `--live` never closes, `--remote` serves the live view to any device on the tailnet |
 | `just read <n\|id>` | one transcript whole, and the only reader there is. A row number from the last listing, or a session or subagent id; `--subagent K`, `--full` |
-| `just status` | what is running and what it has spent, or when the last one ended and whether it ended cleanly; whether scheduling is on; what the budget gate sees; how many transcripts the collection gate is holding |
+| `just status` | whether anything needs attention, and then: what is running and what it has spent, or when the last one ended and when the next may start; what today has held; what the budget gate sees; whether the backup is still running; how many transcripts the collection gate is holding; what is live and since when |
 
 ### After a session is stopped
 
@@ -469,10 +469,13 @@ a userspace Tailscale, both in the foreground of the window that started them,
 both taken down by the Ctrl-C that ends the follow.
 [`docs/sessions.md`](docs/sessions.md)
 
-**`just status` is the one-screen answer**: what is running and of what kind,
-what it has spent, whether scheduling is enabled, paused or disabled, what
-the budget gate sees, what the collection gate is holding back, and what this
-checkout has that is not live yet. [`docs/sessions.md`](docs/sessions.md)
+**`just status` is the one-screen answer**, and its first line is a verdict:
+whether anything needs attention, then what is running and of what kind, when
+the next unattended session may start, what today has held, what the budget gate
+sees, whether the backup is still running, what the collection gate is holding
+back, and what is live and since when. Every section decides its own share of
+that verdict, so nothing on the screen is a word the reader has to recognise as
+bad. [`docs/sessions.md`](docs/sessions.md)
 
 **`just chat` is you spending your own quota on purpose**, so the budget gate
 does not apply to it. `--continue` resumes the last conversation rather than

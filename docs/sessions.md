@@ -1596,50 +1596,98 @@ free text that must survive verbatim, including a leading dash.
 
 ## Where `just status` gets its answers
 
+**The first line is a verdict, and every section decides its own share of it.**
+Six sections of prose left the reader to know which words were bad — "the mirror
+is running" and "THE MIRROR IS NOT RUNNING" sit in the same place on the screen.
+A section that finds something calls it a *problem* (something has stopped, or
+will refuse a session) or a *watch* (something worth knowing that nobody has to
+act on tonight), and the top line is composed from what they found. There is no
+second judgement that can disagree with the section under it, and nothing judges
+by hue: the operator is deutan colourblind.
+
+**The screen's grammar is `just stats`', from the same file.** A heading, then a
+headline number with its detail beside it — `host/lib/screen.py`, imported by
+both, so a reader who has learnt one screen has learnt the other and neither can
+start wrapping differently from the other.
+
 The container is the evidence that a session is running, and the lock
 deliberately is not: there is no way to test a `flock` without taking it, and a
 `just run` starting in that instant would find it held and stand down. A status
 command that can stop a session is worse than none.
 
+**One line, not two.** `started 20:09, up 16m31s` and docker's own `Up 16
+minutes` were the same fact from two clocks; only the container's name was
+unique to the second, and it is now on the first.
+
 Every other number is asked of the one implementation that owns it rather than
-recomputed: the budget gate for the budget, `collect.sh --held` for
-what the review gate is holding, `just deploy --state` for what is live, and
-`just schedule --state` for whether a session will start on its own. A second
+recomputed: the budget gate for the budget, `mirror.sh --state` for the backup,
+`just deploy --state` for what is live, `just schedule --state` for whether a
+session will start on its own, `wake_state` for when the next one may. A second
 rendering of any of them is the copy that drifts, and the copy that drifts is
 the one nobody runs by hand.
 
-A missing line is NOT a zero, anywhere in that output. No docker, no
-credential, no archive to read the ledger from, a gate that could not start —
-reporting "none waiting" or "no limits" for any of those is the mechanism
-failing silently. So each case says the gate did not answer and names what to
-run to find out why. The budget block redirects stderr into stdout because the
-two halves go to different places on purpose — the numbers to stdout, the one
-line it writes when it cannot tell to stderr — and here both are worth showing.
+The split between `status.sh` and `status.py` follows that: the shell answers
+only what a shell owns — a container, a stamp, the schedule, the wait — and
+hands it over as `key: value` lines. Everything else the screen asks for itself.
+It is `status.py` because a screen with columns, records and arithmetic in it is
+not shell, and because `--selftest` can then prove the wording of a fault
+without a machine in that state.
 
-"No session is running" reads the same on a machine that runs one every hour
-and on one where the schedule was paused a fortnight ago and forgotten, so
-`session_absent_line` carries the scheduling clause with it. It is one sentence
-in one implementation because two things say it: `just status`, and the end of
-a `just listen` that read a session which has finished. Two recipes answering
-"is anything running?" differently is a bug you only find by holding them side
-by side. `just listen` asks again at the end rather than assuming the answer
-from its own branch, because a session can start between choosing to read and
-finishing the read, and "No session is running" printed underneath a session
-that just began is exactly the kind of sentence nobody re-checks.
+A missing line is NOT a zero, anywhere in that output. No docker, no credential,
+no archive to read the ledger from, a gate that could not start — reporting
+"none waiting", "no limits" or "the backup is running" for any of those is the
+mechanism failing silently. So each case says the gate did not answer and names
+what to run to find out why.
 
-Enabled-but-nothing-to-fire-it is the failure worth its own clause: the crontab
-reads the same either way. Scheduling is asked of `just schedule --state`
-rather than read out of the crontab, because what counts as paused is a prefix
-that recipe writes and a second reader would go on believing the old spelling.
-The hour stays there too; repeating it would be the second
-copy that goes stale.
+**When the next session starts, in the words `run` uses.** `wake_state` in
+`host/lib/wake-request.sh` computes the wait and the sentence explaining it, and
+`run` stands a wake-up down on the same two lines this screen prints. While a
+session is running there is no answer yet — the number that governs the next one
+is written when this one ends — so the screen says the cadence and the bounds a
+session may ask inside instead. A schedule that is paused, disabled, or enabled
+with no cron running replaces that line entirely: "No session is running" reads
+the same on a machine that runs one every hour and on one paused a fortnight ago
+and forgotten. Scheduling is asked of `just schedule --state` rather than read
+out of the crontab, because what counts as paused is a prefix that recipe
+writes, and a second reader would go on believing the old spelling.
 
-`host/release/check-agent-settings.sh` runs from `status` rather than from
-`verify` because it is a fact about the volume and not about the image: verify
-proves the candidate on a twin with no volume and would answer this about a
-world nobody lives in. It reports and never refuses — a settings edit that
-stood a session down would let the agent lock itself out of its own container.
+**A wake-up that never happened is the one state this screen used to hide.**
+The wait elapsing and a session starting look identical in "next now", and they
+were the same sentence for half an hour on 2026-09-07 while a defect kept every
+session from starting. Past due, plus one firing of the crontab line, plus a
+minute, and a session that has still not started is shown as overdue. Whether
+that is a problem or an explanation is the budget's answer: near its line the
+allowance is crossing and re-crossing the usage minute by minute, and the
+overdue line names the budget instead of raising an alarm. The arithmetic is in
+`docs/schedule.md`, under "A session asks for its own next wake-up".
+
+`session_absent_line` is still the sentence `just listen` ends on, and both it
+and this screen read `session_idle_minutes` and `just schedule --state`. What
+stops the two describing different machines is that they ask the same two
+functions, not that they print one string.
+
+**The last session comes out of its record, the running one out of its
+transcript.** A session that has ended has a sealed record holding what it
+spent; reading its transcript back out of the volume would be a container start
+for an answer already on disk. A session that is still running has no record
+yet, so `session-stats.py` reads it, and the MODEL MISMATCH line it can print is
+carried into the verdict rather than left as a line the reader has to recognise.
+
+**Today is a line because nothing else says the agent has gone quiet.** Sessions
+and awake time, out of the records, on the two denominators `just stats` uses.
 
 Reading the budget also renews the container's access token, which is why
-looking at status once a week keeps the unattended path alive on a schedule
-that has been paused.
+looking at status once a week keeps the unattended path alive on a schedule that
+has been paused. It is read with `--env` rather than as prose, because this
+screen sets the numbers in its own columns; the gate's own sentence is what
+`just verify` and the session read. A budget at 90% of its allowance is said
+before it refuses — the allowance climbs through the window, so 31% of a week
+used can be 98% of what is allowed today.
+
+**What left the screen.** The permissions check
+(`host/release/check-agent-settings.sh`) was dropped on 2026-09-07: since
+`allowManagedPermissionRulesOnly` closed that hole on 2026-09-03 a permissions
+block the agent writes grants nothing, and a line saying so every time is a line
+that spends attention on a mechanism that no longer decides anything. The script
+is still there to run by hand. See `docs/boundary.md`, under
+"check-agent-settings, and why an invariant".

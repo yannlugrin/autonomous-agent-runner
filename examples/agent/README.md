@@ -33,7 +33,7 @@ that has been told to do something it cannot find.
 **No `permissions` block in any settings file the agent can write** —
 neither `.claude/settings*.json` here nor `~/.claude/settings*.json` in the
 volume. An allow rule short-circuits the auto-mode classifier, so a rule the
-agent writes for itself is a bypass it granted itself. `just status` reports
+agent writes for itself is a bypass it granted itself. `just verify` reports
 one if it appears; the check is `host/release/check-agent-settings.sh`.
 
 **`tools/` is the allow-rule path.** Managed settings allow

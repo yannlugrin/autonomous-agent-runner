@@ -384,7 +384,9 @@ rule, because they govern two session universes rather than one.
 ## check-agent-settings, and why an invariant
 
 `host/release/check-agent-settings.sh` reports any `permissions` block in a
-settings file the agent can write, and `just status` prints what it says.
+settings file the agent can write. `just verify` is its caller; `just status`
+printed it too until 2026-09-07, and why it stopped is at the end of this
+record.
 
 **Measured 2026-08-29 on 2.1.251:** a `permissions.allow` match short-circuits
 the auto-mode classifier — the debug log carries no `new action being
@@ -415,6 +417,14 @@ stale against. Held the other way, this script would have needed its own copy
 of that list — a second place the rules live, which is the failure
 `check-backstop.py` was written against before the lists it compared were
 withdrawn on 2026-09-01.
+
+**It left the status screen on 2026-09-07.** `allowManagedPermissionRulesOnly`
+closed the hole on 2026-09-03: a `permissions` block the agent writes is
+ignored, wherever it writes it, so what this reports is drift and no longer a
+capability. A line saying so on every `just status` spends attention on a
+mechanism that decides nothing, and attention is what that screen is for. The
+script stays and runs by hand; if the key is ever withdrawn, the finding matters
+again and the line comes back with it.
 
 **What it does not do.** It does not stop anything, and it must not: a session
 stood down on a settings edit would be an agent that can lock itself out of its

@@ -198,30 +198,50 @@ wake_clamp() {
 # answer there is to run rather than to stall every session until real time
 # catches up.
 
-wake_due() {
-    local minutes="${1:-0}" auto="${2:-}" chat="${3:-}" now due=0 floor from=none
+# The instant and where it came from, in WAKE_DUE and WAKE_FROM. Its own
+# function because two questions are asked of one piece of arithmetic — "how
+# long still to wait", which is what `run` enforces, and "when was it due",
+# which is what `status` measures a wake-up that never happened against — and a
+# second copy of the arithmetic is the one that drifts.
+_wake_due() {
+    local minutes="${1:-0}" auto="${2:-}" chat="${3:-}" now floor
     now=$(date +%s)
+    WAKE_DUE=0
+    WAKE_FROM=none
     case "$minutes" in ''|*[!0-9]*) minutes=0 ;; esac
 
     case "$auto" in ''|*[!0-9]*) auto="" ;; esac
     if [ -n "$auto" ] && [ "$auto" -le "$now" ] && [ "$minutes" -gt 0 ]; then
-        due=$(( auto + minutes * 60 ))
-        from=session
+        WAKE_DUE=$(( auto + minutes * 60 ))
+        WAKE_FROM=session
     fi
 
     case "$chat" in ''|*[!0-9]*) chat="" ;; esac
     if [ -n "$chat" ] && [ "$chat" -le "$now" ]; then
         floor=$(( chat + $(wake_min) * 60 ))
-        if [ "$floor" -gt "$due" ]; then due=$floor; from=chat; fi
+        if [ "$floor" -gt "$WAKE_DUE" ]; then WAKE_DUE=$floor; WAKE_FROM=chat; fi
     fi
+}
 
-    if [ "$due" -le "$now" ]; then
+wake_due() {
+    local now
+    now=$(date +%s)
+    _wake_due "$@"
+    if [ "$WAKE_DUE" -le "$now" ]; then
         printf '0 none\n'
     else
         # Rounded up, so a wake-up 30 seconds early says 1 rather than 0 and
         # then refuses.
-        printf '%s %s\n' "$(( (due - now + 59) / 60 ))" "$from"
+        printf '%s %s\n' "$(( (WAKE_DUE - now + 59) / 60 ))" "$WAKE_FROM"
     fi
+}
+
+# The same instant as an epoch, and `0` when there is nothing to wait for. What
+# `status` needs and `run` does not: a wait that has elapsed says `0 none` here,
+# which cannot say whether it elapsed a minute ago or an hour.
+wake_due_at() {
+    _wake_due "$@"
+    printf '%s\n' "$WAKE_DUE"
 }
 
 
@@ -270,4 +290,52 @@ wake_report() {
 
     printf 'WAKE_ASKED=%s\n' "$asked"
     printf 'WAKE_GRANTED=%s\n' "$granted"
+}
+
+
+# --- the wait in force, and why ---
+# wake_state <asked> <recorded> <last unattended end> <last conversation end>,
+# the record's two fields and the two stamps, printing two lines:
+#
+#     <minutes left> <none|session|chat> <the wait in force> <due, epoch>
+#     <why, in the words a person reads>
+#
+# The instant as well as the minutes left, because they answer different
+# questions: `run` asks whether to start one now, and `status` asks how long a
+# wake-up that should have happened has been missing.
+#
+# Two readers say this and they must not say it differently: `run` before it
+# stands a wake-up down, and `status` when it answers "when does the next one
+# start". A screen that recomputed the wait would be the copy that drifts, and
+# it is the copy nobody runs by hand.
+#
+# The number is read off the record where a request was honoured, because that
+# is what was in force, and live from .env where it was not — so changing the
+# default reaches the next wake-up rather than the one after it.
+# see docs/schedule.md#a-session-asks-for-its-own-next-wake-up
+
+wake_state() {
+    local asked="${1:-}" recorded="${2:-}" auto="${3:-}" chat="${4:-}" governs why left from
+    governs=$(wake_default)
+    why="the default wait is ${governs}m"
+
+    if wake_armed && [ -n "$asked" ]; then
+        governs="$recorded"
+        case "$governs" in ''|*[!0-9]*) governs=$(wake_default) ;; esac
+        # What was asked and what it was held to, separately, whenever they
+        # differ: a clamp reported as the request is the record's one number
+        # that would read as the agent's own decision.
+        if [ "$asked" = "$governs" ]; then
+            why="the last session asked to be woken in ${governs}m"
+        elif [ "$asked" -gt "$governs" ]; then
+            why="the last session asked for ${asked}m, held to the ${governs}m ceiling"
+        else
+            why="the last session asked for ${asked}m, raised to the ${governs}m floor"
+        fi
+    fi
+
+    read -r left from <<<"$(wake_due "$governs" "$auto" "$chat")"
+    [ "$from" = chat ] && why="nothing starts within $(wake_min)m of a conversation"
+    printf '%s %s %s %s\n%s\n' \
+        "$left" "$from" "$governs" "$(wake_due_at "$governs" "$auto" "$chat")" "$why"
 }

@@ -77,36 +77,22 @@ fi
 # default; it does not change what is measured, or turning it on would change
 # the cadence of an agent that never asks.
 #
-# The number is read off the record where a request was honoured, because that
-# is what was in force, and live from .env where it was not — so changing the
-# default reaches the next wake-up rather than the one after it.
+# The wait and the sentence explaining it are `wake_state`, shared with
+# `just status`, which answers "when does the next one start" from the same two
+# lines: two screens computing one wait differently is a bug you find by
+# holding them side by side.
 # see docs/schedule.md#a-session-asks-for-its-own-next-wake-up
 
 if [ "$ignore_cooldown" = yes ]; then
     [ -t 1 ] && echo "Ignoring the wait."
 else
     source host/lib/session-lock.sh
-    asked=$(run_record_field asked_wake_after)
-    governs=$(wake_default)
-    why="the default wait is ${governs}m"
-
-    if wake_armed && [ -n "$asked" ]; then
-        governs=$(run_record_field wake_after)
-        case "$governs" in ''|*[!0-9]*) governs=$(wake_default) ;; esac
-        # What was asked and what it was held to, separately, whenever they
-        # differ: a clamp reported as the request is the record's one number
-        # that would read as the agent's own decision.
-        if [ "$asked" = "$governs" ]; then
-            why="the last session asked to be woken in ${governs}m"
-        elif [ "$asked" -gt "$governs" ]; then
-            why="the last session asked for ${asked}m, held to the ${governs}m ceiling"
-        else
-            why="the last session asked for ${asked}m, raised to the ${governs}m floor"
-        fi
-    fi
-
-    read -r left from <<<"$(wake_due "$governs" "$(run_record_field ended)" "$(chat_ended_epoch)")"
-    [ "$from" = chat ] && why="nothing starts within $(wake_min)m of a conversation"
+    # Only `left` and `why` are used here; the two between them are read to
+    # reach the end of the line, and `status` is what says them.
+    # shellcheck disable=SC2034
+    { read -r left from governs due; read -r why; } <<<"$(wake_state \
+        "$(run_record_field asked_wake_after)" "$(run_record_field wake_after)" \
+        "$(run_record_field ended)" "$(chat_ended_epoch)")"
     if [ "$left" -gt 0 ]; then
         [ -t 1 ] && echo "${left}m still to wait — $why. --ignore-cooldown starts one now."
         exit 75
