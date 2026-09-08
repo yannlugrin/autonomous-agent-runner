@@ -133,6 +133,63 @@ verified; its effect is what the `just verify` probe on a real session's tool
 list checks.
 
 
+## Where a session may work
+
+`permissions.additionalDirectories` is `/home/<agent>` and `/tmp`. **The
+operator's ruling, 2026-09-08:** those are the two places in the container the
+agent can write, and where it stands between them is not something this
+repository has an opinion about.
+
+**The boundary is not the allow list, and no allow entry lifts it.** A session
+starts in the checkout — `docker compose run -w $AGENT_REPO_DIR` — and Claude
+Code refuses a command that leaves it. Measured 2026-09-08 on 2.1.x, on a
+throwaway project with `Bash(echo:*)` allowed and `defaultMode: default`:
+
+| command | verdict |
+| --- | --- |
+| `cd sub && echo hi`, inside the checkout | ran — a `cd` does not break an allow match |
+| `cd ../outside && echo hi` | refused |
+| the same, with `additionalDirectories: ["<parent>"]` | ran |
+| `cd /etc && echo hi`, with that same setting | still refused |
+
+So the key opens the trees it names and nothing else, and it is the only thing
+that opens them: this was reached after an allow entry for the command itself
+was measured not to.
+
+**What it cost while it was unset, counted.** Over the 110 transcripts of
+2026-09-05..08 on the archive's `sessions` branch, 33 Bash calls were refused.
+Fourteen of them named a path outside the checkout — `cd /tmp/aar && grep …`,
+`cd ~/.claude/projects/… && grep -oh …`, a `sed` over an absolute path — and
+twelve of those refused with *requires approval*, which is this boundary. In a
+conversation the operator accepts and loses a beat; in an unattended run nobody
+is there to accept, so the session works around its own environment or stops.
+
+**The other nineteen stayed inside the checkout and are a different fault.**
+All of them refused with *Blocked by classifier*, and they are long reads of the
+agent's own files — `tail -300 QUESTION.md`, `sed -n '14150,14270p'
+RECEIPTS.md`, its own `tools/refusal-scan.py`. This key does not touch them; the
+lever there is the auto-mode configuration, and AUTO-MODE.md's opening already
+names reading its own journal at length as the case the shipped rules misread.
+
+**A `cd` that stays inside the checkout is not this, and a refusal seen there
+has another cause.** Measured the same day and in `auto`, the mode the agent
+runs in: `grep -rn hi .`, `cd sub && grep -rn hi .`, `cd sub && cat f.txt` and
+`cd sub && ls` each ran with nothing asked and no allow entry behind them. So a
+compound is not asked for carrying a `cd`, and `cd` is not what a refusal on
+one of these is about — read the reason it prints rather than the shape of the
+line.
+
+**Two things were rejected.** A narrower list of named directories: the ruling
+is the two writable places, and a list of paths inside them would have to be
+maintained against a container the agent rearranges. And a `just verify` probe:
+this fails loudly, in the session's own face, which is the one shape that does
+not need one.
+
+**What widens with it.** The working directory governs Read and Edit as well as
+`cd`, so both now reach the whole home. The deny list outranks this key, so
+`Read(~/.claude/.credentials.json)` still holds.
+
+
 ## The allow list, and what it costs
 
 **The operator's ruling, 2026-08-25.** `defaultMode: auto` runs an unlisted
