@@ -50,9 +50,9 @@ forward_to_deployed() {
     # has not been thought about is the one to be careful with.
     # see docs/sessions.md#how-loudly-the-forwarder-speaks
     case "$verb" in
-        listen|read) heads_up=tell ;;
-        status)      heads_up=none ;;
-        *)           heads_up=ask ;;
+        listen|read)        heads_up=tell ;;
+        status|credentials) heads_up=none ;;
+        *)                  heads_up=ask ;;
     esac
 
     # A heads-up when this tree is not what is deployed: a person typing `just

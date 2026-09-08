@@ -274,6 +274,12 @@ host/archive/publish-status.sh --now || true
 # source has to be waited for.  see docs/monitor.md#one-record-per-session
 just records || echo "RECORDS_NOT_SEALED — the reason is above; 'just records' picks it up next time." >&2
 
+# When the credentials the agent runs on expire. Here because this is the one
+# moment the answer is free — the dates are in the container, nothing is
+# waiting on this, and `just status` then reads a file rather than starting
+# anything.  see docs/vault.md#when-a-credential-expires
+just credentials --quiet || echo "CREDENTIALS_NOT_READ — the reason is above; 'just status' says how old the last reading is." >&2
+
 echo
 host/session/session-stats.py --since "$started" || true
 

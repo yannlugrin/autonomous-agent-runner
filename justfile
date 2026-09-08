@@ -129,6 +129,13 @@ export RUNNER_REVIEW_HELD := env_var_or_default("RUNNER_REVIEW_HELD", runner_cac
 export RUNNER_SNAPSHOT_PUBLISHED_AT := env_var_or_default("RUNNER_SNAPSHOT_PUBLISHED_AT", runner_cache / "status-published")
 export RUNNER_SNAPSHOT_LOCK := env_var_or_default("RUNNER_SNAPSHOT_LOCK", "/tmp" / agent_user + "-status-publish.lock")
 
+# When the credentials the agent runs on expire, written by `credentials` at
+# the end of every session and read by `status`. It is a cache and not a
+# record: both dates live in the container, and one of them is a date somebody
+# wrote in a vault note rather than anything a token can be asked.
+# see docs/vault.md#when-a-credential-expires
+export RUNNER_CREDENTIALS := env_var_or_default("RUNNER_CREDENTIALS", runner_cache / "credentials")
+
 # What `deploy` takes before it writes the archive's `config` branch, for the
 # reason the snapshot lock exists: two writers racing between reading that
 # branch and pushing over it.
@@ -324,6 +331,12 @@ read $id $subagent="" $full="no":
 [group("session")]
 status:
     @exec host/session/status.sh
+
+[doc("Read when the agent's Claude and GitHub credentials expire, now — `status` shows the last reading")]
+[group("session")]
+[arg("quiet", long, value="yes", help="write the reading and print nothing, the way a session end calls it")]
+credentials $quiet="no":
+    @exec host/session/credentials.sh
 
 
 # --------------------------------------------------------------- archive ---

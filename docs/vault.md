@@ -42,6 +42,11 @@ home instead of generating a new one nobody has seen, and `vault gh-login
 <name>` is how `gh` is authenticated — README uses `github-token-own-account`
 for that one, and the entrypoint's greeting suggests the same.
 
+`claude-oauth-token`'s note carries one thing more: `expires YYYY-MM-DD`, the
+day that setup-token dies. Nothing anywhere can be asked for that date — write
+it when you rotate, and `just status` counts down to it. See [when a credential
+expires](#when-a-credential-expires).
+
 **The rule.** `bws` itself is denied, by the `PreToolUse` guard and by the
 managed deny list, which name the same act. So `vault` is the only route — and
 that matters because every fetch and every store lands in `~/.cache/vault`
@@ -409,6 +414,73 @@ says loudly whether the credential that remains is usable.
 
 An already-set `CLAUDE_CODE_OAUTH_TOKEN` wins and nothing overwrites it, which
 is what lets a probe pass a deliberate value — `just verify` does.
+
+
+## When a credential expires
+
+Two credentials stop the agent dead and neither says so on the way out: the
+setup-token in `claude-oauth-token`, which every session runs on, and the token
+in `github-token-own-account`, which is how it reads and opens an issue.
+`just credentials` reads both and writes `$RUNNER_CREDENTIALS`; `just status`
+shows the dates, watches inside three weeks and calls it a problem inside one.
+Nothing here refuses anything — a credential with a week left is the operator's
+to act on, not a session to stand down.
+
+The reading is taken at the end of every session, from `run.sh` and `chat.sh`,
+and not by `status`. Both dates are in the container, so either way costs a
+`docker compose run`; at a session end nothing is waiting on it, and at a
+status screen somebody is. What makes a cached reading honest is that the dates
+move only when a credential is rotated — and `status` prints the reading's age,
+so a reader that has stopped shows as a reading that has stopped rather than as
+a date that is still true.
+
+**Not in the records.** A record is one archived session, written once when
+every field in it is final and never rewritten, and sealed only once the
+transcript has reached `origin/sessions` past the review gate — days, sometimes.
+An expiry is neither per-session nor final, and a token rotated this afternoon
+would not have surfaced until next week. The cache beside them is the right
+home, because `status` already reads that directory.
+
+
+## The note on `claude-oauth-token` carries the date
+
+The GitHub token answers for itself: `gh api -i user` returns
+`GitHub-Authentication-Token-Expiration`, and a token issued without an expiry
+returns no such header — a real answer, and shown as one rather than as
+unknown. The Claude setup-token answers nothing. Measured 2026-09-08: the token
+is opaque, `claude auth status` reports the login method and the subscription
+and no date, and the usage endpoint answers a setup-token 403. There is no
+route to its expiry at all, from the host or from inside.
+
+So the only source is the operator writing it down at rotation, and the note on
+the vault row is where it goes: that field is already beside the secret,
+`vault list` already prints it, and it is the line the agent reads too. The
+shape is `expires YYYY-MM-DD` anywhere in the note, and the rest of the note is
+ignored. A row whose note carries no such date is reported as exactly that —
+never as a token with years left, which is what a missing date would otherwise
+look like on a screen full of dates.
+
+Rotating costs nothing on this host. Measured 2026-09-08, over a real rotation:
+`claude setup-token` leaves `~/.claude/.credentials.json` untouched — same two
+instants, `user:profile` still in the scopes — so the interactive login the
+budget guard needs survives it and no backup of that file is called for.
+
+
+## A reader that must reach the vault
+
+`RUNNER_TEST_ENV` in `host/verify/session.sh` cannot be reused for this.
+`RUNNER_TEST` is what makes `vault-env.sh` drop `BWS_ACCESS_TOKEN` — see [a
+probe carries no key to the vault](verify.md#a-probe-carries-no-key-to-the-vault)
+— so anything carrying it can read no secret at all.
+`host/session/credentials.sh` therefore has an array of its own and keeps the
+half that matters: a `HOME` of its own, so nothing it does lands in the agent's
+volume.
+
+It goes one further than a probe does and replaces the entrypoint outright, so
+no bootstrap runs and there is nothing to write in that volume at all. That is
+possible because `BWS_ACCESS_TOKEN` reaches the container from compose's own
+`environment:` and not from `vault-env.sh`: what `vault-env.sh` decides is the
+Claude login, and a reader does not need one.
 
 
 ## Why the credentials file is not kept in the vault

@@ -50,11 +50,14 @@ that is not ours. Cleaning up afterwards is not a fix: a session may be running
 at the same time.
 
 Anything that has to start a container against that volume runs with a `HOME`
-of its own and says so — `RUNNER_TEST_ENV` in `host/verify/session.sh` is the
-one that exists, and `RUNNER_TEST` is what the entrypoint reads to know it is
-not setting up a real home. **And it does not work in the agent's checkout
-either:** a probe that needs one builds its own inside that home, in the shape
-the real one has. Two of them used to borrow the agent's, and it was measured
+of its own and says so — `RUNNER_TEST_ENV` in `host/verify/session.sh` and
+`READER_HOME` in `host/session/credentials.sh` are the two that exist, and
+`RUNNER_TEST` is what the entrypoint reads to know it is not setting up a real
+home. The reader carries no `RUNNER_TEST`: that is what makes `vault-env.sh`
+drop `BWS_ACCESS_TOKEN`, and reading the vault is its whole job — so it
+replaces the entrypoint instead, and no bootstrap runs for it at all.
+**And it does not work in the agent's checkout either:** a probe that needs one
+builds its own inside that home, in the shape the real one has. Two of them used to borrow the agent's, and it was measured
 on 2026-09-04 that neither had to — a permission rule matches the command as
 typed, and a project settings file is read from whatever project the session
 is in. The measurements are in `docs/verify.md` under "A probe does not file in
@@ -245,7 +248,8 @@ message is better evidence than any inference from their name.
     image/         everything baked in; the agent may read, never write
     host/          every command's implementation, host-side only, by what you are doing
       lib/           shared: the checkout root, the lock, the session env, docker, forwarding
-      session/       run, chat, shell, test-container, listen, remote, read, status
+      session/       run, chat, shell, test-container, listen, remote, read,
+                     status, credentials
       archive/       collect, publish-status, sessions, mirror, the archive's setup
       monitor/       the drift audit — what moved in the agent's memory — and
                      what the archive has cost; drift-audit/ is what the

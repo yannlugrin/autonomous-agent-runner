@@ -125,7 +125,7 @@ these exact names, since the container looks them up by name:
 
 | secret | what it is | needed |
 | --- | --- | --- |
-| `claude-oauth-token` | the Claude setup-token from `claude setup-token`, what every session runs on | yes |
+| `claude-oauth-token` | the Claude setup-token from `claude setup-token`, what every session runs on. Put `expires YYYY-MM-DD` in its note: nothing can be asked for that date, and it is what `just status` counts down to — [`docs/vault.md`](docs/vault.md#when-a-credential-expires) | yes |
 | `github-token-own-account` | a token of the agent's own GitHub account, what `gh` runs on inside the container — without it the agent can neither read nor open an issue; what to grant it is in [`docs/vault.md`](docs/vault.md#the-gh-token-what-it-is-for-and-what-bounds-it) | for the agent's work |
 | `github-ssh-key` | the private half of the agent's ssh key, once the first `just shell` has printed it — the entrypoint restores it on an empty volume, so the deploy-key step never comes back | optional |
 

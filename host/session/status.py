@@ -30,6 +30,7 @@ import argparse
 import datetime
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 import time
@@ -612,6 +613,188 @@ def backup_section(fields, code, verdict, now):
 
 
 # --------------------------------------------------------------------------
+# Credentials
+# --------------------------------------------------------------------------
+# Two of them stop everything and neither says so on the way out: the Claude
+# setup-token every session runs on, and the GitHub token `gh` runs on, which is
+# how the agent reads and opens an issue. Both are in the container, so
+# host/session/credentials.sh reads them at the end of every session and this
+# shows what it wrote. The thresholds are here and the reading is there, so no
+# date is compared in two places.
+#
+# The third row is this host's own Claude login. It is shown and never judged —
+# the operator ruled that the two above are what matter, and a screen that
+# alarms on everything alarms on nothing.
+# see docs/vault.md#when-a-credential-expires
+
+EXPIRY_PROBLEM, EXPIRY_WATCH = 7, 21
+
+# A reading older than this is a reader that has stopped, not a quiet week: at
+# a dozen sessions a day the file is rewritten hourly, and the failure it
+# catches is the one where the dates on screen are simply no longer true.
+READING_STALE = 3
+
+
+def day_end(text):
+    """The end of the `YYYY-MM-DD` at the start of `text`, local, or None.
+
+    The end and not the start: a date alone says nothing about the hour, and
+    counting from midnight would report a credential dead a day early.
+    """
+    match = re.match(r"\s*(\d{4})-(\d{2})-(\d{2})", text or "")
+    if not match:
+        return None
+    try:
+        day = datetime.date(*(int(part) for part in match.groups()))
+    except ValueError:
+        return None
+    midnight = datetime.datetime.combine(day + datetime.timedelta(days=1), datetime.time())
+    return midnight.timestamp()
+
+
+def note_date(note):
+    """The `expires YYYY-MM-DD` a vault note carries, as it is written, or None.
+
+    The string and not an instant, because the screen shows the day somebody
+    typed: `day_end` counts to the end of it so nothing expires early, and a
+    row printing that instant would answer 2027-09-09 to a note saying
+    2027-09-08.  see docs/vault.md#the-note-on-claude-oauth-token-carries-the-date
+    """
+    match = re.search(r"expires\s+(\d{4}-\d{2}-\d{2})", note or "")
+    return match.group(1) if match else None
+
+
+def header_expiry(value):
+    """The instant GitHub's expiration header names, or None.
+
+    Measured 2026-09-08: it sends `2026-11-21 23:40:12 UTC`. The named zone is
+    rewritten as an offset rather than parsed as one, because strptime accepts
+    `%Z` for `UTC` and then hands back a naive time — which `.timestamp()`
+    reads as local, putting the instant an hour or two out in the direction
+    nobody would check. The date alone is the fallback, so a header that
+    changes shape still answers to the day rather than to nothing.
+    """
+    value = re.sub(r"\s+(?:UTC|GMT)$", " +0000", (value or "").strip())
+    try:
+        return datetime.datetime.strptime(value, "%Y-%m-%d %H:%M:%S %z").timestamp()
+    except ValueError:
+        return day_end(value)
+
+
+def far_stamp(ts, now):
+    """`11-22 00:40` inside this year, `2027-09-08 00:40` beyond it. stamp()
+    drops the year, which on a credential a year out reads as next week."""
+    if datetime.date.fromtimestamp(ts).year == datetime.date.fromtimestamp(now).year:
+        return stamp(ts, now)
+    return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+
+
+def until(when, now):
+    """`in 74d 20h`, or `expired 3d 4h ago`. span() floors at zero, which on a
+    date that has passed would read as expiring this second."""
+    left = when - now
+    return "in %s" % span(left) if left > 0 else "expired %s ago" % span(-left)
+
+
+def credentials_section(fields, host_login, verdict, now):
+    """When each credential dies, and which of them is worth an alarm."""
+    rows = []
+
+    def say(head, when, shown, about, alarm):
+        rows.append((head, ["%s · %s — %s" % (until(when, now), shown, about)]))
+        left = when - now
+        if left <= 0:
+            verdict.problem("%s HAS EXPIRED" % alarm)
+        elif left < EXPIRY_PROBLEM * 86400:
+            verdict.problem("%s expires in %s" % (alarm, span(left)))
+        elif left < EXPIRY_WATCH * 86400:
+            verdict.watch("%s expires in %s" % (alarm, span(left)))
+
+    if not fields:
+        verdict.watch("nothing is known about when the agent's credentials expire")
+        rows.append(("credentials", ["never read — 'just credentials' reads them now"]))
+    else:
+        # A note with no date in it is not an absent reading: the row was found
+        # and nobody wrote the one thing it exists to carry, which is a
+        # different fault and has a different fix.
+        written = note_date(one(fields, "claude_note"))
+        if written:
+            say(
+                "claude",
+                day_end(written),
+                written,
+                "the setup-token every session runs on",
+                "the Claude setup-token",
+            )
+        elif "claude_note" in fields:
+            verdict.watch("no expiry is recorded for the Claude setup-token")
+            rows.append(
+                (
+                    "claude",
+                    ["not recorded — put 'expires YYYY-MM-DD' in the note on claude-oauth-token"],
+                )
+            )
+
+        # No header is a real answer and not a failure: a personal access token
+        # can be issued without an expiry, and one that never dies is exactly
+        # what this section must not report as unknown.
+        github = header_expiry(one(fields, "github_expiry"))
+        who = one(fields, "github_login")
+        about = "%s, what gh runs on" % (("@" + who) if who else "what gh runs on")
+        if github is not None:
+            say("github", github, far_stamp(github, now), about, "the agent's GitHub token")
+        elif who:
+            rows.append(("github", ["no expiry set on it · %s" % about]))
+
+        for text in fields.get("problem", []):
+            verdict.problem(text)
+            rows.append(("", [text]))
+
+    if host_login is not None:
+        rows.append(
+            (
+                "here",
+                [
+                    "%s · %s — this host's own login, what the budget gate reads"
+                    % (until(host_login, now), far_stamp(host_login, now))
+                ],
+            )
+        )
+
+    if fields:
+        read_at = number(one(fields, "read_at"))
+        if read_at is None:
+            verdict.watch("the credential reading does not say when it was taken")
+            rows.append(("reading", ["of an unknown age"]))
+        else:
+            rows.append(
+                ("reading", ["%s old — refreshed at every session end" % span(now - read_at)])
+            )
+            if now - read_at > READING_STALE * 86400:
+                verdict.watch("the credential reading is %s old" % span(now - read_at))
+    return rows
+
+
+def host_login_expiry():
+    """When this host's own Claude login dies, or None.
+
+    Asked of image/claude-usage.py, which owns both the path and the shape and
+    is the thing that reads and rewrites that file — a second copy of either
+    here would be the one that goes stale. `refreshTokenExpiresAt` and not
+    `expiresAt`: the access token is refreshed on every reading and says
+    nothing, the refresh token is what eventually runs out. Anything at all
+    going wrong is no row, because this is the credential nothing here judges
+    and it must not be able to take the screen down.
+    """
+    try:
+        usage = load_module("image/claude-usage.py", "claude_usage")
+        _whole, oauth = usage.load_credentials()
+        return int(oauth["refreshTokenExpiresAt"]) / 1000
+    except Exception:  # noqa: BLE001 - a row that cannot be read is a row that is not shown
+        return None
+
+
+# --------------------------------------------------------------------------
 # The gate
 # --------------------------------------------------------------------------
 
@@ -782,6 +965,8 @@ def render(
     held=None,
     pending=None,
     archive="",
+    credentials=None,
+    host_login=None,
 ):
     verdict = Verdict()
     guarded = one(facts, "budget_guard") == "on"
@@ -791,6 +976,10 @@ def render(
         ("now", now_section(facts, records, verdict, now, budget_pressure(spent))),
         ("budget", budget_section(spent, guarded, verdict, now)),
         ("backup", backup_section(mirror_fields or {}, mirror_code, verdict, now)),
+        (
+            "credentials",
+            credentials_section(credentials or {}, host_login, verdict, now),
+        ),
         (
             "the gate",
             gate_section(held or {}, records, verdict, now, pending)
@@ -823,6 +1012,12 @@ def main():
         with open(cache) as handle:
             held = block(handle.read().replace("=", ": "))
 
+    credentials = {}
+    store = os.environ.get("RUNNER_CREDENTIALS") or ""
+    if store and os.path.exists(store):
+        with open(store) as handle:
+            credentials = block(handle.read())
+
     mirror_out, mirror_code = ask(
         [os.path.join(CHECKOUT, "host/archive/mirror.sh"), "--state", one(facts, "session_ended")]
     )
@@ -837,6 +1032,8 @@ def main():
             deploy=block(deploy_out) if deploy_out is not None and not deploy_code else {},
             held=held,
             archive=os.environ.get("AGENT_ARCHIVE") or "",
+            credentials=credentials,
+            host_login=host_login_expiry(),
         )
     )
     return 0
@@ -957,6 +1154,107 @@ def selftest():
     v = Verdict()
     backup_section(block("verdict: stopped\nproblem: no run for 9 hours\n"), 1, v, now)
     check("a stopped mirror is a problem", [level for level, _ in v.found], [PROBLEM])
+
+    # --- credentials ---
+    check("a date is read to the end of its day", day_end("2026-09-07") - now, 12840.0)
+    check("a note with no date carries no date", note_date("rotated by hand"), None)
+    check(
+        "the note is read for one shape and nothing else",
+        note_date("setup-token, rotated 2026-09-08, expires 2027-09-08"),
+        "2027-09-08",
+    )
+    check(
+        "a year away keeps its year on screen",
+        far_stamp(day_end("2027-09-08"), now),
+        "2027-09-09 00:00",
+    )
+    check("this year does not", far_stamp(now + 86400, now), "09-08 20:26")
+    check(
+        "the header keeps its hour and its offset",
+        header_expiry("2026-11-22 08:19:24 +0100"),
+        datetime.datetime(
+            2026, 11, 22, 8, 19, 24, tzinfo=datetime.timezone(datetime.timedelta(hours=1))
+        ).timestamp(),
+    )
+    # The shape GitHub actually sends. Parsed as local time it is an hour or
+    # two out, in a number nothing on screen would contradict.
+    check(
+        "a named zone is not read as local time",
+        header_expiry("2026-11-21 23:40:12 UTC"),
+        datetime.datetime(2026, 11, 21, 23, 40, 12, tzinfo=datetime.UTC).timestamp(),
+    )
+    check(
+        "a header of another shape still answers to the day",
+        header_expiry("2026-11-22"),
+        day_end("2026-11-22"),
+    )
+    check("a header that is nothing is not a date", header_expiry(""), None)
+
+    v = Verdict()
+    rows = credentials_section({}, None, v, now)
+    check(
+        "no reading is not a clean screen",
+        v.found,
+        [(WATCH, "nothing is known about when the agent's credentials expire")],
+    )
+    has("and it says what to run", "\n".join(fact(rows)), "just credentials")
+
+    v = Verdict()
+    rows = credentials_section(
+        block("read_at: %d\nclaude_note: the login, expires 2027-09-08\n" % now), None, v, now
+    )
+    check("a credential a year out is not a finding", v.found, [])
+    has("and the row shows the day the note carries", "\n".join(fact(rows)), "2027-09-08 —")
+
+    v = Verdict()
+    credentials_section(block("read_at: %d\nclaude_note: expires 2026-09-22\n" % now), None, v, now)
+    check("inside three weeks is a watch", [level for level, _ in v.found], [WATCH])
+
+    v = Verdict()
+    credentials_section(block("read_at: %d\nclaude_note: expires 2026-09-10\n" % now), None, v, now)
+    check("inside a week is a problem", [level for level, _ in v.found], [PROBLEM])
+
+    v = Verdict()
+    rows = credentials_section(
+        block("read_at: %d\nclaude_note: expires 2026-09-01\n" % now), None, v, now
+    )
+    has("a date that has passed says so", "\n".join(fact(rows)), "expired 5d 20h ago")
+    check("and it is a problem", [level for level, _ in v.found], [PROBLEM])
+
+    # A note that was never given a date reads on screen exactly like a token
+    # with years left, and that is the failure this row exists to prevent.
+    v = Verdict()
+    rows = credentials_section(block("read_at: %d\nclaude_note: the login\n" % now), None, v, now)
+    check(
+        "a note with no date is a watch, not an expiry",
+        v.found,
+        [(WATCH, "no expiry is recorded for the Claude setup-token")],
+    )
+    has("and it says what to write", "\n".join(fact(rows)), "expires YYYY-MM-DD")
+
+    v = Verdict()
+    rows = credentials_section(block("read_at: %d\ngithub_login: agent\n" % now), None, v, now)
+    has("a token with no expiry is answered, not unknown", "\n".join(fact(rows)), "no expiry set")
+    check("and a token that never dies is not a finding", v.found, [])
+
+    v = Verdict()
+    rows = credentials_section(block("read_at: %d\n" % now), now + 3600, v, now)
+    has("this host's login is shown", "\n".join(fact(rows)), "this host's own login")
+    check("and never judged, however close", v.found, [])
+
+    v = Verdict()
+    credentials_section(block("read_at: %d\n" % (now - 5 * 86400)), None, v, now)
+    check(
+        "a reading nobody refreshed is a watch",
+        v.found,
+        [(WATCH, "the credential reading is 5d 0h old")],
+    )
+
+    v = Verdict()
+    rows = credentials_section(
+        block("read_at: %d\nproblem: gh refused the token\n" % now), None, v, now
+    )
+    check("what the reader could not do is a problem", v.found, [(PROBLEM, "gh refused the token")])
 
     # --- what is live ---
     records = [
