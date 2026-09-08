@@ -162,7 +162,7 @@ one that is absent fails in a way that reads as something else.
 | --- | --- |
 | docker, and Compose **≥ 2.24** | `compose.yaml` clears the test twin's volume with `volumes: !reset null`, which older Compose does not understand — and a rehearsal that wipes a home must not be pointed at the home it exists to protect |
 | **just ≥ 1.55** | declared flags, `just --usage`, variadic options. Distribution packages lag badly: install a [pre-built binary](https://just.systems/man/en/pre-built-binaries.html), not the apt package |
-| python **≥ 3.11** | the host scripts; the container's own python is the base image's 3.11 |
+| python **≥ 3.14** | the host scripts; the container's own python is the base image's 3.11 |
 | cron | the unattended session |
 | flock | one session at a time. A missing `flock` exits 127, which reads as *held*, so every scheduled run would stand down in silence |
 | jq | `just listen` and `just read` render nothing without it |

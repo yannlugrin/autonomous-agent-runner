@@ -1,9 +1,11 @@
 [project]
 name = "agent-runner"
 version = "0"
-# The floor for the host-side scripts. image/*.py runs on the base image's own
-# python (Debian Bookworm, 3.11), and the host needs at least that.
-requires-python = ">=3.11"
+# The floor for the host-side scripts, and the one interpreter CI proves them
+# on. image/*.py runs on the base image's own python (Debian Bookworm, 3.11);
+# what holds it there is target-version and mypy below, and its selftests
+# running inside the image.  see docs/release.md#each-side-is-proved-on-its-own-interpreter
+requires-python = ">=3.14"
 
 [tool.ruff]
 # image/*.py runs inside the container on the base image's own python3, 3.11:

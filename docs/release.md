@@ -346,3 +346,25 @@ running it to be 3.11.2, while this host is on 3.14. The floor matters because
 `auto-mode/*.py` run on the host, but 3.11-valid code is a subset any newer
 interpreter accepts, so one target covers both. CI runs both ends, 3.11 and
 3.14, for the same reason.
+
+## Each side is proved on its own interpreter
+
+**2026-09-08.** CI ran `static-checks` twice, on 3.11 and 3.14, and the 3.11
+half proved nothing the build did not: `image/Dockerfile` runs
+`bash-guard.py`, `claude-usage` and `session-cost` with `--selftest` as `RUN`
+steps, so `docker-build` already proves them on the interpreter they actually
+run on — bookworm's 3.11.2, not a runner's 3.11.16 on another base. The matrix
+is gone. `static-checks` is one job on 3.14 running the host selftests, the
+hooks and `mypy`; the image's three come out of it and stay where the image is
+built. `requires-python` follows what is proved and is now `>=3.14`;
+`target-version = "py311"` and mypy's `python_version = "3.11"` do not move,
+because they are about the syntax and the types `image/*.py` may carry.
+
+The matrix was also hiding a failure while it was there. `fail-fast` cancelled
+the 3.14 job the moment 3.11 failed, so four red runs reported one end and left
+the other unknown — and the fault was in neither interpreter. `status.py`'s
+selftest builds `now` from a naive `datetime` and hands `reset_text` a UTC
+instant, so the reset lands on the next local day at `+02:00` and on the same
+day at `UTC`: green on this host, red on every runner. The zone is pinned in
+`selftest()` now. Reproduce either half with
+`TZ=UTC python3 host/session/status.py --selftest`.

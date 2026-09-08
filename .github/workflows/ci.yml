@@ -13,18 +13,17 @@ concurrency:
 jobs:
   static-checks:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        # Both ends: 3.11 is the floor — the base image's own python, and the
-        # least the host may have (pyproject requires-python); 3.14 is the
-        # newest, where a removal or deprecation shows first.
-        python-version: ["3.11", "3.14"]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          # The host's interpreter and only that. image/*.py runs on the base
+          # image's own 3.11 and is proved there by docker-build below, which
+          # runs those selftests as RUN steps — a second copy on a runner's
+          # 3.11 proves the same thing on a different patch of a different
+          # base.  see docs/release.md#each-side-is-proved-on-its-own-interpreter
+          python-version: "3.14"
 
       - name: Install lint tooling
         run: pip install -r requirements-dev.txt
@@ -39,20 +38,12 @@ jobs:
       - name: mypy
         run: mypy
 
-      # Every `--selftest` in the repository, and the list is meant to stay
-      # that way: a selftest that only `just verify` runs is proved on the
-      # operator's machine and nowhere else, which is a check that goes
-      # unnoticed the day it starts failing on a pull request.
-      # `grep -rl selftest --include='*.py' host/ image/` is the list.
-      - name: bash-guard selftest
-        run: python3 image/bash-guard.py --selftest
-
-      - name: claude-usage selftest
-        run: python3 image/claude-usage.py --selftest
-
-      - name: session-cost selftest
-        run: python3 image/session-cost.py --selftest
-
+      # Every `--selftest` under host/, and the list is meant to stay that way:
+      # a selftest that only `just verify` runs is proved on the operator's
+      # machine and nowhere else, which is a check that goes unnoticed the day
+      # it starts failing on a pull request.
+      # `grep -rl selftest --include='*.py' host/` is the list; image/'s are
+      # RUN steps in image/Dockerfile and run in docker-build.
       - name: needles selftest
         run: python3 host/archive/needles.py --selftest
 

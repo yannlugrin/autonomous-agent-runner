@@ -1045,6 +1045,11 @@ def main():
 
 
 def selftest():
+    # `now` is naive and reset_text is handed a UTC instant, so the cases below
+    # that cross midnight only hold in a fixed zone: unpinned, they pass here
+    # and fail in CI.  see docs/release.md#each-side-is-proved-on-its-own-interpreter
+    os.environ["TZ"] = "Europe/Zurich"
+    time.tzset()
     failures = []
     now = datetime.datetime(2026, 9, 7, 20, 26).timestamp()
 
