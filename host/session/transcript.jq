@@ -65,7 +65,8 @@ def render:
         # Each line of an expanded payload carries its own dim/reset: a single
         # span around a multi-line block leaves the colour on if the output is
         # cut short.
-        ((.input.command // .input.file_path // .input.pattern // .input.prompt // "")
+        ((.input.command // .input.file_path // .input.pattern // .input.query
+          // .input.url // .input.prompt // "")
          | tostring) as $payload
         | if $full then
               $dim + $hm + $off + "   > " + .name
