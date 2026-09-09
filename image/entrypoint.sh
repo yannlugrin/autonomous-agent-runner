@@ -64,7 +64,8 @@ unset AGENT_CLAUDE_VERSION
 # see docs/image.md#what-the-image-was-built-from
 export "${AGENT_PREFIX}_RUNNER_COMMIT=${AGENT_RUNNER_COMMIT:-}"
 export "${AGENT_PREFIX}_RUNNER_COMMITTED_AT=${AGENT_RUNNER_COMMITTED_AT:-}"
-unset AGENT_RUNNER_COMMIT AGENT_RUNNER_COMMITTED_AT
+export "${AGENT_PREFIX}_RUNNER_PUSHED_AT=${AGENT_RUNNER_PUSHED_AT:-}"
+unset AGENT_RUNNER_COMMIT AGENT_RUNNER_COMMITTED_AT AGENT_RUNNER_PUSHED_AT
 
 # --- git ----------------------------------------------------------------
 

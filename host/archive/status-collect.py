@@ -222,6 +222,7 @@ def deploy():
             "ahead": None,
             "image_candidate": None,
             "image_deployed": None,
+            "pushed_at": None,
             "error": (err or out or "no answer")[:200],
         }
 
@@ -236,6 +237,10 @@ def deploy():
         "ahead": int(ahead) if ahead and ahead.isdigit() else None,
         "image_candidate": none(f.get("image_candidate")),
         "image_deployed": none(f.get("image_deployed")),
+        # When the deployed image's own commit reached origin, measured by the
+        # build and baked in. The record store reads it from here, which is what
+        # lets the value cross from the machine that pushes to the one that runs.
+        "pushed_at": none(f.get("pushed_at")),
         "error": None,
     }
 

@@ -23,6 +23,13 @@ deployed="$RUNNER_IMAGE_DEPLOYED"
 # just interpolation. see docs/release.md#docker-format-strings-collide-with-just
 image_id() { docker images -q --no-trunc "$1" 2>/dev/null | head -1 | cut -c8-19; }
 
+# One value out of an image's baked environment, or nothing. Read from the image
+# config and not from a container, so asking cannot disturb a running session.
+baked() {
+    docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$1" 2>/dev/null \
+        | sed -n "s/^$2=//p" | head -1
+}
+
 
 # --- what is live, as fields ---
 # `status` and status-collect.py read these rather than asking git and docker
@@ -45,6 +52,12 @@ if [ "$state" = yes ]; then
     echo "dropped: ${dropped:--}"
     echo "image_candidate: ${cid:--}"
     echo "image_deployed: ${did:--}"
+    # When the commit this image was built from reached origin, out of the image
+    # rather than out of a reflog: the record store reads it through the status
+    # snapshot, and once the build and the run are on different machines only the
+    # image carries it. Empty when the image predates the field, does not exist,
+    # or was built where nothing pushes. see docs/image.md#what-the-image-was-built-from
+    echo "pushed_at: $(baked "$deployed" AGENT_RUNNER_PUSHED_AT | grep . || echo -)"
     # When this build went live, from the reflog of the branch this recipe
     # resets: a deploy IS that reset, so the log of it is already kept and
     # needs no stamp of its own. The image's own `Created` is not this — a

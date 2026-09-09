@@ -291,16 +291,29 @@ which is one package this image does not otherwise need. See docs/vault.md.
 
 ## What the image was built from
 
-`RUNNER_COMMIT` and `RUNNER_COMMITTED_AT` are build arguments measured on the
-host by `just build`, because the build context is `image/` and carries no
-`.git` — nothing inside a build can read them. They are the *last* `ARG`s in
+`RUNNER_COMMIT`, `RUNNER_COMMITTED_AT` and `RUNNER_PUSHED_AT` are build
+arguments measured on the host by `just build`, because the build context is
+`image/` and carries no `.git` — nothing inside a build can read them. They are the *last* `ARG`s in
 the Dockerfile on purpose: they change with every commit and an `ARG`
-invalidates every layer below it, so placed higher they would rebuild the
-whole image for a one-line change.
+invalidates every layer below it, so placed higher they would rebuild the whole
+image for a one-line change.
+
+`RUNNER_PUSHED_AT` is the instant that commit reached origin, and it is read
+from `refs/remotes/origin/main`'s reflog, which git writes the moment a push
+succeeds — only entries that say `update by push` count, since a fetch entry
+would date the host's pull instead. It is baked in rather than measured where
+the record is written because those are about to be two different machines:
+the build stays where the pushing happens and the runs move to the VPS, whose
+remote-tracking reflog will only ever hold fetches. The image carries the
+value across, `deploy --state` reads it back out of the image config, and the
+status snapshot is where the record store finds it.
+See docs/monitor.md#the-push-a-run-was-built-from.
 
 Empty is a legitimate answer rather than a defect — a bare
 `docker compose build` passes nothing, and `claude-session.py` then tells the
 session the image does not say, rather than naming a commit that is not one.
+An empty `RUNNER_PUSHED_AT` says one thing more: the image was built on a host
+that does not push, so what it runs may never have reached origin at all.
 Like `AGENT_CLAUDE_VERSION`, the baked name is literal because a Dockerfile
 `ENV` name cannot be computed, and the entrypoint moves it into the agent's
 own namespace so a session sees one spelling rather than two. See

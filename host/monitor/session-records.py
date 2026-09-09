@@ -45,8 +45,8 @@ WHY IT EXISTS. Everything about a session is otherwise re-derived from its raw
 transcript on every read — six seconds over the whole archive today, growing by
 about forty transcripts a day. Three of the facts worth keeping are not in the
 transcript at all and have to be joined in from elsewhere: which commits the
-session made, which runner built its container, and what the runner did with its
-closing message afterwards. One is joined against a source the agent is free to
+session made, which runner built its container and when that commit reached
+origin, and what the runner did with its closing message afterwards. One is joined against a source the agent is free to
 rewrite, and one has no other durable home at all, so a sealed record is the only
 lasting witness to both.
 
@@ -89,6 +89,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from datetime import UTC, datetime
@@ -704,7 +705,11 @@ class Snapshots:
     Three series out of ONE pass over the branch, because they are read together
     and it is 1596 blobs on 2026-09-07:
 
-      the runner that was live      `deploy.deployed`, asked of a run's START
+      the runner that was live      `deploy.deployed` and, beside it,
+                                    `deploy.pushed_at` — the instant that
+                                    commit reached origin, measured by the
+                                    build and baked into the image. Asked of a
+                                    run's START
       the wait then in force        `schedule.cooldown`, asked of a run's END
       the wait one run was granted  `last_session`, joined on the session id
 
@@ -749,7 +754,11 @@ class Snapshots:
             if when is None:
                 continue
             deploy = snapshot.get("deploy") or {}
-            series[when] = (deploy.get("deployed"), deploy.get("image_deployed"))
+            series[when] = (
+                deploy.get("deployed"),
+                deploy.get("image_deployed"),
+                deploy.get("pushed_at"),
+            )
             cadence[when] = as_minutes((snapshot.get("schedule") or {}).get("cooldown"))
             last = snapshot.get("last_session") or {}
             run = last.get("session_id")
@@ -786,9 +795,9 @@ class Snapshots:
         snapshots is seen up to ten minutes late.
         """
         if when is None or not self.at:
-            return None, None
+            return None, None, None
         index = bisect.bisect_right(self.at, when) - 1
-        return self.rows[index] if index >= 0 else (None, None)
+        return self.rows[index] if index >= 0 else (None, None, None)
 
     def wait_at(self, when):
         """The wait in force when a run ended — what the next wake-up counted.
@@ -925,11 +934,14 @@ def build(archive, session, main, subs, sizes, memory, snapshots):
             run["commit_stat"] = None
             run["runner_commit"] = None
             run["runner_image"] = None
+            run["runner_pushed_at"] = None
             run["asked_wake_after"] = None
             run["wake_after"] = None
             continue
         run["commits"], run["commit_stat"] = memory.within(run["from"], run["to"])
-        run["runner_commit"], run["runner_image"] = snapshots.live_at(run["from"])
+        run["runner_commit"], run["runner_image"], run["runner_pushed_at"] = snapshots.live_at(
+            run["from"]
+        )
         asked, granted = snapshots.granted_to(session) if index == last_run else (None, None)
         run["asked_wake_after"] = asked
         run["wake_after"] = granted if granted is not None else snapshots.wait_at(run["to"])
@@ -952,6 +964,30 @@ def sealed(record, memory, snapshots):
     if snapshots.latest is None or snapshots.latest <= record["start"]:
         return "status"
     return None
+
+
+def keep_measured(record, target):
+    """Carry forward a value whose source has since gone, run by run.
+
+    `runner_pushed_at` comes from a reflog git deletes at 90 days, and after
+    that a re-derivation of an old record finds nothing. A null written over a
+    real instant is indistinguishable from a run that never had one, and there
+    would be nothing left to read it back from — so the stored value wins
+    wherever this pass came up empty, and only a null is ever computed twice.
+    see docs/monitor.md#the-push-a-run-was-built-from
+
+    Silent when there is no stored record, which is every first seal.
+    """
+    try:
+        with open(target) as handle:
+            stored = json.load(handle)
+    except (OSError, ValueError):
+        return
+    by_start = {run.get("from"): run for run in stored.get("runs") or []}
+    for run in record.get("runs") or []:
+        was = by_start.get(run.get("from"))
+        if was and run.get("runner_pushed_at") is None:
+            run["runner_pushed_at"] = was.get("runner_pushed_at")
 
 
 def write(root, transcript, record):
@@ -1023,6 +1059,8 @@ def seal(archive, clone, root, state_path, only=None, dry_run=False, reseal=Fals
             waiting.append((session, "no record"))  # nothing to compare against
             continue
         record = build(archive, session, main, subs, sizes, memory, snapshots)
+        if stored_here:
+            keep_measured(record, target)
         holding = sealed(record, memory, snapshots)
         if holding and dry_run:
             # A record is stored and its own source no longer reaches past it,
@@ -1132,6 +1170,43 @@ def selftest():
         record_path("transcripts/undated/abc.jsonl"),
         "undated/abc.json",
     )
+
+    # The one failure here that leaves no symptom: a reflog entry expires, the
+    # re-derivation of an old record comes back null, and a reseal writes that
+    # null over the only surviving copy of the instant. Two runs, one already
+    # carrying a value the new pass no longer has, one that never had one.
+    with tempfile.TemporaryDirectory() as scratch:
+        target = os.path.join(scratch, "record.json")
+        with open(target, "w") as handle:
+            json.dump(
+                {
+                    "runs": [
+                        {"from": 100, "runner_pushed_at": "2026-08-22T18:33:07Z"},
+                        {"from": 200, "runner_pushed_at": None},
+                    ]
+                },
+                handle,
+            )
+        rebuilt = {
+            "runs": [
+                {"from": 100, "runner_pushed_at": None},
+                {"from": 200, "runner_pushed_at": None},
+            ]
+        }
+        keep_measured(rebuilt, target)
+        check(
+            "an expired reflog does not blank a stored instant",
+            rebuilt["runs"][0]["runner_pushed_at"],
+            "2026-08-22T18:33:07Z",
+        )
+        check("a run that never had one stays null", rebuilt["runs"][1]["runner_pushed_at"], None)
+        fresh = {"runs": [{"from": 100, "runner_pushed_at": None}]}
+        keep_measured(fresh, os.path.join(scratch, "absent.json"))
+        check(
+            "no stored record is not an error",
+            fresh["runs"][0]["runner_pushed_at"],
+            None,
+        )
 
     # The rate tuple is written `input, 5m write, 1h write, read, output` and
     # the categories are ordered `input, write1h, write5m, read, output`. The

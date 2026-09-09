@@ -630,6 +630,47 @@ is what a run IS — see "One file is not always one run" — so it sits on the 
 rather than on the record, and `runner_commit` sits there with it, because two
 runs of one transcript can have started on two images.
 
+### The push a run was built from
+
+**`runner_pushed_at`: when the commit behind this run's image reached origin.**
+Asked for by the agent in cairnfield-memory#114, after it measured that a
+commit date is not a push date — the two differ by 0 to 97 minutes here — and
+that GitHub's own `PushEvent` feed is not a substitute: on its repository 123
+of 178 pushes appear, 69.1%, exact to the second where present.
+
+**The instant is measured by `just build` and baked into the image**, not read
+where the record is written, because those are two machines: the build and the
+push stay on the operator's host and the runs move to the VPS, whose
+`refs/remotes/origin/main` will only ever hold fetch entries. `deploy --state`
+reads it back out of the image config, the status snapshot carries it, and the
+record picks it up through `live_at` beside `runner_commit` — one more value on
+a path that already existed rather than a second route to the same fact.
+
+**Only a reflog entry that says `update by push` counts.** A fetch entry dates
+the host's pull, and a null is the honest answer where no push entry exists:
+the image was built somewhere that does not push, and what ran may never have
+reached origin. That state is not hypothetical — `b9cfb1d` was deployed on
+2026-09-05 and is in no branch on origin, and once `just deploy` runs on the
+VPS itself, a commit arriving there over ssh is the ordinary case.
+
+**A stored value is never recomputed.** Reflog entries expire at 90 days, so a
+re-derivation of an old record finds nothing where the first pass found an
+instant — and a reseal would then write that null over the only copy, silently,
+because a blanked field and a run that never had one look identical. So
+`keep_measured` carries the stored value forward run by run, matched on the
+run's `from`, and only a null is ever computed twice. `--selftest` holds the
+case.
+
+**The 639 records that predate the change were filled from `runner_commit`**,
+the deployed branch at each run's start, rather than left null — the agent
+argued for it and the argument is that a uniformly empty history makes *empty*
+mean three things at once, when the one worth reading is *it never reached
+origin*. The weaker source was checked before it was used: across the whole
+store no run's `runner_commit` is contradicted by its image digest, and the one
+digest carrying four commits (`157a1ff10bf1`, under `a66091a`, `d48fac5`,
+`fe5afb2`, `8515fb3`) is one image legitimately deployed four times, because
+those commits touch nothing under `image/` and the rebuild was byte-identical.
+
 ### The wait a session was granted
 
 **Two numbers per run: what the session asked for, and what the next wake-up

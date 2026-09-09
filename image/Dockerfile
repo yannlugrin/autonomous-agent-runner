@@ -287,8 +287,10 @@ ENV NPM_CONFIG_PREFIX=${AGENT_HOME}/.npm-global \
 # see docs/image.md#what-the-image-was-built-from
 ARG RUNNER_COMMIT=
 ARG RUNNER_COMMITTED_AT=
+ARG RUNNER_PUSHED_AT=
 ENV AGENT_RUNNER_COMMIT=${RUNNER_COMMIT} \
-    AGENT_RUNNER_COMMITTED_AT=${RUNNER_COMMITTED_AT}
+    AGENT_RUNNER_COMMITTED_AT=${RUNNER_COMMITTED_AT} \
+    AGENT_RUNNER_PUSHED_AT=${RUNNER_PUSHED_AT}
 
 # Nothing personal is written into /home/agent at build time. The volume
 # shadows it and is seeded only at first creation, so anything placed there

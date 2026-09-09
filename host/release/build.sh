@@ -29,6 +29,19 @@ if [ "$deployed" = yes ] && [ "$RUNNER_IS_DEPLOYED" != yes ]; then
 fi
 
 
+# --- not on the machine that only runs ---
+# The image is built where the code is edited and reaches this host by
+# `docker save | ssh docker load`, so a build here would produce a second image
+# nobody proved, on a machine sized to run one session and not to compile.
+# see docs/release.md#the-runtime-host-originates-nothing
+
+if [ "${RUNNER_RUNTIME_ONLY:-}" = true ]; then
+    echo "This machine runs the agent; the image is built where the code is edited" >&2
+    echo "and shipped here by 'just deploy' there." >&2
+    exit 1
+fi
+
+
 # --- this installation's own files ---
 # They are untracked, so a fresh clone has none of them and the COPY that wants
 # them fails with docker's account of a build context rather than with the one
@@ -81,6 +94,20 @@ RUNNER_COMMIT="$(git -C "$RUNNER_CHECKOUT" rev-parse --short HEAD 2>/dev/null ||
 export RUNNER_COMMITTED_AT
 RUNNER_COMMITTED_AT="$(TZ=UTC git -C "$RUNNER_CHECKOUT" show -s \
     --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ HEAD 2>/dev/null || true)"
+
+# When that commit reached origin, from this checkout's remote-tracking reflog:
+# git writes an entry there the instant a push succeeds, and only a push counts
+# — a fetch entry would date this host's pull. Empty on a host that does not
+# push, which is a state and not a gap: the image was built where nothing goes
+# to origin, and a session on it ran code that may never have got there.
+# see docs/image.md#what-the-image-was-built-from
+export RUNNER_PUSHED_AT
+RUNNER_PUSHED_AT="$(TZ=UTC git -C "$RUNNER_CHECKOUT" reflog show \
+    --date=format-local:%Y-%m-%dT%H:%M:%SZ --format='%H %gd %gs' \
+    refs/remotes/origin/main 2>/dev/null \
+    | awk -v s="$(git -C "$RUNNER_CHECKOUT" rev-parse HEAD 2>/dev/null)" \
+        '$1 == s && /update by push$/ { print $2; exit }' \
+    | sed -E 's/.*\{(.*)\}$/\1/')"
 
 
 # --- the build ---

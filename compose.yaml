@@ -42,6 +42,7 @@ services:
         # see docs/image.md#what-the-image-was-built-from
         RUNNER_COMMIT: ${RUNNER_COMMIT:-}
         RUNNER_COMMITTED_AT: ${RUNNER_COMMITTED_AT:-}
+        RUNNER_PUSHED_AT: ${RUNNER_PUSHED_AT:-}
     # Which image runs. `agent:deployed` is what cron's session runs on, and
     # only `just deploy` moves that tag; `just build` sets this variable to the
     # candidate. A bare `docker compose build` tags the default, which is the
