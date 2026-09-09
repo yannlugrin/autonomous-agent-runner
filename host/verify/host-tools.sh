@@ -67,7 +67,7 @@ just_min=$(sed -n "s/^set minimum-version := ['\"]\([^'\"]*\)['\"].*/\1/p" justf
 
 cron_line=$(crontab -l 2>/dev/null | awk -v p="# ${COMPOSE_PROJECT_NAME}:" '
     index($0, p) == 1 && index($0, "installed by just schedule") > 0 { pair = 1; next }
-    pair { print; exit }')
+    pair && !seen { print; seen = 1 }')
 
 cron_path=""
 case "$cron_line" in *' PATH='*) cron_tail="${cron_line#* PATH=}"; cron_path="${cron_tail%% *}" ;; esac

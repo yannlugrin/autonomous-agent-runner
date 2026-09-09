@@ -44,8 +44,8 @@ while IFS="$(printf '\t')" read -r verb what why; do
     # wrong with it.
     if [ "$count" -eq 0 ]; then
         was=$(reviewed | awk -v w="$what" '
-            $1 == w || (length(w) >= 8 && index($1, w) == 1) {
-                print (($2 == "redact") ? "redact" : "clear"); exit }')
+            ($1 == w || (length(w) >= 8 && index($1, w) == 1)) && !seen {
+                print (($2 == "redact") ? "redact" : "clear"); seen = 1 }')
         if [ -n "$was" ]; then
             printf 'Already ruled on (%s): %s. The ledger settles it; nothing to record.\n' \
                 "$was" "$what"
@@ -97,7 +97,7 @@ while IFS="$(printf '\t')" read -r h rel id; do
     verb=$(ruling "$h")
 
     if [ -z "$verb" ]; then
-        given=$(printf '%s\n' "$resolved" | awk -F'\t' -v h="$h" '$1 == h { print $2 "\t" $3; exit }')
+        given=$(printf '%s\n' "$resolved" | awk -F'\t' -v h="$h" '$1 == h && !seen { print $2 "\t" $3; seen = 1 }')
         if [ -n "$given" ]; then
             verb=$(printf '%s' "$given" | cut -f1)
             why=$(printf '%s' "$given" | cut -f2)

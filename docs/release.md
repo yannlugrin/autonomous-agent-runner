@@ -322,6 +322,15 @@ The fix is to take the first match without leaving: `&& !found { print $2; found
 = 1 }`. A reflog is a few hundred lines and reading it whole costs nothing —
 where stopping early costs the whole build, silently until the day it works.
 
+**Three others had the same shape**, found the same day and changed with it:
+`host/archive/ledger.sh`'s `ruling`, the two lookups in `host/archive/rule.sh`,
+and the crontab marker in `host/verify/host-tools.sh`. The first three run under
+`collect.sh`, which is `set -e` and `set -o pipefail` both, so each was one
+oversized ledger away from stopping a collection; the fourth only loses a value
+nobody checks. Measured with a writer big enough to still be writing — 200000
+lines into the pipe, matched on the first: `exit` answers 141, the flag answers
+0. Below 64 KB neither does, which is why the shape survives review.
+
 ## The two pins
 
 A tag is not a pin, and neither is "latest": both move underneath you and the

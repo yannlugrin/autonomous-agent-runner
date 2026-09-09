@@ -63,5 +63,5 @@ reviewed() {
 }
 
 ruling() {
-    reviewed | awk -v h="$1" '$1 == h { print ($2 == "redact") ? "redact" : "clear"; exit }'
+    reviewed | awk -v h="$1" '$1 == h && !seen { print ($2 == "redact") ? "redact" : "clear"; seen = 1 }'
 }
