@@ -40,7 +40,7 @@ anchor() {
 # --- what it stands on ---
 
 echo "== the audit clone =="
-printf '  %-9s %s on %s\n' "mirror" "$MIRROR_REF" "$AGENT_ARCHIVE_REPO"
+printf '  %-9s %s on %s\n' "mirror" "$MIRROR_REF" "$AGENT_MIRROR_REPO"
 printf '  %-9s %s  %s\n' "head" "${head:0:12}" \
     "$(git -C "$AUDIT_CLONE" log -1 --format=%cd --date=iso-local "$head")"
 anchor baseline "$AUDIT_STATE/baseline.sha"

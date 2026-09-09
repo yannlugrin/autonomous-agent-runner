@@ -260,12 +260,15 @@ message is better evidence than any inference from their name.
     auto-mode/     AUTO-MODE.md's sources; it and the autoMode key are generated
     docs/          the records, one file per topic — what was measured, what it
                    decided, where it lives in the code now; comments point here
-    examples/      what a clone seeds its other two repositories from —
-                   agent/ is the memory's seed, archive/ the archive's
+    examples/      what a clone starts its other pieces from — agent/ is the
+                   memory's seed, archive/ the archive's, vps/ a host to run the
+                   agent on when the runner cannot stay on an always-on machine
 
-Three repositories and one volume are in play, and `README.md` names them:
+Four repositories and one volume are in play, and `README.md` names them:
 this one, the agent's memory (`the agent's repository`), the transcript archive
 (`the archive repository`, whose `sessions` branch `just collect` writes to),
+the mirror (`the mirror repository`, which holds the audit record on refs
+outside `refs/heads/*` and which the machine running the agent cannot write),
 and the volume that holds the agent's entire world.
 
 The build context is `image/`, deliberately: `.env` and the host scripts

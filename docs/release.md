@@ -161,6 +161,57 @@ On a first deploy there is no worktree, and it is created with
 `git worktree add -B deployed` — `-B` and not `-b`, so a `deployed` branch
 left behind by a removed worktree is reused and moved rather than refused.
 
+## A deleted checkout repairs itself
+
+Measured 2026-09-09 on git 2.53.0, after the operator deleted the deploy
+checkout by hand. Removing the directory does not remove its registration under
+`.git/worktrees/`, and git then refuses the next
+`git worktree add -B <branch> <path>` with
+
+    fatal: '<branch>' is already used by worktree at '<the path that is gone>'
+
+— the branch, not the path, and the path it names no longer exists, so the
+message reads as a conflict with something that is not there. `--force` would
+also clear it, but it would clear a *live* registration just as happily.
+`deploy.sh` runs `git worktree prune` first instead, which drops exactly the
+registrations whose directory is missing and leaves every other one alone.
+
+A deleted checkout is a state with nothing to lose: it holds only what the next
+deploy writes into it. So it is repaired rather than reported, on the same
+reasoning as the reset above. The far side already behaved this way —
+`host_checkout_state` answers `absent` and `host_checkout_create` makes it
+again — and this is the near half catching up.
+
+## The deployed branch is published
+
+**The operator's ruling, 2026-09-10.** `just deploy` pushes `deployed` to
+origin, on both paths, before anything runs the commit.
+
+Until then the branch existed on the machine that deploys and — when the agent
+runs elsewhere — in the `git init` repository on that host, and nowhere a record
+can be read back from. `deploy.sh` already pushed it to the remote named `host`;
+that push is the delivery, not a publication.
+
+**Where, and why not at the end.** Immediately after the checkout is reset to
+`HEAD`, which is the instant the branch moves. Origin then says what this branch
+says, at every instant, including while a deploy is failing — a push at the end
+would leave the two disagreeing for the length of a build, a verify and a 1.2 GB
+upload, and disagreeing for good whenever one of those refused. It is also
+before the switch on both paths, which is the point: the local one goes live at
+`build --deployed`, the remote one at `land`, and neither should be the first
+place the commit exists.
+
+**Not fatal**, on the same reasoning as the config backup: a deploy that is
+built, proved and shipped does not stop because a network did. It prints
+`BRANCH_NOT_PUBLISHED` and the retry, and goes on.
+
+**Under its own name**, and not renamed to `deployed` the way the `host` push
+is. That push delivers a branch into a repository whose only job is to hold one,
+so the name there is fixed; this one publishes what this machine actually has,
+and `vps-deploy` on origin is the truth about a second deployed checkout where
+`deployed` would be a claim about what is live. `+`, because a deploy that drops
+commits moves the branch backwards and nothing else writes this ref.
+
 ## The one refusal, and what it does not cover
 
 A tree that is not clean, the operator's ruling of 2026-08-30. What goes live
@@ -247,6 +298,29 @@ docs/image.md#what-the-image-was-built-from.
 answer: which layers were cached is how you see whether a pin actually
 reinstalled, and a silent build that exits zero is the shape of failure this
 process is written against.
+
+## The first match cannot close the pipe
+
+Measured 2026-09-10, on the first deploy whose commit had already been pushed:
+
+    error: recipe `build` failed on line 517 with exit code 141
+
+141 is SIGPIPE. `build.sh` reads `RUNNER_PUSHED_AT` out of the reflog of
+`refs/remotes/origin/main`, and its awk ended `{ print $2; exit }` — the exit
+closes the pipe while `git reflog show` is still writing into it, `git` takes
+SIGPIPE, and `set -o pipefail` hands 141 to a `set -e` that stops the build.
+
+**It had never run.** The awk only exits early when it finds a match, and a
+match means this checkout's HEAD is a commit that reached origin — which, until
+that day, no build had ever been. Every earlier build read the reflog to the end
+and produced an empty `RUNNER_PUSHED_AT`, the value that means "the image was
+built where nothing goes to origin". The success path of the measurement was
+written, shipped, and first executed months later, by a `git push` the operator
+made by hand.
+
+The fix is to take the first match without leaving: `&& !found { print $2; found
+= 1 }`. A reflog is a few hundred lines and reading it whole costs nothing —
+where stopping early costs the whole build, silently until the day it works.
 
 ## The two pins
 
@@ -368,3 +442,232 @@ instant, so the reset lands on the next local day at `+02:00` and on the same
 day at `UTC`: green on this host, red on every runner. The zone is pinned in
 `selftest()` now. Reproduce either half with
 `TZ=UTC python3 host/session/status.py --selftest`.
+
+## Build here, run there
+
+`RUNNER_DEPLOY_HOST` and `RUNNER_DEPLOY_DIR` in `.env` name the machine the
+agent runs on when that is not the machine you work at. Empty is the single-host
+installation, unchanged: `deploy` builds from the deployed checkout as it always
+did, and none of the code below is reached.
+
+Set, `just deploy` still does everything it always did here — refuse an unclean
+tree, ask, reset `deployed/` to HEAD, copy `.env` and the three untracked files
+into it, **build from that checkout** — and then, instead of tagging the result
+live, it proves it, sends it and has the far side land it.
+
+**The schedule that is held is the one of the machine being deployed to.**
+Deploying elsewhere, that is the far one, and `land` holds it for its own work;
+this machine's is left alone, because nothing live here is touched and pausing
+it would stop the agent for a build, a verify and a 1.2 GB upload.
+
+**The deployed image on the building machine is not touched.** The build there
+tags the candidate, which is what it is: built from `deployed/` and about to be
+proved. Only the far side's tag is flipped. What does move here is `deployed/`
+and `refs/heads/deployed`, because they are the build context and the ref that
+is pushed — so while an agent still runs on this machine, its schedule has to be
+off before the first deploy elsewhere, or it runs new scripts beside the image
+it already had.
+
+Building from `deployed/` first is the point, and it is what the earlier
+draft of this got wrong by building on the working tree and shipping what
+`verify` had proved at some earlier moment. In that shape the tree can move
+between the two, and the mismatch is caught by a commit comparison on the far
+side — after 1.2 GB has crossed. Building in the worktree closes the window
+instead of catching it: the image and `refs/heads/deployed` are the same commit
+by construction, and that pair is what travels.
+
+`verify` therefore runs inside `deploy`, on the image that will ship rather than
+on a candidate built from the working tree. That is a departure from the
+three-step sequence in `CLAUDE.md`, and it was ruled deliberately: a verify
+before every deploy was already what happened by hand, and this one proves the
+exact artifact instead of a byte-identical sibling. `just verify` typed by hand
+keeps its meaning on the candidate you build while working.
+
+## The tag flip is the deploy
+
+Two things cross, and neither of them is live on arrival.
+
+`refs/heads/deployed` is pushed into a repository whose HEAD is **detached** —
+`land` leaves it that way — so `deployed` is never that checkout's current
+branch, the push is accepted without any `receive.denyCurrentBranch` setting,
+and it moves a ref and nothing else. The working tree follows later, inside the
+pause. `updateInstead` was considered and dropped for exactly that: it joins the
+ref arriving to the tree moving, which is the seam this needs.
+
+The image travels as `:incoming`, because a tag goes with the image through
+`docker save` and one sent under its live name would be live on arrival, ahead
+of every check.
+
+`just land` on that host is the other half, and it is a separate script rather
+than a branch of `deploy` because the two mean opposite things by the same
+names: here HEAD is new and `deployed` is what is live, there `deployed` is what
+has just arrived and the tree is what is still live. It checks the shipped id,
+the image's baked commit against the branch that arrived, and refuses a tree
+somebody has edited; then pauses the schedule, moves the tree, flips the tag,
+**reads back what is actually live** and only then enables the schedule again. A
+failure anywhere after the pause leaves it paused and says so.
+
+It is private in the justfile and refuses to run without `RUNNER_SHIPPED_ID`,
+which only the deploying machine sets. That is what tells the far half of a
+deploy from a hand on the wrong terminal.
+
+The remote deploy is invoked with `RUNNER_DEPLOY_HOST=` emptied, because that
+host's own `.env` is a copy of this one and would otherwise have it forward to
+itself. The two `RUNNER_DEPLOY_*` lines are filtered out of that copy for the
+same reason: they say the agent runs elsewhere, which is false there.
+
+Rejected: a docker daemon reached over ssh, with the runner staying here. It
+needs the machine you work at to be up for cron to fire at all, which is the
+whole thing this arrangement exists to stop.
+
+## The environment beats dotenv
+
+Measured 2026-09-09 on `just 1.58.0`, because the whole split rests on it: with
+`set dotenv-load := true`, an environment assignment on the command line beats
+the value in `.env` — **and an empty assignment beats it too**, rather than
+falling back. `env_var_or_default` sees dotenv values as well, so both halves of
+the justfile agree.
+
+Re-measure:
+
+    printf 'PROBE=from-dotenv\n' > .env
+    printf 'set dotenv-load := true\nshow:\n    @echo $PROBE\n' > justfile
+    just show          # from-dotenv
+    PROBE= just show   # empty
+
+If that ever prints `from-dotenv`, `host/lib/deploy-host.sh` needs a sentinel
+variable instead, and the remote deploy is forwarding to itself.
+
+## The id and the commit answer different questions
+
+Two checks stand where building from the deployed checkout used to stand alone,
+and they are not redundant.
+
+**The id** — what `verify` proved, against what arrived — answers *is this the
+image that was tested*. The commit cannot: it is written into the image by the
+build, not derived from its content, so two builds of one commit both carry it.
+They differ whenever `.env` changes (`AGENT_MODEL`, the retention days and the
+names are build arguments), whenever one of the three untracked
+`image/config/*.txt` changes, or simply on a later rebuild — `apt-get install`
+in the Dockerfile is unpinned, unlike the base image and Claude Code. `docker
+load` is content-addressed, so an id that survives the trip is every byte
+surviving the trip.
+
+**The commit** — baked `AGENT_RUNNER_COMMIT` against the checkout beside it —
+answers *does the code next to it match*. The id cannot: it says nothing about
+what the host scripts are.
+
+The gate reads the commit from `docker image inspect`, not by starting a
+container: a session may be running on that host, and a deploy has no business
+putting a second container against the volume to learn something a label
+already carries. `host/verify/image-commit.sh` asks the same of a *running*
+container deliberately — its question is whether the value still reaches a
+session — and reports `LOOK` rather than failing, because a checkout that has
+moved on since the last build is a state and not a defect. The same comparison
+is a refusal in `deploy`, which is the shape `image/claude-usage.py` already
+has: one fact, two readers, opposite dispositions.
+
+## The branch follows the directory
+
+`deploy` names the branch its deployed checkout holds after that checkout's own
+directory — `basename "$RUNNER_DEPLOYED"` — rather than fixing it to `deployed`.
+Measured: git refuses to check one branch out in two worktrees, so a second
+deployed checkout for testing, made by pointing `RUNNER_DEPLOYED` elsewhere,
+fails at `worktree add -B` with *'deployed' is already used by worktree at …*
+while the real one holds it. Naming the branch after the directory makes the
+second checkout a second branch, and the two stop colliding.
+
+The far side is not named from here: `land` looks for `refs/heads/deployed` on
+that host whatever this one is called, and the push spells the rename —
+`+"$ref":refs/heads/deployed`.
+
+**And that host does not derive its own name either.** Its `RUNNER_DEPLOYED` is
+the checkout itself, so a basename there would give the checkout's own name —
+`runner`, say — while the branch it actually holds is `deployed`. It is keyed on
+`RUNNER_RUNTIME_ONLY`, which that host already carries: the machine that deploys
+names the branch after its worktree, the machine that runs holds the name it was
+sent. Without it the only casualty is `deploy --state` run there, which `just
+status` asks for over ssh — it would find no such ref and report nothing as
+live, which is a wrong answer in the shape of a right one.
+
+A directory whose name is already a branch checked out somewhere else fails the
+same way, and the message says which worktree holds it.
+
+## The first deploy has no working tree
+
+The checkout on that host is made with `git init`, so until something checks a
+commit out its HEAD is unborn and the directory holds no files. The first push
+therefore lands a ref beside nothing — and `just land`, which is what would
+check the tree out, cannot run, because there is no justfile to run it from.
+Measured on the first real deploy: `error: no justfile found`.
+
+So the deploy checks the tree out once, straight after that first push, guarded
+on `rev-parse --verify HEAD` failing. It is safe exactly there and nowhere else:
+nothing is live on that host yet, so there is nothing for a moving tree to
+surprise. Every later deploy leaves the tree alone and lets `land` move it
+inside the pause it holds the schedule with, which is the whole separation.
+
+## The runtime host is its own deployed checkout
+
+There the checkout cron runs from IS the checkout, so `RUNNER_DEPLOYED` in the
+`.env` that reaches it holds that checkout's own absolute path — written by the
+deploy, which asks that account's shell to resolve it, and never carried over
+from this machine, where the same name means a worktree that only exists here.
+
+Absolute, not relative: the justfile decides `RUNNER_IS_DEPLOYED` by comparing
+`justfile_directory()` with this value, and a relative one is resolved from the
+project root, so it can never equal it. `no` there is not a small wrongness —
+every live recipe (`run`, `chat`, `shell`, `listen`, `read`, `status`,
+`collect`, `publish-status`) forwards on it, and would forward into a directory
+that does not exist. With `yes` they all run in place, which is what that host
+needs and what they already do: none of them needed changing.
+
+`just schedule --relocate` writes the crontab line from the same value, so cron
+there names the checkout rather than a worktree under it.
+
+## The runtime host originates nothing
+
+That machine holds two checkouts, as this one does: the one a push lands in, and
+`deployed/` that cron reads. The gap between them is the point — a deploy that
+half arrives, image sent and a gate refusing, leaves cron on the old code
+because nothing moved `deployed/`. Collapsing to a single checkout there would
+make the push itself change what runs, ahead of every check.
+
+What it must not be is the **origin** of a release. `just build` refuses there:
+the image is built where the code is edited, and a build on a machine sized to
+run one session would produce a second image nobody proved. `just deploy`
+refuses too, unless it carries `RUNNER_SHIPPED_ID` — which only the deploying
+machine sets, and which is therefore what tells "the operator typed this on the
+wrong terminal" from "the workshop is running its second half here".
+
+Both read `RUNNER_RUNTIME_ONLY`, stamped into that host's `.env` by the deploy
+that sends it, rewritten every time so it cannot be lost by an edit. It is a
+guard against a mistake and not a boundary: anyone who can type on that machine
+can edit the file it reads. The boundary is that nothing there has a credential
+to push an image anywhere.
+
+## The image crosses whole
+
+`docker save | ssh docker load`, about 1.2 GB every deploy. `save` is not
+layer-aware: `load` skips writing layers it already has, but the bytes cross
+regardless. A registry would send only the changed layers — usually the `COPY`
+ones, a few MB — and the trade was made deliberately for the simplicity of
+having nothing between the two machines and no third party holding the image.
+
+Progress while it crosses comes from `pv` when it is installed — the size is
+known in advance, so it gets a real bar and an ETA — and from an elapsed-time
+counter when it is not. **Not `dd status=progress`**: measured 2026-09-09 on
+uutils coreutils 0.8.0, which is what Ubuntu 26.04 ships and what this machine
+runs, the flag is *accepted and prints nothing* but the closing summary. GNU dd
+prints a line a second. Re-measure with
+
+    ( dd if=/dev/zero bs=1M count=8 2>/dev/null; sleep 3 ) | dd status=progress bs=1M of=/dev/null
+
+which on GNU shows progress lines during the three seconds and on uutils shows
+only the summary at the end. A progress flag that silently does nothing is worse
+than no flag, which is why neither is used.
+
+`host/release/ship.sh` is the only caller-facing name, so replacing its inside
+with a push to a `registry:2` on that host, reached through an `ssh -L` that
+dies with the command, changes nothing above it. That is the move to make if the
+transfer time ever stops being worth it.

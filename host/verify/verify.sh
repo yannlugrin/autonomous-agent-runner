@@ -64,6 +64,23 @@ export RUNNER_IMAGE="$which"
 echo "image: $which"
 
 
+# --- the volume the probes run against ---
+# Never the agent's, on any machine. No section reads its contents: prompt.sh
+# uses the twin, which has none; every other one runs against `agent` with a
+# HOME of its own, and the probe that needs a checkout builds it inside that
+# home. But the `agent` service DECLARES the volume, and docker creates a named
+# volume that does not exist — so on a machine that no longer holds the agent's
+# world, verify would quietly make an empty one wearing its name, and `just
+# collect` reads that as "No transcripts found in the volume": a lost world in
+# the words of an empty one.
+#
+# This is the `test twin` rule applied to every section rather than to the twin
+# alone. see docs/verify.md#the-probes-never-run-against-the-agents-volume
+
+export AGENT_VOLUME="${AGENT_USER}-verify"
+echo "volume: $AGENT_VOLUME (a scratch one; no section reads the agent's)"
+
+
 # --- what every section shares ---
 
 . host/verify/lib.sh

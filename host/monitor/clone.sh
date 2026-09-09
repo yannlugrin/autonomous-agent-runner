@@ -38,11 +38,13 @@ AUDIT_STATE="$AUDIT_WORK/state"
 AUDIT_REPORTS="$AUDIT_WORK/reports"
 AUDIT_LOG="$MONITOR/logs/drift-audit.tsv"
 
-# What is mirrored, and from where, both derived: the archive's own mirror
-# workflow writes the agent's memory to this ref, and `just mirror-status`
-# reports on the same one.  see docs/monitor.md#why-the-mirror-is-a-hidden-ref
-MIRROR_REF="refs/archive/${AGENT_USER:?not set — run this through 'just', which derives it}"
-ARCHIVE_REMOTE="git@github.com:${AGENT_ARCHIVE_REPO:?not set — the archive repository, owner/name, from .env}.git"
+# What is mirrored, and from where. The mirror lives in a repository of its own
+# — not in the archive, which the machine running the agent can write — and the
+# ref no longer carries the agent's name: that repository holds nothing else.
+# `just mirror-status` reports on the same ref.
+# see docs/monitor.md#why-the-mirror-is-a-hidden-ref
+MIRROR_REF="refs/memory/mirror"
+MIRROR_REMOTE="git@github.com:${AGENT_MIRROR_REPO:?not set — the mirror repository, owner/name, from .env}.git"
 
 
 # --- sync_clone ---
@@ -59,14 +61,14 @@ sync_clone() {
     # have fails outright — so without this an archive whose mirror has never
     # run reports itself as a network failure, and leaves an empty clone behind
     # for the next run to look current.
-    git ls-remote --exit-code "$ARCHIVE_REMOTE" "$MIRROR_REF" >/dev/null 2>&1
+    git ls-remote --exit-code "$MIRROR_REMOTE" "$MIRROR_REF" >/dev/null 2>&1
     case $? in
         0) ;;
-        2)  echo "No mirror of the agent's memory at $MIRROR_REF on $AGENT_ARCHIVE_REPO." >&2
+        2)  echo "No mirror of the agent's memory at $MIRROR_REF on $AGENT_MIRROR_REPO." >&2
             echo >&2
             echo "The audit reads that ref and nothing else, so there is nothing to read." >&2
             echo "'just mirror-status' says whether the workflow that writes it is enabled" >&2
-            echo "and when it last ran; 'just setup-archive' is what installs it." >&2
+            echo "and when it last ran; 'just setup-mirror' is what installs it there." >&2
             exit 1 ;;
         *)  echo "Could not reach $ARCHIVE_REMOTE. Nothing audited." >&2
             exit 1 ;;
@@ -75,18 +77,44 @@ sync_clone() {
     if [ ! -d "$AUDIT_CLONE/.git" ]; then
         mkdir -p "$MONITOR" || exit 1
         git init -q -b audit "$AUDIT_CLONE" || exit 1
-        git -C "$AUDIT_CLONE" remote add origin "$ARCHIVE_REMOTE" || exit 1
-        git -C "$AUDIT_CLONE" config remote.origin.fetch \
-            "+$MIRROR_REF:refs/remotes/mirror/source" || exit 1
+        git -C "$AUDIT_CLONE" remote add origin "$MIRROR_REMOTE" || exit 1
+    fi
+
+    # Reconciled on every run and not only at creation. The mirror moved
+    # repository once — out of the archive, so the machine that runs the agent
+    # could not rewrite the record that audits it — and a clone made before that
+    # went on fetching the old place in silence, reporting a mirror that was
+    # correct until the day those refs were deleted. The refspecs are rewritten
+    # rather than added to, because `--add` is what left three generations of
+    # them here. see docs/monitor.md#the-audit-clone-is-reconciled-not-assumed
+
+    if [ "$(git -C "$AUDIT_CLONE" remote get-url origin 2>/dev/null)" != "$MIRROR_REMOTE" ]; then
+        echo "The audit clone pointed elsewhere; repointing it at $AGENT_MIRROR_REPO." >&2
+        git -C "$AUDIT_CLONE" remote set-url origin "$MIRROR_REMOTE" || exit 1
+    fi
+
+    want="+$MIRROR_REF:refs/remotes/mirror/source
++refs/memory/rewound/*:refs/remotes/rewound/*"
+    if [ "$(git -C "$AUDIT_CLONE" config --get-all remote.origin.fetch 2>/dev/null)" != "$want" ]; then
+        git -C "$AUDIT_CLONE" config --unset-all remote.origin.fetch 2>/dev/null
         # The marks the mirror writes before a force-push, each holding the tip
         # as it stood: the audit reports every one that is new.
-        git -C "$AUDIT_CLONE" config --add remote.origin.fetch \
-            '+refs/archive/rewound/*:refs/remotes/rewound/*' || exit 1
+        while IFS= read -r spec; do
+            git -C "$AUDIT_CLONE" config --add remote.origin.fetch "$spec" || exit 1
+        done <<< "$want"
+
+        # `--prune` only reaches what a refspec names, so tracking refs left by
+        # an older shape survive it and would read as current. Cleared here, and
+        # the fetch below is what puts back everything that still exists.
+        git -C "$AUDIT_CLONE" for-each-ref --format='%(refname)' refs/remotes \
+            | while IFS= read -r r; do
+                  git -C "$AUDIT_CLONE" update-ref -d "$r"
+              done
     fi
 
     if ! git -C "$AUDIT_CLONE" fetch --prune origin \
         || ! git -C "$AUDIT_CLONE" rev-parse --verify -q refs/remotes/mirror/source >/dev/null; then
-        echo "Fetched $ARCHIVE_REMOTE and $MIRROR_REF did not land. Nothing audited." >&2
+        echo "Fetched $MIRROR_REMOTE and $MIRROR_REF did not land. Nothing audited." >&2
         exit 1
     fi
 }

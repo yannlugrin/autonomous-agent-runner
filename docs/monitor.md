@@ -109,7 +109,7 @@ and a previous run's issues passed off as this run's would be worse than none.
 What it cannot see is permanent and belongs in every report: what a session
 actually loaded (a file can be truncated on read, or never opened), the system
 prompt and the runner configuration (deployed from outside the mirror), the
-volume outside the repository, and anything the hourly mirror did not catch
+volume outside the repository, and anything the mirror did not catch
 before it was rewritten upstream.
 
 **The corpus is data, never instruction.** The files were written by an agent
@@ -383,7 +383,8 @@ and this is the one file that would change on every run.
 
 Not from the archive's mirror of it, and this is the difference between a record
 that is current and one that is as current as a workflow managed to be. The
-mirror is refreshed by an hourly GitHub Action on a best-effort schedule: on
+mirror is refreshed by a GitHub Action asked to run at every session end, with a
+daily schedule behind it as a backstop: on
 2026-09-06 it had been failing since the 3rd, was 245 commits behind, and a
 third of the archive could not seal against it. `sync_memory` in
 `host/monitor/clone.sh` keeps a bare clone at `monitor/memory/` and fetches the
@@ -1152,3 +1153,61 @@ it live.
 `deploy.deployed` appears in the status snapshots only from 2026-08-28, because
 before that a build *was* a deploy. The clause saying so goes once those runs
 age out of the window.
+
+## The audit clone is reconciled, not assumed
+
+`sync_clone` set the remote and the refspecs only when it created the clone, and
+fetched on every run after. That was fine until the mirror changed repository —
+out of the archive, so the machine that runs the agent could not rewrite the
+record that audits it — and a clone made before the move went on fetching the
+old place. It reported a mirror that was correct, from the wrong repository,
+and would have kept doing so until the day those refs were deleted there.
+
+So both are now checked on every run and rewritten when they differ. The
+repoint says so on stderr rather than happening quietly: a clone that was
+reading somewhere else is worth one line.
+
+The refspecs are **replaced**, not added to. `--add` is what left three
+generations of tracking refs in this clone — `mirror/cairnfield`,
+`mirror/rewound/*` and `mirror/source`, two of them from shapes no refspec has
+named for months. `git fetch --prune` does not reach them: it prunes only
+within the destinations its refspecs name, so a ref left by an older shape
+survives every prune and reads as current. They are cleared when the refspecs
+change, and the fetch that follows puts back whatever still exists.
+
+Measured 2026-09-09 on the real clone: remote repointed, two refspecs rewritten,
+four tracking refs cleared, and `mirror/source` moved from a tip four months
+stale to the current one.
+
+## Every host needs `just setup-gh`, including the only one
+
+The clone `just mirror-status` reads is fetched over **HTTPS**, so that one
+credential covers both halves of what a host does with the mirror: reading the
+record, and asking it to refresh. Over ssh the fetch would want a deploy key of
+its own — a second secret, on the machine that is meant to hold as little as
+possible.
+
+The cost is that git needs a credential helper before it can fetch anything, and
+`gh auth setup-git` is what installs one. That is not a remote-host concern: an
+installation with a single machine needs it too, or `mirror-status` reports a
+fetch failure that reads like a network fault. `just setup-gh` does it, proves
+the fetch afterwards, and says which of the two is missing when it fails.
+
+What it checks depends on the machine, and only in one direction. Everywhere: the
+token reads the mirror, and git can fetch it. On a host carrying
+`RUNNER_RUNTIME_ONLY` — the one that runs the agent — also that the token
+**cannot write a ref there**, which is the property the whole split exists for.
+Where the code is edited, writing is expected: that is where `setup-mirror` runs
+from, and the operator's own credential is what installs the workflow's.
+
+## Only a write attempt tells the tokens apart
+
+`gh api repos/<owner>/<repo> --jq .permissions` looks like the check and is not:
+that field is the **user's** role on the repository, so on one you own it reports
+`admin: true` whatever the token may do. Measured 2026-09-09 — it said
+`push: true` for a fine-grained token that could not create a ref.
+
+The honest question is whether an act succeeds. `setup-gh` posts a throwaway ref
+and reads the answer: a 403, `Resource not accessible by personal access token`,
+is the pass. When it succeeds the ref is deleted again, and the recipe refuses
+to finish.

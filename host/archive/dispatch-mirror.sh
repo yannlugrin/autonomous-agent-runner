@@ -18,21 +18,21 @@
 #   see docs/archive.md#asking-the-mirror-to-run
 set -uo pipefail
 
-REPO="${AGENT_ARCHIVE_REPO:?not set — the archive repository, owner/name, from .env}"
+REPO="${AGENT_MIRROR_REPO:?not set — the mirror repository, owner/name, from .env}"
 # No apostrophe in either message above: inside ${var:?word} bash opens a single
 # quote even within double quotes, and the script then fails to parse at its last
 # line with an error naming neither this line nor the quote.
 #   see docs/archive.md#a-quoting-trap-in-three-files
-WORKFLOW="${AGENT_ARCHIVE_WORKFLOW:-mirror-${AGENT_USER:?not set — run this through \`just\`, which derives it}.yml}"
+WORKFLOW="${AGENT_MIRROR_WORKFLOW:-mirror-${AGENT_USER:?not set — run this through \`just\`, which derives it}.yml}"
 
 # Minutes. Read from .env by `just`, and deliberately not passed into the
 # container: this is host bookkeeping a session could do nothing with.
-cooldown="${AGENT_ARCHIVE_MIRROR_COOLDOWN:-}"
+cooldown="${AGENT_MIRROR_COOLDOWN:-}"
 
 case "$cooldown" in
     '') ;;
     *[!0-9]*)
-        echo "AGENT_ARCHIVE_MIRROR_COOLDOWN is '$cooldown', which is not a number of minutes." >&2
+        echo "AGENT_MIRROR_COOLDOWN is '$cooldown', which is not a number of minutes." >&2
         echo "Asking for the mirror anyway — see the header." >&2
         cooldown=''
         ;;
@@ -47,7 +47,7 @@ errfile=$(mktemp); trap 'rm -f "$errfile"' EXIT
 
 if ! gh api "repos/$REPO/actions/workflows/$WORKFLOW" --jq .id >/dev/null 2>"$errfile"; then
     if grep -q 'HTTP 404' "$errfile"; then
-        echo "The archive has no mirror workflow ($WORKFLOW): nothing to dispatch. examples/archive/ carries one; seed the archive's main from it, then run 'just setup-archive'."
+        echo "The mirror repository has no workflow ($WORKFLOW): nothing to dispatch. examples/mirror/ carries one; seed its main from that, then run 'just setup-mirror'."
         exit 0
     fi
     echo "Could not ask the archive about its workflows: $(grep -m1 . "$errfile" || echo 'gh gave no reason')" >&2
@@ -76,7 +76,7 @@ if [ -n "$cooldown" ] && [ "$cooldown" -gt 0 ]; then
             age=$(( ( $(date +%s) - when ) / 60 ))
             [ "$age" -lt 0 ] && age=0
             if [ "$age" -lt "$cooldown" ]; then
-                echo "The mirror ran ${age}m ago; AGENT_ARCHIVE_MIRROR_COOLDOWN=${cooldown} asks for ${cooldown}m. Not dispatched."
+                echo "The mirror ran ${age}m ago; AGENT_MIRROR_COOLDOWN=${cooldown} asks for ${cooldown}m. Not dispatched."
                 exit 0
             fi
         fi

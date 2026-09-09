@@ -100,13 +100,17 @@ RUNNER_COMMITTED_AT="$(TZ=UTC git -C "$RUNNER_CHECKOUT" show -s \
 # — a fetch entry would date this host's pull. Empty on a host that does not
 # push, which is a state and not a gap: the image was built where nothing goes
 # to origin, and a session on it ran code that may never have got there.
+#
+# No `exit` in the awk: a match closes the pipe under a `git` still writing, and
+# `set -o pipefail` reads that SIGPIPE as the build failing. A reflog is small
+# enough to read whole. see docs/release.md#the-first-match-cannot-close-the-pipe
 # see docs/image.md#what-the-image-was-built-from
 export RUNNER_PUSHED_AT
 RUNNER_PUSHED_AT="$(TZ=UTC git -C "$RUNNER_CHECKOUT" reflog show \
     --date=format-local:%Y-%m-%dT%H:%M:%SZ --format='%H %gd %gs' \
     refs/remotes/origin/main 2>/dev/null \
     | awk -v s="$(git -C "$RUNNER_CHECKOUT" rev-parse HEAD 2>/dev/null)" \
-        '$1 == s && /update by push$/ { print $2; exit }' \
+        '$1 == s && /update by push$/ && !found { print $2; found = 1 }' \
     | sed -E 's/.*\{(.*)\}$/\1/')"
 
 

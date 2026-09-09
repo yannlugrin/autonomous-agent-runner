@@ -684,11 +684,20 @@ push the whole past `DEFAULT_BYTES` is a list item with no cap of its own — a
 pathological file path. That is what `trim()` is for, and what the selftest
 plants.
 
-## Recovery size
+## Recovery size, removed
 
-`recovery size` runs the projection over the newest transcript in the volume,
-not a fixture, because what fails here is a transcript shape that moved under
-an upgrade and only the real corpus carries those.
+**Removed 2026-09-09.** `recovery size` ran the projection over the newest
+transcript in the volume, not a fixture, because what fails here is a
+transcript shape that moved under an upgrade and only the real corpus carries
+those. That is exactly why it could not survive: `just verify` now runs every
+section against a scratch volume — see *The probes never run against the
+agent's volume* — where no session has ever run, so the probe answered `LOOK`
+and nothing else, on every run, for good. A check that cannot fail is worse
+than no check, and on the machine that builds there is no longer an agent's
+volume to point it back at.
+
+What it measured, kept because the reasoning below is why the assertion is
+shaped the way it is and not why the code was:
 
 **The assertion is on content, not on size.** A projection that rendered
 nothing but its head line is exactly what a moved shape produces, and it is a
@@ -697,12 +706,19 @@ this exists for. Measured: with the ceiling as the only test, a head-only
 projection reported `ok  82 bytes`. Every real session says something, so the
 absence of `Its last words:` is the signal that the reader stopped reading.
 
-The byte ceiling stays beside it, at twice the projection's own cap, but it is
+The byte ceiling stood beside it, at twice the projection's own cap, but it was
 the weaker half: `recovery shapes` is what actually proves the cap, against an
 input built to exceed it.
 
-`LOOK`, not `FAIL`, when there is nothing to project from: a volume where
-nothing has run yet is a state, not a defect.
+`LOOK`, not `FAIL`, when there was nothing to project from: a volume where
+nothing has run yet is a state, not a defect. Its wording carried a second
+defect that the removal makes moot — `session-recovery.py` exits 3 for `absent`
+and for `stale` both, and the probe printed only the `stale` sentence, which
+`--since 0` makes impossible.
+
+`recovery shapes` stays: it proves the projection against planted shapes and
+its own ceiling, needs no volume, and is where a moved transcript shape would
+now have to be caught — from a fixture, which is the coverage that was lost.
 
 ## Envelope read
 
@@ -1371,3 +1387,26 @@ that session id, and a seventh session would cost a seventh session.
 
 A transcript with no `deferred_tools_delta` line is `LOOK` and not `ok` —
 nothing there lists what was served, so nothing was proved.
+
+## The probes never run against the agent's volume
+
+`just verify` exports `AGENT_VOLUME=$AGENT_USER-verify` before it sources any
+section, so compose resolves the `agent` service onto a scratch volume.
+
+No section needs the real one. `prompt.sh` uses the `agent-test` twin, which has
+`volumes: !reset null`; every other section runs `agent` with `RUNNER_TEST_ENV`,
+which gives the probe a `HOME` of its own, and the one probe that needs a
+checkout builds its own inside that home. What they read out of `agent` is the
+image — `/etc/claude-code/managed-settings.json`, the baked environment, the
+installed binaries — not the volume.
+
+The failure this prevents is not a probe failing. It is docker **creating** the
+volume: a named volume that does not exist is made on first use, so on a machine
+that no longer holds the agent's world — the machine that builds, once the agent
+runs elsewhere — verify would leave an empty volume wearing the agent's name.
+`host/archive/collect.sh` then finds it and reports `No transcripts found in the
+volume`, which is the wording for a lost world, produced by a healthy one
+somewhere else.
+
+It is the `test twin` rule — a rehearsal must not be pointed at the home it
+exists to protect — applied to every section instead of to the twin alone.

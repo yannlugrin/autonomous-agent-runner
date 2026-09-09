@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # How the mirror is doing — is it running, is it current, was anything rewound.
-# Runs on the host, against the archive checkout.
+# Runs on the host, against the mirror's own clone.
 #
 #     mirror.sh                   the screen
 #     mirror.sh --state [<epoch>] the same reading as `key: value` lines, for
@@ -11,17 +11,16 @@
 # --state runs exactly the same code and prints instead of the screen, so the
 # two cannot disagree; the exit status is the verdict either way.
 #
-# Everything here reads. Each of the archive's two records has exactly one
-# writer, and a second writer on a record whose whole value is that it has one
-# would be the end of it; both are read through `git show` and `git for-each-ref`
-# so the archive clone stays on whatever branch it is on, however dirty.
-#   see docs/archive.md#the-mirror
+# Everything here reads. The record has exactly one writer — the workflow in
+# the mirror's own repository — and a second writer on a record whose whole
+# value is that it has one would be the end of it.
+#   see docs/monitor.md#the-mirror-is-not-in-the-archive
 set -uo pipefail
 # shellcheck source=SCRIPTDIR/../lib/root.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
-. host/lib/archive.sh
+. host/lib/mirror.sh
 
-need_archive
+need_mirror
 
 # --state sends the screen to /dev/null and keeps descriptor 3 for the state
 # block, rather than putting a condition around forty prints: one code path,
@@ -35,8 +34,8 @@ case "${1:-}" in
 esac
 if [ "$as_state" = yes ]; then exec 3>&1 1>/dev/null; else exec 3>/dev/null; fi
 
-ref="refs/archive/$AGENT_USER"
-workflow="${AGENT_ARCHIVE_WORKFLOW:-mirror-$AGENT_USER.yml}"
+ref="refs/memory/mirror"
+workflow="${AGENT_MIRROR_WORKFLOW:-mirror-$AGENT_USER.yml}"
 # The job inside that workflow that IS the backup. Named rather than derived:
 # the workflow examples/archive ships has this one job, and an archive is free
 # to carry others beside it — a run's own conclusion covers all of them and so
@@ -71,25 +70,38 @@ unproven=()
 # Three substitutions rather than one capture, since ERE has no lazy quantifier
 # and the tempting one leaves the `.git` on.  see docs/archive.md#against-the-source
 
-archive=$(git -C "$ARCHIVE" remote get-url origin 2>/dev/null \
+archive=$(git -C "$MIRROR" remote get-url origin 2>/dev/null \
     | sed -E 's#\.git$##; s#^git@[^:]+:##; s#^https?://[^/]+/##')
-wf="$ARCHIVE/.github/workflows/$workflow"
-source=$(sed -n 's#^ *SOURCE_URL: *git@github.com:\(.*\)\.git *$#\1#p' "$wf" 2>/dev/null)
+# Out of the clone rather than off a working tree: this one is bare. The blob is
+# fetched on demand, which is what a blobless clone is for.
+wf="$workflow on $archive"
+source=$(git -C "$MIRROR" show "main:.github/workflows/$workflow" 2>/dev/null \
+    | sed -n 's#^ *SOURCE_URL: *git@github.com:\(.*\)\.git *$#\1#p')
 
 
 # --- the fetch ---
 # A status read off stale refs is worse than none, so fetching is first and a
-# failure says so rather than being swallowed. The archive namespace is named
-# explicitly because a clone's default refspec does not carry it, and everything
-# below would otherwise report "the mirror has never run" on a healthy one.
+# failure says so rather than being swallowed. The namespace is named explicitly
+# because a clone's default refspec does not carry it, and everything below
+# would otherwise report "the mirror has never run" on a healthy one; `main`
+# comes too, because the workflow file is read out of it.
 #   see docs/archive.md#a-ref-not-a-branch
 
 printf 'fetching     : '
-if git -C "$ARCHIVE" fetch --quiet --prune origin \
-    '+refs/archive/*:refs/archive/*' 2>/dev/null; then
+if git -C "$MIRROR" fetch --quiet --prune origin \
+    '+refs/memory/*:refs/memory/*' '+refs/heads/main:refs/heads/main' 2>/dev/null; then
     echo 'ok'
 else
     echo 'FAILED — everything below is from local refs and may be stale'
+    # The likeliest cause, and it is not in git's own error: the remote is HTTPS
+    # so that one credential covers the fetch and `gh api`, and nothing hands git
+    # that credential until `gh auth setup-git` has installed its helper.
+    # shellcheck disable=SC2016  # backticks are prose here, not substitution
+    if ! gh auth status >/dev/null 2>&1; then
+        echo '               gh is not logged in here — `gh auth login`, then `gh auth setup-git`'
+    elif ! git config --get-regexp 'credential.*helper' >/dev/null 2>&1; then
+        echo '               git has no credential helper — `gh auth setup-git` installs one'
+    fi
 fi
 echo
 
@@ -101,25 +113,25 @@ echo
 #   see docs/archive.md#a-ref-not-a-branch
 
 echo "== the mirror ref =="
-if ! git -C "$ARCHIVE" rev-parse --verify --quiet "$ref" >/dev/null; then
+if ! git -C "$MIRROR" rev-parse --verify --quiet "$ref" >/dev/null; then
     echo "  $ref does not exist. Either the mirror has"
     echo "  never completed a run, or this clone has never fetched the"
     echo "  namespace — the fetch above does ask for it."
     echo "  gh workflow run $workflow"
 else
-    tip=$(git -C "$ARCHIVE" rev-parse --short "$ref")
+    tip=$(git -C "$MIRROR" rev-parse --short "$ref")
     # Local time, because a person reads it: this screen answers "when did that
     # happen, for me".
-    when=$(git -C "$ARCHIVE" log -1 --format=%cd --date=iso-local "$ref")
+    when=$(git -C "$MIRROR" log -1 --format=%cd --date=iso-local "$ref")
     # The tip is the agent's activity, not the mirror's health — the ref only
     # moves when the agent pushed. The workflow section below reports health.
-    printf '  tip        : %s  %s\n' "$tip" "$(git -C "$ARCHIVE" log -1 --format=%s "$ref")"
+    printf '  tip        : %s  %s\n' "$tip" "$(git -C "$MIRROR" log -1 --format=%s "$ref")"
     # Whether silence here is a quiet agent or a dead mirror is not knowable
     # from this line — the workflow section decides it, and the verdict says so.
     printf '  written    : %s  (by %s)\n' "$when" "$AGENT_NAME"
-    printf '  commits    : %s\n' "$(git -C "$ARCHIVE" rev-list --count "$ref")"
-    tip_written=$(git -C "$ARCHIVE" log -1 --format=%ct "$ref")
-    tip_commits=$(git -C "$ARCHIVE" rev-list --count "$ref")
+    printf '  commits    : %s\n' "$(git -C "$MIRROR" rev-list --count "$ref")"
+    tip_written=$(git -C "$MIRROR" log -1 --format=%ct "$ref")
+    tip_commits=$(git -C "$MIRROR" rev-list --count "$ref")
 fi
 echo
 
@@ -127,13 +139,13 @@ echo
 # --- rewind marks ---
 # The one thing this archive exists to catch: a mark means the upstream history
 # was rewritten and the tip we held was preserved before the ref was reset onto
-# the new one. Plain refs under refs/archive/rewound/ and not annotated tags,
+# the new one. Plain refs under refs/memory/rewound/ and not annotated tags,
 # since refs/tags/ triggers workflows on push. Everything shown is derived from
 # the refs, so nothing can fall out of step with them.
 #   see docs/archive.md#rewind-marks
 
 echo "== rewind marks =="
-marks=$(git -C "$ARCHIVE" for-each-ref --sort=-refname --format='%(refname)' 'refs/archive/rewound/*')
+marks=$(git -C "$MIRROR" for-each-ref --sort=-refname --format='%(refname)' 'refs/memory/rewound/*')
 if [ -z "$marks" ]; then
     # Deliberately not "upstream never rewrote anything". These record what a
     # run saw, and a rewrite between two runs leaves none — which is what the
@@ -148,18 +160,18 @@ else
         # `^{}` peels, and every read below needs it: a mark made by hand is an
         # annotated tag object, and unpeeled `held` would print the tag object's
         # sha — a real sha of the wrong object, in a field nobody would doubt.
-        commit=$(git -C "$ARCHIVE" rev-parse --short "$m^{}")
+        commit=$(git -C "$MIRROR" rev-parse --short "$m^{}")
         # `<ref>..<mark>` is exactly the commits the rewrite dropped:
         # reachable from the preserved tip, not from the ref now.
-        dropped=$(git -C "$ARCHIVE" rev-list --count "$ref..$m^{}" 2>/dev/null || echo '?')
+        dropped=$(git -C "$MIRROR" rev-list --count "$ref..$m^{}" 2>/dev/null || echo '?')
         printf '  %s\n' "$m"
         printf '    rewound  : %s  (from the ref name, which is UTC by construction)\n' "${m##*/}"
         printf '    held     : %s\n' "$commit"
         printf '    dropped  : %s commit(s) no longer on the mirror ref\n' "$dropped"
         # An annotation only a hand-made mark has; the workflow's marks have none.
-        if [ "$(git -C "$ARCHIVE" cat-file -t "$(git -C "$ARCHIVE" rev-parse "$m")")" = tag ]; then
+        if [ "$(git -C "$MIRROR" cat-file -t "$(git -C "$MIRROR" rev-parse "$m")")" = tag ]; then
             printf '    note     : annotated, tagged %s\n' \
-                "$(git -C "$ARCHIVE" for-each-ref --format='%(taggerdate:iso8601)' "$m")"
+                "$(git -C "$MIRROR" for-each-ref --format='%(taggerdate:iso8601)' "$m")"
         fi
     done
 fi
@@ -303,10 +315,10 @@ if [ -z "$source" ]; then
     echo "  could not read SOURCE_URL from $wf — skipped."
 elif ! command -v gh >/dev/null 2>&1; then
     echo "  gh is not installed — skipped."
-elif ! git -C "$ARCHIVE" rev-parse --verify --quiet "$ref" >/dev/null; then
+elif ! git -C "$MIRROR" rev-parse --verify --quiet "$ref" >/dev/null; then
     echo "  nothing mirrored yet — skipped."
 else
-    base=$(git -C "$ARCHIVE" rev-parse "$ref")
+    base=$(git -C "$MIRROR" rev-parse "$ref")
     # One call, both outcomes read from it. The failures are not noise here —
     # the two below are the loudest signals this recipe has.
     if raw=$(gh api "repos/$source/compare/$base...main" 2>&1); then
@@ -321,7 +333,7 @@ else
             identical) echo "  current — $source@main is exactly what is mirrored." ;;
             ahead)     printf '  behind by %s commit(s).\n' "$ahead"
                        if [ ${#problems[@]} -eq 0 ]; then
-                           echo "  The next hourly run fast-forwards."
+                           echo "  The next run fast-forwards — a session ending asks for one."
                        else
                            problems+=("$ahead commit(s) of $AGENT_NAME's memory are NOT mirrored")
                        fi ;;
@@ -339,7 +351,7 @@ else
             *"No common ancestor"*)
                 echo "  UNRELATED — $source@main shares no ancestor with the mirrored tip."
                 echo "  The history was replaced, not extended. Nothing is lost: the next run"
-                echo "  marks $(git -C "$ARCHIVE" rev-parse --short "$ref") at refs/archive/rewound/<ts>, pushes it, then resets." ;;
+                echo "  marks $(git -C "$MIRROR" rev-parse --short "$ref") at refs/memory/rewound/<ts>, pushes it, then resets." ;;
             *"Not Found"*)
                 echo "  the mirrored tip is no longer known to $source."
                 echo "  A tip upstream cannot find is itself the signal: it was rewritten away"
@@ -357,7 +369,7 @@ fi
 #
 # THE MIRROR IS NOT ON A CLOCK. GitHub fires the workflow's schedule when it
 # feels like it — two of the last twelve runs here — and what actually runs it
-# is a session ending more than AGENT_ARCHIVE_MIRROR_COOLDOWN minutes after the
+# is a session ending more than AGENT_MIRROR_COOLDOWN minutes after the
 # last run. So a run that is due and has not happened is NOT late: it is
 # waiting for a session to end. It is late only when one has ended since, which
 # means a dispatch was owed and did not arrive — and that failure says so on
@@ -370,7 +382,7 @@ GRACE=300
 
 emit_state() {
     local verdict="$1" cooldown due="" late=no p u
-    cooldown="${AGENT_ARCHIVE_MIRROR_COOLDOWN:-}"
+    cooldown="${AGENT_MIRROR_COOLDOWN:-}"
     case "$cooldown" in ''|*[!0-9]*) cooldown="" ;; esac
     [ -n "$last_run" ] && [ -n "$cooldown" ] && due=$(( last_run + cooldown * 60 ))
     if [ -n "$due" ] && [ -n "$session_ended_at" ] \
@@ -427,7 +439,7 @@ else
     for p in "${problems[@]}"; do printf '    - %s\n' "$p"; done
     echo
     echo "  Nothing is lost while $AGENT_NAME's own origin holds its memory; what is"
-    echo "  missing is the copy that outlives a rewrite. 'just setup-archive' is what"
+    echo "  missing is the copy that outlives a rewrite. 'just setup-mirror' is what"
     echo "  replaces the read key when the failure is Permission denied (publickey)."
     echo
     echo "Run it now:  gh workflow run $workflow --repo ${archive:-<the archive>}"

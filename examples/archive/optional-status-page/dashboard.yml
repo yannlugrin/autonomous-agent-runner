@@ -9,7 +9,7 @@
 # — see publish-status.sh — so a faster schedule would mostly re-render
 # facts that had not moved. It is also the whole Actions bill: 48 runs a day
 # at well under a minute each, against a free private allowance of 2000
-# minutes a month that the hourly mirror is already drawing on. A dispatch
+# minutes a month that the mirror is already drawing on. A dispatch
 # on every host publish was written and taken out for that reason — it would
 # have spent the month's allowance around the 20th, and a spent quota stops
 # the mirror too, silently.

@@ -50,7 +50,8 @@ flowchart TB
 
   RUNNER[("this repository<br/>image, boundary, host tooling")]
   MEMORY[("the agent's memory<br/>private, only the agent writes it")]
-  ARCHIVE[("the archive<br/>private, transcripts and the mirror")]
+  ARCHIVE[("the archive<br/>private, the transcripts")]
+  MIRROR[("the mirror<br/>private, the audit record — the runtime cannot write it")]
 
   CRON -->|"wakes"| JUST
   JUST --> BUDGET
@@ -63,8 +64,8 @@ flowchart TB
   CHECKOUT -.->|"cloned from"| MEMORY
   BACKUP -->|"pushes at every session end"| MEMORY
   JUST -->|"just collect: reads the volume, pushes transcripts"| ARCHIVE
-  MEMORY -->|"mirror workflow, hourly"| ARCHIVE
-  ARCHIVE -->|"just drift-audit reads the mirror"| JUST
+  MEMORY -->|"mirror workflow, at every session end"| MIRROR
+  MIRROR -->|"just drift-audit reads the mirror"| JUST
 ```
 
 | | what it is | who writes it |
@@ -101,14 +102,30 @@ account or as the deploy key.
 [`examples/archive/`](examples/archive/).** Different risk profile and
 different lifetime from the memory, and keeping them apart is what leaves
 the memory repository something that could one day be published. The
-example holds the mirror workflow, the credential check, the placeholders to
-replace, and an optional status page. `just setup-archive` does the rest and
-writes the two secrets the workflow runs on; the transcripts branch and the
-status branch create themselves. What the archive is for, what the gate does
-and how a held transcript is ruled on is in
+example holds the credential check, the placeholders to replace, and an
+optional status page. `just setup-archive` clones it; the transcripts branch
+and the status branch create themselves. What the archive is for, what the
+gate does and how a held transcript is ruled on is in
 [`docs/archive.md`](docs/archive.md).
 
-**3. [Bitwarden Secrets Manager](https://bitwarden.com/products/secrets-manager/),
+**3. The mirror repository, private and separate again, its `main` seeded from
+[`examples/mirror/`](examples/mirror/).** It holds the audit record — the
+agent's memory, mirrored onto refs outside `refs/heads/*`, with a mark
+preserving any tip a rewrite upstream would have destroyed. It is apart from
+the archive because the machine that runs the agent writes transcripts there,
+and a record that machine could rewrite is not a record: it holds no write
+credential for this one.
+
+Two recipes, and they are not the same act. **`just setup-mirror`** writes the
+two secrets that repository's workflow runs on — done once, from the machine the
+code is edited at, and refused on a machine that runs the agent. **`just
+setup-gh`** installs *this* host's own access: the token it reads the record
+with and asks it to refresh with, and git's credential helper, without which
+`just mirror-status` cannot fetch at all. Every host needs the second, including
+the only one when there is only one; on a host that runs the agent it also
+proves the token **cannot write** the record.
+
+**4. [Bitwarden Secrets Manager](https://bitwarden.com/products/secrets-manager/),
 with three projects.** A free account works: it is capped at three projects,
 and these are the three. `<agent>-provisioned` is read-only to the container
 and holds what you hand the agent; `<agent>-acquired` is read and write and
@@ -155,7 +172,7 @@ all mean the same thing to it — so `just verify`'s `session login` verdict
 reporting which of the three a session will run on is the only thing that says
 so out loud.
 
-**4. The host tools.** `just verify` names any that are missing, and each
+**5. The host tools.** `just verify` names any that are missing, and each
 one that is absent fails in a way that reads as something else.
 
 | | why, and the version |
@@ -201,7 +218,7 @@ Five values are required, and `.env.example` explains every other one:
   the agent's repository over ssh, and the account's own `users.noreply`
   address, whose numeric id is not a function of the handle.
 - `AGENT_ARCHIVE_REPO`, as `owner/name`.
-- `BWS_ACCESS_TOKEN`, the machine-account token from step 3 — and
+- `BWS_ACCESS_TOKEN`, the machine-account token from step 4 — and
   `BWS_SERVER_URL` if the account is on the EU server, since a token issued
   there is refused by the US default as `invalid_client`, which reads like a
   bad token. Store the Claude setup-token in `<agent>-provisioned` as
@@ -212,7 +229,7 @@ the budget guard and its percentages, the cadences — are commented out in
 `.env.example` beside what each derives to. Read it once. There is no GitHub
 token in this file: git reaches GitHub over ssh, and `gh` is authenticated
 inside the container with `vault gh-login github-token-own-account`, the
-token step 3 stored under that name.
+token step 4 stored under that name.
 
     just pin
 
@@ -376,8 +393,11 @@ the measurements.
 | `just collect` | archive transcripts to the private archive. `--push` publishes, `--held` lists what is held back, `--approve H "why"` archives one as it stands, `--redact H "why"` archives it with the credential rewritten out |
 | `just publish-status` | put the host's half of the status page where a dashboard can read it. `--now` ignores the ten-minute floor |
 | `just sessions` | what the archive holds, newest first — the listing, and nothing else. `--all`, `--day D` |
+| `just credentials` | read when the agent's Claude and GitHub credentials expire, now — `just status` shows the last reading rather than taking a new one, because taking one costs a container start |
 | `just mirror-status` | how the mirror of the agent's memory is doing: the ref, any preserved rewrites, whether the workflow is still enabled, whether it is behind. It only reads |
-| `just setup-archive` | clone the archive, and set up what its mirror workflow runs on. Runs on your own `gh` credential and writes to GitHub; the agent is never told any of it |
+| `just setup-archive` | clone the archive. Runs on your own `gh` credential |
+| `just setup-mirror` | set up what the mirror's workflow runs on, in its own repository — Actions, the read key on the agent's repository, and the two secrets. Runs on your own `gh` credential and writes to GitHub; the agent is never told any of it |
+| `just setup-gh` | set up this host's own access to the mirror: the token it reads and dispatches with, and git's credential helper. On a host that runs the agent it refuses a token that can write the record |
 
 ### monitor
 
@@ -573,7 +593,7 @@ through `vault`, and by shape otherwise. [`docs/vault.md`](docs/vault.md)
       vault.md             the wrapper, its refusals, and where the login comes from
       verify.md            every probe, and the measured failure each exists for
 
-    examples/            what a clone seeds its other two repositories from
+    examples/            what a clone starts its other pieces from
       agent/               the memory's seed
         CLAUDE.md            standing instructions, with the session-start routine
         SELF.md              who the agent is, in a paragraph
@@ -584,8 +604,6 @@ through `vault`, and by shape otherwise. [`docs/vault.md`](docs/vault.md)
         README.md            what each file is for, and what the runner requires
       archive/             the archive's seed, for its `main`
         README.md            the refs, the placeholders, and the secrets
-        .github/workflows/mirror-AGENT.yml
-                             the hourly mirror — rename it to mirror-<agent>.yml
         .github/workflows/check-credentials.yml
                              proves the status page's four secrets, on demand
         scripts/session-meta.jq
@@ -597,6 +615,15 @@ through `vault`, and by shape otherwise. [`docs/vault.md`](docs/vault.md)
           scripts/render.py    the page, as one self-contained HTML file
           worker/index.js      the door: verifies the Access token, serves the key
           worker/wrangler.toml the Worker's own configuration
+      mirror/              the mirror repository's seed — the audit record, in a
+                           repository the machine running the agent cannot write
+        README.md            the refs, the two secrets, and why it is not a branch
+        .github/workflows/mirror-AGENT.yml
+                             the mirror — rename it to mirror-<agent>.yml
+      vps/                 a host to run the agent on, for the installation whose
+                           runner cannot stay on an always-on machine
+        README.md            sizing, the two accounts, and the move, step by step
+        provision.sh         packages, docker, just, the deploy account — run there
 
     image/               everything baked in; the agent may read, never write
       Dockerfile             non-root, no sudo, the pinned base and the pinned Claude Code

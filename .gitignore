@@ -21,6 +21,8 @@ __pycache__/
 /deployed/
 # the archive clone — made by `just setup-archive`, or pointed elsewhere with AGENT_ARCHIVE
 /archive/
+# the mirror's clone — bare and blobless, made by `just setup-mirror`, or pointed elsewhere with AGENT_MIRROR
+/mirror/
 # the drift audit's clone, anchors, reports and log — made by `just drift-audit`, or pointed elsewhere with RUNNER_MONITOR
 /monitor/
 

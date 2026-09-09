@@ -1,23 +1,24 @@
-# Mirror the agent's memory repository into `refs/archive/<agent>` here.
+# Mirror the agent's memory repository into `refs/memory/mirror` here.
 #
 # WHAT IT DOES. Once an hour it fetches the agent's `main` and moves one ref
 # of this repository to it. When the incoming history is not a descendant of
 # what is already held — the agent rewrote its own history — the old tip is
-# pushed to a mark under `refs/archive/rewound/` first, and only then is the
+# pushed to a mark under `refs/memory/rewound/` first, and only then is the
 # ref reset. That is the whole point: a plain mirror loses what a force-push
 # erased, and it loses it silently.
 #
-# WHAT IT NEEDS. Two secrets on this repository, both set by
-# `just setup-archive` in the runner:
+# WHAT IT NEEDS. Two secrets on this repository, installed from the runner —
+# README.md beside this file names what does it, and is the copy that stays
+# current when that recipe changes:
 #
 #   REPLACE_WITH_PREFIX_SOURCE_KEY    a read-only deploy key on the agent's
 #                                     repository — this fetches with it
-#   REPLACE_WITH_PREFIX_ARCHIVE_TOKEN a fine-grained PAT on THIS repository,
+#   REPLACE_WITH_PREFIX_MIRROR_TOKEN a fine-grained PAT on THIS repository,
 #                                     Contents and Workflows, read and write
 #
 # BEFORE IT WILL RUN. Rename this file to `mirror-<agent>.yml`, where
-# `<agent>` is `AGENT_USER` — the runner's `just mirror-status` and
-# `just setup-archive` both look for that name — and replace every
+# `<agent>` is `AGENT_USER` — the runner's `just mirror-status` and its setup
+# both look for that name — and replace every
 # `REPLACE_WITH_` below. A leftover placeholder is visible in a diff and
 # fails loudly; a plausible wrong value is neither.
 #
@@ -27,21 +28,27 @@
 name: mirror-REPLACE_WITH_AGENT
 
 on:
-  # Hourly, at :19. This is the fidelity knob and the only one: a rewrite
-  # upstream can only be preserved back to the last run, so a commit that
-  # appeared and was rewritten away inside the same hour was never seen and
-  # is gone. Raise the frequency to narrow that window.
+  # Daily, at 04:19 UTC, and this is a backstop rather than the mechanism: the
+  # runner asks for a run at the end of every session — host/archive/
+  # dispatch-mirror.sh — and that is what keeps the mirror current. The floor
+  # exists for the day dispatch stops: a runner that is off, a token that
+  # expired, a workflow somebody disabled. Without it a mirror that stopped
+  # being asked stops forever, silently; with it the gap `just mirror-status`
+  # reports is bounded by a day.
   #
-  # GitHub runs schedules on a best-effort basis and drops them under load,
-  # so the window is about an hour and never exactly one. The runner asks for
-  # a run at the end of every session for that reason — see
-  # host/archive/dispatch-mirror.sh — which is what workflow_dispatch is for.
+  # A rewrite upstream can only be preserved back to the last run, so what the
+  # fidelity window really is depends on the dispatch, not on this line.
+  #
+  # An odd minute and an unpopular hour on purpose: GitHub runs schedules on a
+  # best-effort basis and drops them under load, which is worst on the hour.
   #
   # Scheduled workflows run only from the default branch, and GitHub disables
-  # them after 60 days with no repository activity — a collection push
-  # counts, so `just collect --push` keeps this alive.
+  # them after 60 days with no repository activity. Nothing but this workflow
+  # writes here, and whether its own pushes count has not been measured — if
+  # they do not, the schedule switches itself off one day and
+  # `just mirror-status` is what says so.
   schedule:
-    - cron: '19 * * * *'
+    - cron: '19 4 * * *'
   workflow_dispatch:
 
 permissions:
@@ -64,7 +71,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${KEY:-}" ]; then
-            echo "::error::secret REPLACE_WITH_PREFIX_SOURCE_KEY is not set — run 'just setup-archive'"
+            echo "::error::secret REPLACE_WITH_PREFIX_SOURCE_KEY is not set — see README.md in this repository"
             exit 1
           fi
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
@@ -72,7 +79,7 @@ jobs:
           chmod 600 ~/.ssh/source_key
           ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Mirror the agent's main into refs/archive/REPLACE_WITH_AGENT
+      - name: Mirror the agent's main into refs/memory/mirror
         id: mirror
         env:
           # NOT secrets.GITHUB_TOKEN, and this cannot go back to it. An
@@ -83,13 +90,13 @@ jobs:
           # to its own repository, every mirror run fails from that moment. A
           # fine-grained PAT with Contents and Workflows, scoped to this
           # repository alone, is the only thing that can carry it.
-          GITHUB_TOKEN: ${{ secrets.REPLACE_WITH_PREFIX_ARCHIVE_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.REPLACE_WITH_PREFIX_MIRROR_TOKEN }}
           SOURCE_URL: git@github.com:REPLACE_WITH_SOURCE_REPO.git
           SOURCE_BRANCH: main
           # A ref, and DELIBERATELY NOT A BRANCH. See the comment on the push
           # below: this is what stops a workflow the agent wrote from ever
           # executing in the operator's repository.
-          TARGET_REF: refs/archive/REPLACE_WITH_AGENT
+          TARGET_REF: refs/memory/mirror
         run: |
           set -euo pipefail
 
@@ -108,14 +115,14 @@ jobs:
 
           git remote add source "$SOURCE_URL"
           # The token is a masked secret, so it does not survive into the log.
-          git remote add archive "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git remote add target "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
           # Refs outside refs/heads/: no name can be read as a branch or
           # collide with the remotes' own names. --no-tags because the
           # source's tags are the agent's, and this namespace is the
           # operator's.
-          git fetch -q --no-tags source "+refs/heads/${SOURCE_BRANCH}:refs/mirror/source"
-          new=$(git rev-parse refs/mirror/source)
+          git fetch -q --no-tags source "+refs/heads/${SOURCE_BRANCH}:refs/work/source"
+          new=$(git rev-parse refs/work/source)
 
           # WHY EVERY REF BELOW IS OUTSIDE refs/heads/* AND refs/tags/*.
           #
@@ -136,7 +143,7 @@ jobs:
           # it holds whatever the agent writes next.
           #
           # THE REWIND MARK BELOW IS THE SAME HAZARD: a tag push triggers
-          # workflows too, so the marker is a ref under refs/archive/rewound/
+          # workflows too, so the marker is a ref under refs/memory/rewound/
           # rather than an annotated tag. It still holds the objects; it is
           # simply no longer executable.
           #
@@ -147,10 +154,10 @@ jobs:
           # ls-remote exits 0 with empty output when the ref is absent, so a
           # non-zero exit here is a real failure and must not be read as
           # "first run".
-          old=$(git ls-remote archive "$TARGET_REF" | cut -f1)
+          old=$(git ls-remote target "$TARGET_REF" | cut -f1)
 
           if [ -z "$old" ]; then
-            git push -q archive "refs/mirror/source:${TARGET_REF}"
+            git push -q target "refs/work/source:${TARGET_REF}"
             say "Created \`${TARGET_REF}\` at \`${new}\`."
             exit 0
           fi
@@ -160,10 +167,10 @@ jobs:
             exit 0
           fi
 
-          git fetch -q --no-tags archive "+${TARGET_REF}:refs/mirror/archive"
+          git fetch -q --no-tags target "+${TARGET_REF}:refs/work/target"
 
-          if git merge-base --is-ancestor refs/mirror/archive refs/mirror/source; then
-            git push -q archive "refs/mirror/source:${TARGET_REF}"
+          if git merge-base --is-ancestor refs/work/target refs/work/source; then
+            git push -q target "refs/work/source:${TARGET_REF}"
             say "Fast-forwarded \`${TARGET_REF}\`: \`${old}\` → \`${new}\`."
             exit 0
           fi
@@ -176,14 +183,14 @@ jobs:
           # live in refs/tags/ to be useful as a tag, and that is a namespace
           # that triggers workflows. What was wanted from it was a name and a
           # reason, and the reason moves to the summary and the warning below.
-          mark="refs/archive/rewound/$(date -u +%Y%m%dT%H%M%SZ)"
-          git push -q archive "refs/mirror/archive:${mark}"
+          mark="refs/memory/rewound/$(date -u +%Y%m%dT%H%M%SZ)"
+          git push -q target "refs/work/target:${mark}"
 
           # The lease is what makes the force safe: if anything moved the ref
           # since the ls-remote above, this refuses instead of overwriting a
           # tip that was never marked.
-          git push -q archive --force-with-lease="${TARGET_REF}:${old}" \
-            "refs/mirror/source:${TARGET_REF}"
+          git push -q target --force-with-lease="${TARGET_REF}:${old}" \
+            "refs/work/source:${TARGET_REF}"
 
           echo "::warning::upstream history was rewritten — old tip $old preserved at $mark"
           say "**Upstream history was rewritten.** Old tip \`${old}\` preserved at \`${mark}\`; \`${TARGET_REF}\` reset to \`${new}\`."

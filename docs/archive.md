@@ -20,9 +20,11 @@ the machine's own judgement.
 | --- | --- |
 | `AGENT_ARCHIVE_REPO` | `owner/name` of the archive. Nothing can derive it — the archive is usually not the agent's own account — and without it `collect`, `read`, `sessions` and `mirror-status` say so rather than guessing |
 | `AGENT_ARCHIVE` | where that clone sits. `archive/` inside this checkout unless set, gitignored, made by `just setup-archive`; a relative value counts from the checkout, not from where `just` ran |
-| `AGENT_ARCHIVE_WORKFLOW` | the mirror workflow's file name **in the archive**. `mirror-<agent>.yml` unless set; nothing here renames that file |
-| `AGENT_ARCHIVE_MIRROR_COOLDOWN` | minutes before a session may ask the mirror to run again. Unset or unreadable means every session asks — a cost knob, where the direction with no undo is a mirror that did not run |
-| `just setup-archive` | once: clone the archive and write the two secrets its mirror workflow runs on, on your own `gh` credential. The agent is told none of it |
+| `AGENT_MIRROR_WORKFLOW` | the mirror workflow's file name **in the mirror's repository**. `mirror-<agent>.yml` unless set; nothing here renames that file |
+| `AGENT_MIRROR_COOLDOWN` | minutes before a session may ask the mirror to run again. Unset or unreadable means every session asks — a cost knob, where the direction with no undo is a mirror that did not run |
+| `just setup-archive` | once: clone the archive, on your own `gh` credential |
+| `just setup-mirror` | once: write the two secrets the mirror's workflow runs on, in its own repository. The agent is told none of it |
+| `just setup-gh` | once per host: the token that host reads the mirror and asks for a run with, and git's helper. On a host that runs the agent it proves the token cannot write the record |
 | `just collect` | read the transcripts out of the volume, put them through the gate, commit what passes. `--push` publishes, `--held` lists what is held back, `--approve <hash> "why"` archives one as it stands, `--redact <hash> "why"` archives it with the credential rewritten out |
 | `just sessions` | what the archive holds, newest first. `--all`, `--day D` |
 | `just read <n>` | one row of that listing, whole |
@@ -1555,7 +1557,7 @@ agent with nothing to say.
 `gh` writes an error body to *stdout*, so `2>/dev/null` hides only half of a failure and the other half is
 captured as if it were the answer. The exit status is the only thing worth testing.
 
-The mirror is scheduled hourly and GitHub drops scheduled runs under load, so a missed hour is normal and six
+The mirror is asked to run at every session end and scheduled daily behind that, and GitHub drops scheduled runs under load, so a missed one is normal and six
 in a row is not: past that runs are being skipped or failing, whatever the last conclusion was.
 
 ### A reading that failed is not a judgement
@@ -1637,7 +1639,7 @@ which is the script's own line with more words.
 ### Late, and merely due
 
 **The mirror is not on a clock, so "overdue" is not a fault by itself.** What runs it is a session ending
-more than `AGENT_ARCHIVE_MIRROR_COOLDOWN` minutes after the last run; the schedule fires when GitHub feels
+more than `AGENT_MIRROR_COOLDOWN` minutes after the last run; the schedule fires when GitHub feels
 like it — two of the last twelve runs on 2026-09-07 were `schedule`, the rest `workflow_dispatch`. So a run
 that is due and has not happened is usually a machine with nothing to say, and calling that a broken backup
 is how a real alarm stops being believed.
@@ -1748,3 +1750,27 @@ which is why it is step 2 of "Left to do".
 No apostrophe may appear in a `${var:?word}` message. Inside `${var:?word}` bash opens a single quote even within
 double quotes, and the script then fails to parse at its last line with an error naming neither the line nor the
 quote. `setup.sh`, `dispatch-mirror.sh` and the messages beside them are written that way.
+
+## `gh api` prints its errors on stdout
+
+`thing=$(gh api … 2>/dev/null || echo fallback)` does not do what it reads like:
+`gh api` writes the JSON error body to **stdout** and only the one-line summary
+to stderr, so on a 403 the substitution keeps
+`{"message":"Resource not accessible…"}fallback` — a string equal to neither the
+value nor the fallback, and every comparison against it falls through.
+
+Measured 2026-09-09: `setup-mirror` was given a step it should tolerate failing,
+written that way, and on a host whose token cannot read a repository's Actions
+settings it fell past the check into the write, which 403'd and ended the run
+under `set -e`. The read it was told to tolerate became the failure.
+
+Branch on the exit status instead, and let the output go where it goes:
+
+    if value=$(gh api … --jq .field 2>/dev/null); then
+        …
+    else
+        … could not read it …
+    fi
+
+`git` and `date` do not share this — they put errors on stderr — which is why
+`2>/dev/null || echo` is right beside them and wrong here.

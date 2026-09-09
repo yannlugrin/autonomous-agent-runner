@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# Go live — set the deployed checkout to HEAD and build the image from it.
+# Go live — set the deployed checkout to HEAD, and put the image beside it.
 #
 # Runs on the host. Two declared flags arrive as environment variables: diff,
 # state.
+#
+# One recipe, two halves, decided by RUNNER_DEPLOY_HOST. Empty: the agent runs
+# here, the image is built from the deployed checkout, and this is what it has
+# always been. Set: the agent runs elsewhere, and this half builds, proves,
+# ships and pushes before handing the question and the tag flip to that host —
+# where the same recipe runs the other half. see docs/release.md#build-here-run-there
 #
 # shellcheck disable=SC2154  # the recipe's declared arguments reach this
 # script as exported environment variables, which shellcheck cannot see; a
@@ -12,9 +18,32 @@ set -uo pipefail
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
 # shellcheck source=SCRIPTDIR/../lib/config-files.sh
 . host/lib/config-files.sh
+# shellcheck source=SCRIPTDIR/../lib/deploy-host.sh
+. host/lib/deploy-host.sh
 
 here="$RUNNER_ROOT"
 target="$RUNNER_DEPLOYED"
+
+# The branch the deployed checkout holds.
+#
+# On the machine that deploys it is named after the directory rather than fixed:
+# a second deployed checkout for testing — RUNNER_DEPLOYED pointed elsewhere —
+# must be a second branch, because git refuses to check one branch out in two
+# worktrees.
+#
+# On the machine that runs the agent it is always `deployed`, because that is
+# the name it is sent under: the push spells `+"$ref":refs/heads/deployed` and
+# `land` reads that name. Deriving it there would give the checkout's own
+# basename, and `deploy --state` — which `just status` asks for over ssh — would
+# look for a ref that does not exist and report nothing as live.
+# see docs/release.md#the-branch-follows-the-directory
+
+if [ "${RUNNER_RUNTIME_ONLY:-}" = true ]; then
+    branch=deployed
+else
+    branch=$(basename "$target")
+fi
+ref="refs/heads/$branch"
 candidate="$RUNNER_IMAGE_CANDIDATE"
 deployed="$RUNNER_IMAGE_DEPLOYED"
 
@@ -31,17 +60,46 @@ baked() {
 }
 
 
+# --- the reads belong to whoever is live ---
+# `--state` and `--diff` describe what is running, and when that is another
+# machine every field below would be this one's answer to a question about it —
+# a wrong answer in the shape of a right one, and `just status` draws a page
+# from it. Before the state is computed, so none of it can be printed by
+# accident. see docs/release.md#build-here-run-there
+
+if deploying_elsewhere && { [ "$state" = yes ] || [ "$diff" = yes ]; }; then
+    # A host with no checkout yet cannot answer, and forwarding into one would
+    # answer with a shell's `cd` error — which `just status` would draw as the
+    # deployment's state. Said in the state vocabulary instead, so a reader gets
+    # a field and not a stack of somebody else's stderr.
+    if [ "$(host_checkout_state)" != ready ]; then
+        if [ "$state" = yes ]; then
+            echo "worktree: absent"
+            for f in deployed head ahead dropped image_candidate image_deployed deployed_at; do
+                echo "$f: -"
+            done
+        else
+            echo "Nothing is deployed on $RUNNER_DEPLOY_HOST yet: 'just deploy' creates it."
+        fi
+        exit 0
+    fi
+    [ "$state" = yes ] && exec_flag=--state || exec_flag=--diff
+    host_just_read deploy "$exec_flag"
+    exit $?
+fi
+
+
 # --- what is live, as fields ---
 # `status` and status-collect.py read these rather than asking git and docker
 # themselves: the branch name, the tag names and the path are decided here, once.
 
 if [ -e "$target/.git" ]; then wt=present; else wt=absent; fi
 head_sha=$(git -C "$here" rev-parse --short HEAD 2>/dev/null || echo "")
-dep_sha=$(git -C "$here" rev-parse --short refs/heads/deployed 2>/dev/null || echo "")
+dep_sha=$(git -C "$here" rev-parse --short "$ref" 2>/dev/null || echo "")
 ahead=""
 dropped=""
-[ -n "$dep_sha" ] && ahead=$(git -C "$here" rev-list --count refs/heads/deployed..HEAD 2>/dev/null || echo "")
-[ -n "$dep_sha" ] && dropped=$(git -C "$here" rev-list --count HEAD..refs/heads/deployed 2>/dev/null || echo "")
+[ -n "$dep_sha" ] && ahead=$(git -C "$here" rev-list --count "$ref"..HEAD 2>/dev/null || echo "")
+[ -n "$dep_sha" ] && dropped=$(git -C "$here" rev-list --count HEAD.."$ref" 2>/dev/null || echo "")
 cid=$(image_id "$candidate"); did=$(image_id "$deployed")
 
 if [ "$state" = yes ]; then
@@ -63,15 +121,15 @@ if [ "$state" = yes ]; then
     # needs no stamp of its own. The image's own `Created` is not this — a
     # build whose layers all cache keeps the date of the one it reused, which
     # read 23 hours old for a deploy 35 minutes old.
-    echo "deployed_at: $(git -C "$here" reflog show --date=unix --format='%gd' refs/heads/deployed 2>/dev/null \
+    echo "deployed_at: $(git -C "$here" reflog show --date=unix --format='%gd' "$ref" 2>/dev/null \
         | head -1 | sed -E 's/^.*\{([0-9]+)\}$/\1/')"
     # `commit:` repeated rather than a `git log` block pasted in: this output is
     # parsed twice, and a subject beginning `word: ` would enter either reader as
     # a field of its own. see docs/release.md#--state-is-parsed-twice
     [ "${ahead:-0}" -gt 0 ] \
-        && git -C "$here" log --oneline refs/heads/deployed..HEAD | sed 's/^/commit: /'
+        && git -C "$here" log --oneline "$ref"..HEAD | sed 's/^/commit: /'
     [ "${dropped:-0}" -gt 0 ] \
-        && git -C "$here" log --oneline HEAD..refs/heads/deployed | sed 's/^/dropped_commit: /'
+        && git -C "$here" log --oneline HEAD.."$ref" | sed 's/^/dropped_commit: /'
     exit 0
 fi
 
@@ -130,7 +188,7 @@ if [ "$diff" = yes ]; then
     if [ -z "$dep_sha" ]; then
         echo "No deployed branch yet: every committed file here would be new."
     else
-        git -C "$here" diff refs/heads/deployed HEAD
+        git -C "$here" diff "$ref" HEAD
     fi
     exit 0
 fi
@@ -144,6 +202,29 @@ fi
 # shows it. Above the terminal check, because it is true whether or not anyone
 # is there to be asked.
 # see docs/release.md#the-one-refusal-and-what-it-does-not-cover
+
+# --- and the machine that only runs ---
+# A deploy the runtime host originates would build its own image from its own
+# checkout, and the pair that goes live would be one nobody proved. Invoked BY
+# the deploying machine it carries RUNNER_SHIPPED_ID, which is what tells the
+# two apart. A guard against a hand on the wrong terminal, not a boundary: the
+# file it reads is editable by anyone who can type there at all.
+# see docs/release.md#the-runtime-host-originates-nothing
+
+if [ "${RUNNER_RUNTIME_ONLY:-}" = true ] && [ -z "${RUNNER_SHIPPED_ID:-}" ]; then
+    echo "This machine runs the agent; it is not where a release starts." >&2
+    echo "Deploy from the machine the code is edited on — it builds, proves, ships" >&2
+    echo "and then runs this recipe here with the image it sent." >&2
+    exit 1
+fi
+
+# The far side's path is checked here, before anything is done, rather than
+# half-way through: a character it will not send through a shell is a refusal
+# and not a surprise.
+dir=""
+if deploying_elsewhere; then
+    dir=$(deploy_dir_checked) || exit 1
+fi
 
 uncommitted=$(git -C "$here" status --porcelain)
 if [ -n "$uncommitted" ]; then
@@ -174,21 +255,32 @@ else
     if [ "${ahead:-0}" -eq 0 ]; then
         echo "  (none — deployed is already at $head_sha)"
     else
-        git -C "$here" log --oneline refs/heads/deployed..HEAD | sed 's/^/  /'
+        git -C "$here" log --oneline "$ref"..HEAD | sed 's/^/  /'
     fi
     # An environment is set to a commit, never merged toward one, so a deployed
     # branch that has wandered is not a refusal: the question names it and the
     # reset discards it. see docs/release.md#reset-not-merge
     if [ "${dropped:-0}" -gt 0 ]; then
         echo "Currently live and NOT in HEAD — dropped by this deploy:"
-        git -C "$here" log --oneline HEAD..refs/heads/deployed | sed 's/^/  /'
+        git -C "$here" log --oneline HEAD.."$ref" | sed 's/^/  /'
     fi
 fi
 
-# The image is built, not retagged: a retag ships a checkout at HEAD beside an
-# image built days earlier from different files, and nothing can say so.
-# see docs/release.md#deploy-builds-and-does-not-retag
-echo "Image: rebuilt from $target at $head_sha, replacing ${did:-(no deployed tag yet)}."
+if deploying_elsewhere; then
+    # What changes here, and what changes there. The image live on THIS machine
+    # is not touched: the build tags the candidate, and only the far side's tag
+    # is flipped. What does move here is $target and the `deployed` branch,
+    # because they are the build context and the ref that is pushed.
+    echo "Here: $target and $ref move to $head_sha, and the image is"
+    echo "built there as the candidate. The deployed image here is left alone."
+    echo "On $RUNNER_DEPLOY_HOST:$dir: the branch and the proved image cross, that"
+    echo "host's schedule is held, its tree moves and its tag flips."
+else
+    # The image is built, not retagged: a retag ships a checkout at HEAD beside
+    # an image built days earlier from different files, and nothing can say so.
+    # see docs/release.md#deploy-builds-and-does-not-retag
+    echo "Image: rebuilt from $target at $head_sha, replacing ${did:-(no deployed tag yet)}."
+fi
 env_diff
 config_diff
 
@@ -196,24 +288,30 @@ config_diff
 # is named here: pausing prevents only the next one.
 # see docs/release.md#the-schedule-is-held-for-the-duration
 sched=$(just schedule --state 2>/dev/null | sed -n 's/^state: //p')
-source host/lib/session-lock.sh
-running=$(session_container)
-[ -n "$running" ] && echo "A session is running now ($running); it finishes on the old scripts, and the next one starts on the new."
-[ "$sched" = enabled ] && echo "The schedule is enabled: it is paused for the deploy, and enabled again only if the deploy succeeds."
+if ! deploying_elsewhere; then
+    source host/lib/session-lock.sh
+    running=$(session_container)
+    [ -n "$running" ] && echo "A session is running now ($running); it finishes on the old scripts, and the next one starts on the new."
+    [ "$sched" = enabled ] && echo "The schedule is enabled: it is paused for the deploy, and enabled again only if the deploy succeeds."
+fi
 
 printf 'Deploy? [y/N] '
 read -r reply
 case "$reply" in [yY]*) ;; *) echo "Nothing deployed."; exit 75 ;; esac
 
-
 # --- the schedule, held for the duration ---
-# Paused after the yes, and enabled again only when everything below succeeded.
-# A session started on a half-deployed pair is what this recipe exists to
-# prevent, so a failure leaves the schedule paused and says so on every exit
-# path. see docs/release.md#the-schedule-is-held-for-the-duration
+# The schedule of the machine being deployed TO, and only that one: paused after
+# the yes, enabled again only when everything below succeeded. A session started
+# on a half-deployed pair is what this recipe exists to prevent, so a failure
+# leaves it paused and says so on every exit path.
+#
+# When the agent runs elsewhere this machine is not the one being deployed to —
+# nothing live here is touched — and `land` holds the far side's for its own
+# work. Pausing here would stop the agent for a build, a verify and a 1.2 GB
+# upload, and buy nothing. see docs/release.md#the-schedule-is-held-for-the-duration
 
 resume=no
-if [ "$sched" = enabled ]; then
+if [ "$sched" = enabled ] && ! deploying_elsewhere; then
     just schedule --pause >/dev/null || { echo "Could not pause the schedule; nothing deployed." >&2; exit 1; }
     resume=yes
 fi
@@ -235,9 +333,14 @@ trap finish EXIT
 # ignored, which is where `.env` lives. see docs/release.md#reset-not-merge
 
 if [ "$wt" = absent ]; then
-    # `-B` and not `-b`: a `deployed` branch left behind by a removed worktree
-    # is reused and moved here, rather than refused.
-    git -C "$here" worktree add -B deployed "$target" HEAD >/dev/null || {
+    # A checkout deleted by hand leaves its registration behind, and git then
+    # refuses `-B` with "already used by worktree at" the path that is gone —
+    # nothing here is lost, so a missing directory repairs rather than fails.
+    # see docs/release.md#a-deleted-checkout-repairs-itself
+    git -C "$here" worktree prune
+    # `-B` and not `-b`: a branch of that name left behind by a removed
+    # worktree is reused and moved here, rather than refused.
+    git -C "$here" worktree add -B "$branch" "$target" HEAD >/dev/null || {
         echo "Could not create the deployed checkout; no image was built." >&2; exit 1; }
 else
     # A && B || C is what is meant here: either failing is the same refusal.
@@ -246,6 +349,28 @@ else
         && git -C "$target" clean -fdq || {
         echo "The reset failed; no image was built." >&2; exit 1; }
 fi
+
+# --- the branch, published ---
+# `deployed` moved a line above, and until now it lived on this machine and on
+# the host that runs the agent — neither of which is a place the record can be
+# read back from. Here rather than at the end, so the commit reaches origin
+# BEFORE anything starts running it, on both paths: the local one goes live at
+# `build --deployed` just below, the remote one at `land`. Origin then says what
+# this branch says at every instant, including while a deploy is failing.
+#
+# Under its own name, and not renamed to `deployed` the way the host push is:
+# that push delivers a branch into a repository whose only job is to hold one,
+# this one publishes what this machine actually has. A second deployed checkout
+# for testing then publishes its own branch instead of overwriting the record of
+# what is live. `+` because a deploy that drops commits moves the branch
+# backwards, and nothing else writes this ref.
+#
+# Not fatal, like the config backup at the end: a deploy that is built, proved
+# and shipped does not stop because a network did.
+# see docs/release.md#the-deployed-branch-is-published
+
+git -C "$here" push --quiet origin +"$ref":"$ref" \
+    || echo "BRANCH_NOT_PUBLISHED — $branch did not reach origin; the deploy goes on. Retry with 'git push origin +$branch:$branch'." >&2
 
 # `.env` is gitignored, so the reset above never touches it, and compose and
 # `just` both read it from the directory they run in. --remove-destination,
@@ -264,17 +389,146 @@ for name in "${CONFIG_FILES[@]}"; do
         echo "Could not copy image/config/$name; the checkout moved and the image did not." >&2; exit 1; }
 done
 
-# After the reset and after the `.env` copy, because both are inputs: the
-# context is $target/image, and AGENT_USER, AGENT_HOME and AGENT_REPO_DIR are
-# derived from $target/.env and baked in. Through `just` in that checkout and
-# not `docker compose` here, because compose cannot derive AGENT_USER from
-# AGENT_NAME and a second derivation spelled here is the copy that drifts.
+# The image. Built here from the checkout that just moved, unless one was
+# shipped from the machine that builds — in which case it is checked instead,
+# and the check is what replaces the guarantee building gave.
+#
+# Building from $target is what made the live code and the live image one thing
+# rather than two that have to agree: the context is $target/image, and
+# AGENT_USER, AGENT_HOME and AGENT_REPO_DIR are derived from $target/.env and
+# baked in. Through `just` in that checkout and not `docker compose` here,
+# because compose cannot derive AGENT_USER from AGENT_NAME and a second
+# derivation spelled here is the copy that drifts.
 #
 # A failure here leaves the checkout moved and the image old: the schedule stays
 # paused, and nothing starts on the pair until someone has looked.
 # see docs/release.md#deploy-builds-and-does-not-retag
-( cd "$target" && just build --deployed ) || {
-    echo "The build failed; the checkout moved to $head_sha and the image did not." >&2; exit 1; }
+
+if deploying_elsewhere; then
+    # Onto the candidate, which is what this is: built from $target and about to
+    # be proved. The deployed tag here is NOT moved — the agent does not run on
+    # this machine, and a deploy to another one has no business replacing the
+    # image this one would start. see docs/release.md#the-tag-flip-is-the-deploy
+    ( cd "$target" && just build ) || {
+        echo "The build failed; the checkout moved to $head_sha and nothing was sent." >&2; exit 1; }
+else
+    ( cd "$target" && just build --deployed ) || {
+        echo "The build failed; the checkout moved to $head_sha and the image did not." >&2; exit 1; }
+fi
+
+if deploying_elsewhere; then
+    # --- proved, then sent ---
+    # Verify runs on the image just built from $target, which is the image that
+    # will ship — not on a candidate built from the working tree at some earlier
+    # moment. That is the whole gain of building here first: there is no window
+    # in which the tree moves between what was proved and what goes live.
+    # see docs/release.md#build-here-run-there
+    just verify || {
+        echo "Verify failed on the image built from $target; nothing was sent." >&2
+        echo "The checkout here moved to $head_sha and nothing is live anywhere else." >&2
+        exit 1; }
+
+    # Renamed for the journey. The tag travels with the image, so sending it
+    # under its live name would make it live on arrival, ahead of every check.
+    # see docs/release.md#the-tag-flip-is-the-deploy
+    docker tag "$candidate" "$RUNNER_IMAGE_INCOMING" || {
+        echo "Could not tag the image for shipping; nothing was sent." >&2; exit 1; }
+
+    # The checkout over there: made when it is absent, and never guessed at.
+    case "$(host_checkout_state)" in
+        ready) ;;
+        absent)
+            echo "Creating the checkout at $RUNNER_DEPLOY_HOST:$dir."
+            host_checkout_create || { echo "Could not create it; nothing was sent." >&2; exit 1; } ;;
+        occupied)
+            echo "$RUNNER_DEPLOY_HOST:$dir exists and is not a git repository." >&2
+            echo "Nothing here guesses at a directory it did not make: move it, or point" >&2
+            echo "RUNNER_DEPLOY_DIR at another one." >&2
+            exit 1 ;;
+        "")
+            echo "$RUNNER_DEPLOY_HOST answered nothing when asked about $dir." >&2
+            echo "Nothing was sent." >&2
+            exit 1 ;;
+        *)
+            echo "Asked about $dir on $RUNNER_DEPLOY_HOST and got: $(host_checkout_state)" >&2
+            echo "That is not a state this knows. Nothing was sent." >&2
+            exit 1 ;;
+    esac
+
+    # The remote: added when it is absent, and never repointed. Silently moving
+    # a remote somebody set by hand is not something this repository does.
+    want_url=$(host_remote_url) || exit 1
+    have_url=$(git -C "$here" remote get-url "$HOST_REMOTE" 2>/dev/null || true)
+    if [ -z "$have_url" ]; then
+        git -C "$here" remote add "$HOST_REMOTE" "$want_url" || exit 1
+        echo "Added the git remote '$HOST_REMOTE' -> $want_url."
+    elif [ "$have_url" != "$want_url" ]; then
+        echo "The git remote '$HOST_REMOTE' points somewhere else:" >&2
+        echo "  it names:  $have_url" >&2
+        echo "  .env says: $want_url" >&2
+        exit 1
+    fi
+
+    # `+` because a deploy that drops commits moves the branch backwards, which
+    # `--state` already counts as `dropped`. Nothing over there commits, so
+    # there is no work on that ref to lose.
+    git -C "$here" push --quiet "$HOST_REMOTE" +"$ref":refs/heads/deployed || {
+        echo "The branch did not reach $RUNNER_DEPLOY_HOST; nothing else was sent." >&2; exit 1; }
+    echo "Pushed $branch as refs/heads/deployed at $head_sha to $RUNNER_DEPLOY_HOST:$dir."
+
+    # A first push lands in a repository with no working tree, so `just land`
+    # has no justfile to be run from. Nothing is live there to protect yet.
+    host_checkout_populate || {
+        echo "Could not check the first tree out at $RUNNER_DEPLOY_HOST:$dir." >&2; exit 1; }
+
+    # `.env` and the three untracked files, the copy made into $target just
+    # above, one machine further. RUNNER_DEPLOY_* are dropped and
+    # RUNNER_RUNTIME_ONLY added: they say where the agent runs and where a
+    # release starts, and both answers are different over there.
+    remote_path=$(host_checkout_path)
+    [ -n "$remote_path" ] || {
+        echo "Could not resolve $RUNNER_DEPLOY_DIR on $RUNNER_DEPLOY_HOST." >&2; exit 1; }
+
+    { grep -v '^[[:space:]]*RUNNER_\(DEPLOYED\|DEPLOY_HOST\|DEPLOY_DIR\|RUNTIME_ONLY\)=' "$target/.env"
+      # It runs the agent and is not where a release starts. Rewritten every
+      # deploy, so it cannot be lost by editing the file it lives in.
+      echo 'RUNNER_RUNTIME_ONLY=true'
+      # There, the checkout IS the deployed checkout. Absolute, because the
+      # justfile decides RUNNER_IS_DEPLOYED by comparing its own directory to
+      # this value, and a relative one is resolved from the project root and can
+      # never equal it — leaving every live recipe forwarding into a directory
+      # that does not exist. This machine's own value is filtered out above: it
+      # names a worktree that exists only here.
+      # see docs/release.md#the-runtime-host-is-its-own-deployed-checkout
+      echo "RUNNER_DEPLOYED=$remote_path"
+    } | host_ssh "cat > '$dir/.env'" \
+        || { echo "Could not copy .env; nothing else was sent." >&2; exit 1; }
+
+    # `mkdir -p` because the directory is not there yet: the push moved a ref
+    # into a repository whose HEAD is unborn on a first deploy, so no working
+    # tree exists until `land` checks one out. These three are gitignored, so
+    # `land`'s `clean -fd` leaves them where this puts them.
+    for name in "${CONFIG_FILES[@]}"; do
+        [ -e "$target/image/config/$name" ] || continue
+        host_ssh "mkdir -p '$dir/image/config' && cat > '$dir/image/config/$name'" \
+            < "$target/image/config/$name" \
+            || { echo "Could not copy image/config/$name." >&2; exit 1; }
+    done
+
+    host/release/ship.sh "$RUNNER_IMAGE_INCOMING" || exit 1
+
+    # Nothing above has changed what runs over there: a ref arrived that no
+    # working tree follows, and an image arrived under a name nothing starts.
+    # `land` is what pauses that host's schedule, moves its tree, checks the
+    # pair and flips the tag. see docs/release.md#the-tag-flip-is-the-deploy
+    export RUNNER_SHIPPED_ID
+    RUNNER_SHIPPED_ID=$(docker images -q --no-trunc "$RUNNER_IMAGE_INCOMING" | head -1)
+    host_just land || {
+        echo "The image and the branch are on $RUNNER_DEPLOY_HOST and nothing went live there." >&2
+        echo "Its schedule is left as 'just land' left it — the lines above say what happened." >&2
+        exit 1; }
+    exit 0
+fi
 
 # The candidate follows the live image: `just verify` proves the candidate, and
 # a verify reporting on an image older than the one running is a quiet wrong

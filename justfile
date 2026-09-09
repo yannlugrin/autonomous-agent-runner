@@ -136,6 +136,7 @@ export RUNNER_SNAPSHOT_LOCK := env_var_or_default("RUNNER_SNAPSHOT_LOCK", "/tmp"
 # see docs/vault.md#when-a-credential-expires
 export RUNNER_CREDENTIALS := env_var_or_default("RUNNER_CREDENTIALS", runner_cache / "credentials")
 
+
 # What `deploy` takes before it writes the archive's `config` branch, for the
 # reason the snapshot lock exists: two writers racing between reading that
 # branch and pushing over it.
@@ -187,6 +188,13 @@ export RUNNER_ROOT := root
 archive_setting := env_var_or_default("AGENT_ARCHIVE", "")
 export AGENT_ARCHIVE := if archive_setting == "" { root / "archive" } else if archive_setting =~ '^/' { archive_setting } else { root / archive_setting }
 
+# The mirror's own clone, beside the archive's and for the same reason: `just
+# mirror-status` reads commit metadata, and reading it from a clone rather than
+# over the API keeps one answer whichever machine asks. Bare and blobless, so it
+# is megabytes and not the whole memory. see docs/monitor.md#the-mirror-is-not-in-the-archive
+mirror_setting := env_var_or_default("AGENT_MIRROR", "")
+export AGENT_MIRROR := if mirror_setting == "" { root / "mirror" } else if mirror_setting =~ '^/' { mirror_setting } else { root / mirror_setting }
+
 # Where the deployed checkout is — the one cron runs `just run` from. A git
 # worktree of the `deployed` branch, inside this project, gitignored, and moved
 # only by `just deploy`. It exists because cron reads whatever tree it is
@@ -219,6 +227,28 @@ export RUNNER_IS_DEPLOYED := if justfile_directory() == RUNNER_DEPLOYED { "yes" 
 # see docs/release.md
 export RUNNER_IMAGE_CANDIDATE := agent_user + "-agent:candidate"
 export RUNNER_IMAGE_DEPLOYED := agent_user + "-agent:deployed"
+
+# The name an image travels under. The tag goes with the image through
+# `docker save`, so sending one under its live name would make it live on
+# arrival, ahead of every check: `land` renames it after the checks, and that
+# rename is the deploy. see docs/release.md#the-tag-flip-is-the-deploy
+export RUNNER_IMAGE_INCOMING := agent_user + "-agent:incoming"
+
+# Where the agent actually runs, when that is not this machine. Empty is this
+# machine, which is what a clone gets and what every recipe did before these
+# existed. The ssh target and the path are two values because the deploy needs
+# each alone: `git push` wants target:path, `docker save | ssh` wants only the
+# target. The copy of `.env` that reaches that host has both filtered out — they
+# say the agent runs elsewhere, which is false there.
+# see docs/release.md#build-here-run-there
+export RUNNER_DEPLOY_HOST := env_var_or_default("RUNNER_DEPLOY_HOST", "")
+export RUNNER_DEPLOY_DIR := env_var_or_default("RUNNER_DEPLOY_DIR", "runner")
+
+# Stamped into the copy of `.env` that reaches that host, by the deploy that
+# sends it. `build` refuses there outright, and `deploy` refuses unless it was
+# invoked by the machine that ships — a guard against a hand on the wrong
+# terminal, not a boundary. see docs/release.md#the-runtime-host-originates-nothing
+export RUNNER_RUNTIME_ONLY := env_var_or_default("RUNNER_RUNTIME_ONLY", "false")
 
 # Whose words these are, in front of every message `just chat` seeds and every
 # prompt `run` writes. The operator could have typed it themselves but did not
@@ -379,10 +409,20 @@ sessions $all="no" $day="":
 mirror-status:
     @exec host/archive/mirror.sh
 
-[doc("Clone the archive and set up the credentials its mirror workflow runs on")]
+[doc("Clone the archive")]
 [group("archive")]
 setup-archive:
     @exec host/archive/setup.sh
+
+[doc("Set up the credentials the mirror's workflow runs on — its own repository, not the archive's")]
+[group("archive")]
+setup-mirror:
+    @exec host/archive/setup-mirror.sh
+
+[doc("Set up this host's own access to the mirror — reads the record, asks it to refresh, cannot write it")]
+[group("archive")]
+setup-gh:
+    @exec host/archive/setup-gh.sh
 
 
 # --------------------------------------------------------------- monitor ---
@@ -482,6 +522,13 @@ build $deployed="no":
 [arg("state", long, value="yes", help="what is live as parseable fields, and change nothing")]
 deploy $diff="no" $state="no":
     @exec host/release/deploy.sh
+
+# private: the far half of a deploy, run over ssh by the machine that builds and
+# refused to anyone else — it is not a verb the operator types.
+[private]
+[group("release")]
+land:
+    @exec host/release/land.sh
 
 [doc("Pin what the Dockerfile takes from outside — the base image's digest and Claude Code's version — as a diff to read")]
 [group("release")]
