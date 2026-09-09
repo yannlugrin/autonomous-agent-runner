@@ -85,6 +85,23 @@ export COMPOSE_PROJECT_NAME := env_var_or_default("RUNNER_PROJECT", agent_user +
 # build's layer output.
 # see docs/configuration.md#compose-narration-is-quiet-and-build-turns-it-back-on
 export COMPOSE_PROGRESS := "quiet"
+
+# The box a runaway session is kept in, measured off the machine that will run
+# it. compose.yaml cannot name either as a constant and `.env` cannot carry them
+# per host: the deploy copies one `.env` to every machine it ships to, so a value
+# written for the machine that builds arrives on the machine that runs. Measured
+# 2026-09-10: `cpus: 2.0` on the 1-vCPU host answers `range of CPUs is from 0.01
+# to 1.00` and NO container starts at all — not a limit that failed to hold, a
+# session that cannot begin.
+#
+# The derivation reproduces what was written here before it: 4096m and 2.0 on
+# this machine, 1449m and 1.0 on that one. Set either in `.env` to go tighter;
+# unset is the machine's own answer, which is the one a host nobody thought about
+# gets. see docs/configuration.md#the-box-is-measured-not-written
+export RUNNER_MEM_LIMIT := env_var_or_default("RUNNER_MEM_LIMIT", shell('
+    awk "/^MemTotal:/ { mb = int(\$2 / 1024); l = mb - 512; if (l > 4096) l = 4096; if (l < 512) l = 512; print l \"m\" }" /proc/meminfo 2>/dev/null | grep . || echo 4096m'))
+export RUNNER_CPUS := env_var_or_default("RUNNER_CPUS", shell('
+    n=$(nproc 2>/dev/null || echo 1); if [ "$n" -ge 2 ]; then echo 2.0; else echo 1.0; fi'))
 # ===========================================================================
 
 # So a recipe reads its arguments as `$@` rather than as text spliced into its

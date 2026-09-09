@@ -166,9 +166,13 @@ services:
     cap_drop:
       - ALL
 
-    # A runaway session should cost a container, not the machine.
-    mem_limit: 4g
-    cpus: 2.0
+    # A runaway session should cost a container, not the machine. Both derived
+    # from the machine this runs on rather than written here: one `.env` reaches
+    # every host the deploy ships to, and `cpus: 2.0` on a 1-vCPU host is not a
+    # limit that failed to hold — it is a container that cannot start.
+    # see docs/configuration.md#the-box-is-measured-not-written
+    mem_limit: ${RUNNER_MEM_LIMIT:?set by just}
+    cpus: ${RUNNER_CPUS:?set by just}
 
     stdin_open: true
     tty: true

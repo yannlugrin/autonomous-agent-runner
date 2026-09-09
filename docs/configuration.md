@@ -236,6 +236,38 @@ so the value could never be pointed elsewhere — which is how the first test of
 the session lock passed while testing nothing, the recipe holding one file and
 the test holding another.
 
+## The box is measured, not written
+
+**Measured 2026-09-10**, on the first live command sent to the host the agent
+had just moved to:
+
+    Error response from daemon: range of CPUs is from 0.01 to 1.00,
+    as there are only 1 CPUs available
+
+`compose.yaml` carried `mem_limit: 4g` and `cpus: 2.0` as constants, written for
+the machine the image is built on. On a 1-vCPU host that is not a limit that
+failed to hold — **no container starts at all**, so the first session, every
+probe and `just listen` fail alike, on a message about CPUs that says nothing
+about which file holds the number.
+
+`.env` cannot carry them per host either: `just deploy` copies one `.env` to
+every machine it ships to, filtering four variables and adding two, so a value
+written for the machine that builds arrives on the machine that runs.
+
+So the justfile measures the machine it is on — `/proc/meminfo` less 512 MB,
+capped at 4096m and floored at 512m; `nproc`, capped at 2 — and compose
+interpolates `${RUNNER_MEM_LIMIT:?set by just}` and `${RUNNER_CPUS:?set by
+just}`. The derivation reproduces exactly what was written before it: measured
+the same day, 4096m and 2.0 here against 16 GB and 20 CPUs, 1449m and 1.0 on the
+2 GB single-core host, and compose normalises them to the same
+`mem_limit: 4294967296, cpus: 2` the constants produced.
+
+Either variable set in the environment still wins, which is how a host goes
+tighter than its own hardware. `.env` is the wrong place to set one — it travels
+— and `just` does not read a `.env.local`: measured on 1.58.0, a
+`RUNNER_CPUS=0.5` in that file changed nothing, because `set dotenv-load` loads
+`.env` and there is no layering.
+
 ## Changing the identity later is a migration
 
 Changing `AGENT_USER`, `AGENT_HOME` or `<NAME>_REPO_DIR` on an installation

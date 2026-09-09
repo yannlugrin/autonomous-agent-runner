@@ -160,6 +160,8 @@ travels into the image and is reported there as such.
 | | |
 | --- | --- |
 | `RUNNER_PROJECT` | Compose's project name. Prefixes container names only — the volume is named explicitly, so this never reaches it. |
+| `RUNNER_MEM_LIMIT` | The memory a session may take, `mem_limit` in compose. Unset is measured off this machine — `/proc/meminfo` less 512 MB, capped at 4096m, floored at 512m — because one `.env` reaches every host the deploy ships to and a constant written for the machine that builds arrives on the machine that runs. Set it to go tighter; not in `.env`, which travels. |
+| `RUNNER_CPUS` | The CPU a session may take, `cpus` in compose. Unset is `nproc` capped at 2. A value above what the machine has is not a loose limit: docker refuses to start the container at all, and every session, probe and `just listen` fail on a message about CPUs. |
 | `RUNNER_IMAGE` | Which image to run. `build` sets it to the candidate; unset means the deployed tag. |
 | `RUNNER_IMAGE_CANDIDATE` | The candidate tag, `$AGENT_USER-agent:candidate`. What `build` tags, `verify` proves, and `shell --build` and `test-env` run. |
 | `RUNNER_IMAGE_DEPLOYED` | The deployed tag, `$AGENT_USER-agent:deployed`. `verify` compares compose's own `image:` default against it — compose cannot read a `just` variable, so that default is the one duplicated name in the repository. |
