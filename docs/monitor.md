@@ -803,8 +803,9 @@ nothing else.
 
 `denials` counts `toolDenialKind`. Over the whole archive on 2026-09-06:
 `automode-blocked` 167, `user-rejected` 96, `permission-rule` 59, and
-**`automode-unavailable` 2** — the last being the auto-mode classifier failing
-open, which nothing else on this machine counts.
+**`automode-unavailable` 2** — the last being a call the classifier could not
+answer for in time, which is counted as a denial because the call did not run.
+Nothing else on this machine counts it.
 
 ### cwd and the branch are taken from the opening row
 
