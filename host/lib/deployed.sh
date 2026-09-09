@@ -17,6 +17,12 @@
 
 RUNNER_DEPLOYED="${RUNNER_DEPLOYED:?not set — run this through 'just', which computes it}"
 
+# Where the agent runs, when that is not this machine. Sourced here rather than
+# by each caller: every script that forwards has the same two destinations, and
+# a live command reaching the wrong one is the failure this file exists against.
+# shellcheck source=SCRIPTDIR/deploy-host.sh
+. "$(dirname -- "${BASH_SOURCE[0]}")/deploy-host.sh"
+
 
 # --- typed_flag ---
 # One flag onto `typed`, when it is on. `yes`/`no` is what every declared flag
@@ -31,17 +37,23 @@ typed_flag() {
 # --- forward_to_deployed ---
 # forward_to_deployed <recipe> [rebuilt flags...]. Never returns: it either
 # execs `just` over there or exits.
+#
+# "Over there" is a directory on this machine, or a machine of its own when
+# RUNNER_DEPLOY_HOST names one — the same recipe, on whichever host the volume
+# and the live image are. Without this, every live verb typed here would act on
+# the copy of the volume this machine still has, and the two would each push a
+# memory to origin. see docs/sessions.md#always-the-deployed-checkout
 
 forward_to_deployed() {
-    local verb="$1" heads_up what reply
+    local verb="$1" heads_up what reply dir rc
     shift
 
-    [ -e "$RUNNER_DEPLOYED/justfile" ] || {
+    if ! deploying_elsewhere && [ ! -e "$RUNNER_DEPLOYED/justfile" ]; then
         echo "Nothing is deployed yet: there is no checkout at $RUNNER_DEPLOYED, so there is no" >&2
         echo "agent to reach from here. 'just build', 'just verify', 'just deploy' makes one." >&2
         echo "To look inside a candidate instead, 'just shell --build'; 'just verify' proves it." >&2
         exit 1
-    }
+    fi
 
     # How loudly depends on what follows: the question is worth asking only
     # where answering `n` saves something. `listen` and `read` only look, so `n`
@@ -75,6 +87,30 @@ forward_to_deployed() {
                 printf 'note: the runner here has %s; running the deployed environment.\n' "$what" >&2
             fi
         fi
+    fi
+
+    if deploying_elsewhere; then
+        dir=$(deploy_dir_checked) || exit 1
+        printf 'on %s:%s\n' "$RUNNER_DEPLOY_HOST" "$dir" >&2
+
+        # A terminal decides, not the verb: `chat` and `shell` need one over
+        # there, `status` read into a pipe must not have one, and `listen` is
+        # both depending on who typed it. `ssh -t` without a local tty warns and
+        # runs anyway, which is the shape of an answer nobody can parse.
+        if [ -t 0 ]; then
+            host_just "$verb" "$@"
+        else
+            host_just_read "$verb" "$@"
+        fi
+        rc=$?
+
+        # Asked only when something failed, so the common path stays one round
+        # trip: a host with no checkout yet answers every verb with a shell's
+        # `cd` error, and that is not a sentence anybody acts on.
+        if [ "$rc" -ne 0 ] && [ "$(host_checkout_state)" != ready ]; then
+            echo "Nothing is deployed on $RUNNER_DEPLOY_HOST yet: 'just deploy' creates the checkout there." >&2
+        fi
+        exit "$rc"
     fi
 
     printf 'in %s\n' "$RUNNER_DEPLOYED" >&2

@@ -339,6 +339,43 @@ justfile carries. `chat` rebuilds by hand because `just` handed it its flags
 and its message as one variadic list; `listen` rebuilds only one of `--live`
 and `--wait`, since `--live` is the stronger of the two and implies the wait.
 
+## The deployed checkout can be another machine
+
+**Found 2026-09-10**, during the migration: `forward_to_deployed` knew one
+destination, `$RUNNER_DEPLOYED` on this machine, and nothing had taught it about
+`RUNNER_DEPLOY_HOST`. On the machine that builds, with the agent already running
+elsewhere, every live verb — `run`, `chat`, `shell`, `listen`, `read`,
+`collect`, `credentials` — went into the local `deployed/` and acted on the copy
+of the volume this machine still has. A `just chat` typed here would have
+started a session on that copy and pushed its memory to origin beside the one
+the other host pushes: the fork the migration's step 8 exists to prevent,
+reachable by typing the most ordinary command in the repository.
+
+It forwards over ssh instead, to the same recipe in the checkout named by
+`RUNNER_DEPLOY_DIR`, and prints `on <host>:<dir>` where the local path went.
+`deployed.sh` sources `deploy-host.sh` for it, rather than each caller doing so:
+the destination is one decision and it belongs in the file that already makes
+it.
+
+**A terminal decides whether ssh gets one, not the verb.** `chat` and `shell`
+need a tty over there, `status` read into a pipe must not have one, and `listen`
+is either depending on who typed it — so `[ -t 0 ]` chooses, and `ssh -t`
+without a local tty (which warns and runs anyway, mangling what comes back) is
+never reached.
+
+**The checkout is asked about only after a failure.** A host with no checkout
+yet answers every verb with a shell's `cd` error; a probe before each command
+would cost a round trip on every `just status` forever. The state is read when
+the exit status is already non-zero, and the sentence naming `just deploy` is
+printed then.
+
+`host_quote` came with it. `host_just` and `host_just_read` interpolated `$*`
+into the remote command, which is enough while every argument is a flag —
+`land`, `deploy --state` — and turns `collect --approve <hash> <a why with
+spaces>` into five arguments the moment a live verb goes the same way. POSIX
+single-quoting, not bash's `printf %q`: what runs on the far side is the login
+shell, which is not always bash.
+
 ## How loudly the forwarder speaks
 
 The operator's ruling, 2026-08-30. The question is worth asking only where

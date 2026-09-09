@@ -118,6 +118,22 @@ host_remote_url() {
 }
 
 
+# --- host_quote ---
+# argv, as one string a remote shell takes apart the way it was typed here.
+# ssh concatenates what it is given and the far side re-splits it, so an
+# unquoted `$*` turns `collect --approve <hash> <why with spaces>` into five
+# arguments. Single quotes and the POSIX '\'' escape rather than bash's
+# printf %q: what runs over there is the login shell, which is not always bash.
+
+host_quote() {
+    local a out=""
+    for a in "$@"; do
+        out="$out '${a//\'/\'\\\'\'}'"
+    done
+    printf '%s' "$out"
+}
+
+
 # --- host_just_read ---
 # A recipe over there whose answer is read rather than watched: no tty, so the
 # output is the output. `deploy --state` is the caller that matters, because
@@ -130,7 +146,7 @@ host_remote_url() {
 
 host_just_read() {
     local dir; dir=$(deploy_dir_checked) || return 1
-    host_ssh "cd '$dir' && RUNNER_DEPLOY_HOST= just $*"
+    host_ssh "cd '$dir' && RUNNER_DEPLOY_HOST= just$(host_quote "$@")"
 }
 
 
@@ -143,5 +159,5 @@ host_just_read() {
 host_just() {
     local dir; dir=$(deploy_dir_checked) || return 1
     ssh -t -o ConnectTimeout=10 "$RUNNER_DEPLOY_HOST" \
-        "cd '$dir' && RUNNER_DEPLOY_HOST= ${RUNNER_SHIPPED_ID:+RUNNER_SHIPPED_ID=$RUNNER_SHIPPED_ID }just $*"
+        "cd '$dir' && RUNNER_DEPLOY_HOST= ${RUNNER_SHIPPED_ID:+RUNNER_SHIPPED_ID=$RUNNER_SHIPPED_ID }just$(host_quote "$@")"
 }
