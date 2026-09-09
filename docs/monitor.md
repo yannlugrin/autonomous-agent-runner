@@ -806,6 +806,41 @@ nothing else.
 **`automode-unavailable` 2** — the last being the auto-mode classifier failing
 open, which nothing else on this machine counts.
 
+### cwd and the branch are taken from the opening row
+
+`cwd` and `git_branch` are the **first** non-null in the transcript; every other
+state field is the last. Both follow a Bash `cd`: a session that clones another
+repository into `/tmp` to read it carries that repository's `cwd` and branch for
+as long as it is there, and `gitBranch` lags `cwd` by a few rows on the way back,
+so the last row can pair the agent's own checkout with a foreign branch.
+
+Measured on 2026-09-09 over the 669 archived transcripts: **first and last differ
+in exactly one**, and that one is the fault. Record `e5315869` stored
+`git_branch: "cache"` — a branch of the archive repository, cloned to
+`/tmp/arc-cache` — for a session that worked on `main` throughout and committed
+to `main`. Its 252 rows carrying a branch: 85 `/tmp/runner-read`, 76
+`/tmp/arc-cache`, 69 the agent's checkout, 14 `/tmp`, and the last 8 on `cache`,
+of which the final 3 are back in the checkout. Six transcripts did change branch
+inside the agent's own repository (the `rules-rewrite` work of 23–24 August) and
+every one of them ends on the branch it opened on, so the case last-non-null was
+written for has never once produced a different answer.
+
+Filtering the rows to the session's own directory does **not** fix it: the three
+lagging rows have the right `cwd` and the wrong branch. Only the opening row is
+taken before anything can have moved.
+
+The volume cannot answer this. It holds one HEAD — whatever the most recent
+session left — so it says nothing about a session that ran three hundred sessions
+ago, and reading it at all needs a container with a home of its own while a real
+session may be running. A hook can: measured the same day, a **Stop** hook's
+stdout lands in the transcript as an `attachment` row of type `hook_success`
+carrying `hookName`, `hookEvent`, `content` and `stdout`, and a **SessionEnd**
+hook's output does not appear at all — it runs after the file is closed, which is
+why `push-on-exit.sh` reports through `ERROR_ON_PUSH` and not through anything a
+reader of the transcript could see. That route was not taken: it would put a
+monitoring field into `image/managed-settings.json`, which is a boundary file,
+and write a row per turn for a field no command reads.
+
 ### The sufficiency proof
 
 `just records --prove` is the one obligation of the store while no command reads

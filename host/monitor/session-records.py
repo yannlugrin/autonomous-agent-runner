@@ -366,18 +366,24 @@ class Chain:
                 run[1] = when if run[1] is None else min(run[1], when)
                 run[2] = when if run[2] is None else max(run[2], when)
 
-        # The last non-null wins: these describe the state the session ended in,
-        # and a session that changed branch mid-run ended on the second one.
+        # The last non-null wins: these describe the state the session ended in.
         # Not the version above: there, a change is evidence and the last one
         # alone would destroy it.
         for field, name in (
-            ("cwd", "cwd"),
-            ("gitBranch", "git_branch"),
             ("effort", "effort"),
             ("permissionMode", "permission_mode"),
             ("attributionAgent", "agent_type"),
         ):
             if record.get(field) is not None:
+                setattr(self, name, record[field])
+
+        # The FIRST non-null, for these two alone: both follow a Bash `cd`, so a
+        # session that clones another repository to read it ends holding that
+        # repository's branch, and `gitBranch` lags `cwd` by a few rows on the
+        # way back. The opening row is the one taken before anything can move.
+        #   see docs/monitor.md#cwd-and-the-branch-are-taken-from-the-opening-row
+        for field, name in (("cwd", "cwd"), ("gitBranch", "git_branch")):
+            if getattr(self, name) is None and record.get(field) is not None:
                 setattr(self, name, record[field])
 
         if record.get("toolDenialKind"):
