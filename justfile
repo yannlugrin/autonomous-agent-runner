@@ -343,10 +343,9 @@ run $force="no" $listen="no" $wait="no" $ignore_budget="no" $ignore_cooldown="no
 chat *ARGS:
     @exec host/session/chat.sh "$@"
 
-[doc("A shell in the container, for bootstrap and looking around — --build first")]
+[doc("A shell in the container, for bootstrap and looking around")]
 [group("session")]
-[arg("build", long, value="yes", help="build the candidate and look inside that instead of the deployed image")]
-shell $build="no":
+shell:
     @exec host/session/shell.sh
 
 [doc("A container with no volume — an empty home every run, for rehearsing recovery; --build first")]

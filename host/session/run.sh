@@ -53,7 +53,7 @@ trap 'rc=$?; sample_stop; case $rc in 0|2|75) ;; *) alert "the unattended sessio
 # --- always the live runner ---
 # And the live runner is the deployed checkout: see host/lib/deployed.sh. There
 # is no `--build` here — an unattended session on an unproven image is a risk
-# taken for nothing. `just shell --build` looks inside a candidate, `just
+# taken for nothing. `just test-container` looks inside a candidate, `just
 # verify` proves it.  see docs/sessions.md#the-build-flag-left-run-and-chat
 
 if [ "$RUNNER_IS_DEPLOYED" = no ]; then

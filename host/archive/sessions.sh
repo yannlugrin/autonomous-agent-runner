@@ -5,7 +5,8 @@
 # Runs on the host, against the archive checkout. Every declared argument
 # arrives as an environment variable: the flags all and day.
 #
-# It only reads. `sessions` is written by `just collect --push` and by nothing
+# It never writes the archive, and fetches it first when the agent runs on
+# another machine. `sessions` is written by `just collect --push` and by nothing
 # else; the branch is read with `git show`, never checked out, so the archive
 # clone stays on whatever branch it is on.  see docs/archive.md#the-listing
 #

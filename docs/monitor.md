@@ -196,6 +196,8 @@ the first run — exactly as `deployed/` and `archive/` are (R12): a clone of th
 repository arranges nothing outside its own directory.
 
     monitor/mirror/              the audit clone — the ARCHIVE's copy of the memory
+    monitor/memory/              the agent's repository, bare, fetched by `just
+                                 stats` for its newest journal heading
     monitor/memory.log           the commits in the agent's checkout, read out of
                                  its volume by `just records`; see below for why
                                  they are two
@@ -941,6 +943,11 @@ filter, no volume — and one fact from outside them: which build is live, from
 host's clone of its repository. Neither is required; the screen renders without
 either and says which line did not run. There is nothing in `.env` to set.
 
+The records are sealed on the machine that runs the agent. When that is another
+machine (`RUNNER_DEPLOY_HOST` set), `stats.sh` fetches the archive's `cache`
+branch and reads its `records/` instead of the local store, which nothing there
+writes.
+
 `host/monitor/stats.sh` is the front, because the store may not exist yet and
 that is a state with a command that fixes it; `host/monitor/stats.py` is the
 arithmetic and the screen.
@@ -1086,6 +1093,12 @@ choice and an alarm that cries wolf is one nobody reads.
 
 **A journal that cannot be read is not agreement.** The line says the check did
 not run, and why.
+
+**The heading comes from the agent's own repository, not the mirror.**
+`stats.sh` fetches it into a bare clone at `$RUNNER_MONITOR/memory` before the
+screen is drawn. The mirror is advanced by a workflow on GitHub's best-effort
+schedule, and a count checked against it would report that lag as a wrong
+heading.
 
 ### The shape of the screen
 

@@ -1,31 +1,19 @@
 #!/usr/bin/env bash
 # A shell in the container, for bootstrap and for looking around.
 #
-# Runs on the host. One declared flag arrives as an environment variable:
-# build.
-#
-# shellcheck disable=SC2154  # the recipe's declared arguments reach this
-# script as exported environment variables, which shellcheck cannot see; a
-# name that is not among them is caught by `set -u` on the first read.
+# Runs on the host. No arguments.
 set -uo pipefail
 # shellcheck source=SCRIPTDIR/../lib/root.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
 . host/lib/deployed.sh
 
 
-# --- which image, and which checkout ---
-# Without --build this is the live runner, and the live runner is the deployed
-# checkout: see host/lib/deployed.sh. With it, this is testing, which runs what
-# it built — the candidate, for this invocation only.
-# see docs/sessions.md#the-build-flag-left-run-and-chat
+# --- always the live runner ---
+# The live runner is the deployed checkout: see host/lib/deployed.sh. A candidate
+# is looked inside with `just test-container`.
 
-if [ "$RUNNER_IS_DEPLOYED" = no ] && [ "$build" = no ]; then
+if [ "$RUNNER_IS_DEPLOYED" = no ]; then
     forward_to_deployed shell
-fi
-
-if [ "$build" = yes ]; then
-    just build || exit $?
-    export RUNNER_IMAGE="$RUNNER_IMAGE_CANDIDATE"
 fi
 
 host/lib/docker-up.sh --image "${RUNNER_IMAGE:-$RUNNER_IMAGE_DEPLOYED}" || exit $?

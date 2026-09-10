@@ -35,6 +35,17 @@ if [ -z "${AGENT_USER:-}" ]; then
 fi
 
 
+# --- what cron runs is proved where cron runs it ---
+# --deployed is a question about the live image, so it is asked in the deployed
+# checkout — on the host that runs the agent, when that is another machine.
+# see docs/sessions.md#always-the-deployed-checkout
+
+if [ "$deployed" = yes ] && [ "$build" = no ] && [ "$RUNNER_IS_DEPLOYED" = no ]; then
+    . host/lib/deployed.sh
+    forward_to_deployed verify --deployed
+fi
+
+
 # --- which image ---
 # Ahead of everything: verify run against a stale image proves the image you
 # replaced, in the words it uses when everything is right.

@@ -1478,7 +1478,7 @@ its own id. Both build the table through `archive_rows` in `host/lib/archive.sh`
 is built: the number a listing shows and the number `read` takes are then the same handle by construction
 rather than by two orderings agreeing.
 
-Both only read. `sessions` is written by `just collect --push` and by nothing else; the branch is read with
+Neither writes the archive. `sessions` is written by `just collect --push` and by nothing else; the branch is read with
 `git show`, never checked out, so the archive clone stays on whatever branch it is on. `need_archive` uses
 `rev-parse` rather than a test on `.git`, which is a directory in a clone and a file in a linked worktree —
 `collect.sh` checks it the same way and for the same reason. The refusal sentence lives in
@@ -1486,7 +1486,9 @@ Both only read. `sessions` is written by `just collect --push` and by nothing el
 because theirs is reached deep inside a run that has already extracted transcripts and the sentence belongs
 where the work stops.
 
-The local branch is preferred over `origin/sessions`: `just collect` runs on this host and commits locally,
+When the agent runs on another machine (`RUNNER_DEPLOY_HOST` set), `archive_ref` fetches and reads
+`origin/sessions`: `collect` forwards there, so nothing on this machine writes the local branch.
+Otherwise the local branch is preferred over `origin/sessions`: `just collect` runs on this host and commits locally,
 so the local one is the one that is ahead.
 
 ### A subagent is not a session

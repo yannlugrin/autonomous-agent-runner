@@ -2,8 +2,9 @@
 # Prove the session records are sufficient — that every command still to be
 # normalised onto them can be rendered from them alone, byte for byte.
 #
-# Runs on the host, reads the archive and the store, writes nothing but a
-# temporary directory. `just records --prove`.
+# Runs on the host, reads the archive and the store — fetching the archive first
+# when the agent runs on another machine — and writes nothing but a temporary
+# directory. `just records --prove`.
 #
 # THIS IS THE ONE OBLIGATION OF THE STORE. The change that added the records
 # moved no command onto them: `just sessions`, `just read`, `just tools` and

@@ -286,8 +286,11 @@ config_diff
 
 # A deploy pauses the schedule, so a session already running is not stopped but
 # is named here: pausing prevents only the next one.
-# see docs/release.md#the-schedule-is-held-for-the-duration
-sched=$(just schedule --state 2>/dev/null | sed -n 's/^state: //p')
+#
+# Every `schedule` below runs here rather than forwarding: the crontab is this
+# user's whichever checkout asks, and a first deploy has no deployed/ for the
+# forward to reach.  see docs/release.md#the-schedule-is-held-for-the-duration
+sched=$(just RUNNER_IS_DEPLOYED=yes schedule --state 2>/dev/null | sed -n 's/^state: //p')
 if ! deploying_elsewhere; then
     source host/lib/session-lock.sh
     running=$(session_container)
@@ -312,7 +315,7 @@ case "$reply" in [yY]*) ;; *) echo "Nothing deployed."; exit 75 ;; esac
 
 resume=no
 if [ "$sched" = enabled ] && ! deploying_elsewhere; then
-    just schedule --pause >/dev/null || { echo "Could not pause the schedule; nothing deployed." >&2; exit 1; }
+    just RUNNER_IS_DEPLOYED=yes schedule --pause >/dev/null || { echo "Could not pause the schedule; nothing deployed." >&2; exit 1; }
     resume=yes
 fi
 
@@ -548,10 +551,10 @@ echo "Deployed: $target at $(git -C "$target" rev-parse --short HEAD), image $(i
 # is what enables it again, and only when it was enabled to begin with.
 # see docs/schedule.md
 
-just schedule --relocate || { echo "SCHEDULE_NOT_RELOCATED — the crontab still names another directory; 'just schedule' shows it." >&2; exit 1; }
+just RUNNER_IS_DEPLOYED=yes schedule --relocate || { echo "SCHEDULE_NOT_RELOCATED — the crontab still names another directory; 'just schedule' shows it." >&2; exit 1; }
 
 if [ "$resume" = yes ]; then
-    just schedule --enable >/dev/null || { echo "Could not enable the schedule again." >&2; exit 1; }
+    just RUNNER_IS_DEPLOYED=yes schedule --enable >/dev/null || { echo "Could not enable the schedule again." >&2; exit 1; }
     echo "The schedule is enabled again."
 fi
 

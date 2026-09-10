@@ -1,9 +1,10 @@
 # shellcheck shell=bash
 # Where the archive checkout is, and the sentence for "it is not there".
 #
-# Sourced by the recipes that only read the archive — `sessions`, `read` and
-# `mirror` — so they agree on one spelling of the missing-clone message. The
-# path itself is computed once in the justfile and exported.
+# Sourced by the recipes that read the archive and never write it — `sessions`,
+# `read`, `cost`, `tools`, `records --prove` and `stats` — so they agree on one
+# spelling of the missing-clone message. With the agent on another machine they
+# fetch it first. The path itself is computed once in the justfile and exported.
 #
 # `collect` and `publish-status` write the archive and carry their own refusal:
 # theirs is reached deep inside a run that has already extracted transcripts,
@@ -11,6 +12,9 @@
 # see docs/archive.md#the-listing
 
 ARCHIVE="${AGENT_ARCHIVE:?not set — run this through 'just', which computes it}"
+
+# shellcheck source=SCRIPTDIR/deploy-host.sh
+. "$(dirname -- "${BASH_SOURCE[0]}")/deploy-host.sh"
 
 
 # --- need_archive ---
@@ -32,14 +36,22 @@ need_archive() {
 
 
 # --- archive_ref ---
-# Which ref holds the collected sessions, into ARCHIVE_REF. Local first: `just
-# collect` runs on this host and commits to the local `sessions`, so that is the
-# one ahead; origin/sessions is the fallback for a fresh clone.
+# Which ref holds the collected sessions, into ARCHIVE_REF. Where `just collect`
+# runs, it commits to the local `sessions`, so that is the one ahead and
+# origin/sessions is the fallback for a fresh clone. Where the agent runs on
+# another machine nothing here writes `sessions`, so origin is fetched and read.
+# see docs/archive.md#the-listing
 
 archive_ref() {
-    if git -C "$ARCHIVE" rev-parse --verify --quiet sessions >/dev/null; then
+    if deploying_elsewhere; then
+        git -C "$ARCHIVE" fetch --quiet origin sessions 2>/dev/null \
+            || echo "note: could not fetch $ARCHIVE — reading origin/sessions as last fetched." >&2
+    elif git -C "$ARCHIVE" rev-parse --verify --quiet sessions >/dev/null; then
         ARCHIVE_REF=sessions
-    elif git -C "$ARCHIVE" rev-parse --verify --quiet origin/sessions >/dev/null; then
+        return 0
+    fi
+
+    if git -C "$ARCHIVE" rev-parse --verify --quiet origin/sessions >/dev/null; then
         ARCHIVE_REF=origin/sessions
     else
         echo "No 'sessions' branch here or on origin. Nothing has been collected yet." >&2

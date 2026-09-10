@@ -3,11 +3,12 @@
 # cron runs from — rather than in the working tree you are standing in.
 #
 # Sourced by the scripts that are the live runner: run, chat, shell, listen,
-# read, status, collect, publish-status. They act on the deployed environment
-# by default — its recipes, its scripts, its `.env`, its image — because a live
-# command that ran the working tree would make every edit live before any
-# deploy, which is the hole `just deploy` closes. Testing is what runs here:
-# `verify`, `test-env`, and `just shell --build`.
+# read, status, credentials, collect, publish-status, schedule, and verify
+# --deployed. They act on the deployed environment by default — its recipes,
+# its scripts, its `.env`, its image, its crontab — because a live command that
+# ran the working tree would make every edit live before any deploy, which is
+# the hole `just deploy` closes. Testing is what runs here: `verify` and
+# `test-container`.
 #
 # What was typed cannot be forwarded: `just` parses the declared flags itself
 # and hands the script their values, so the argv is gone by the time anything
@@ -51,20 +52,21 @@ forward_to_deployed() {
     if ! deploying_elsewhere && [ ! -e "$RUNNER_DEPLOYED/justfile" ]; then
         echo "Nothing is deployed yet: there is no checkout at $RUNNER_DEPLOYED, so there is no" >&2
         echo "agent to reach from here. 'just build', 'just verify', 'just deploy' makes one." >&2
-        echo "To look inside a candidate instead, 'just shell --build'; 'just verify' proves it." >&2
+        echo "To look inside a candidate instead, 'just test-container'; 'just verify' proves it." >&2
         exit 1
     fi
 
     # How loudly depends on what follows: the question is worth asking only
-    # where answering `n` saves something. `listen` and `read` only look, so `n`
-    # does nothing an interrupt would not; `status` reports the same fact three
-    # lines later, in full. An unrecognised verb asks, because the recipe that
-    # has not been thought about is the one to be careful with.
-    # see docs/sessions.md#how-loudly-the-forwarder-speaks
+    # where answering `n` saves something. `listen` and `read` only look and
+    # `verify` only proves, so `n` does nothing an interrupt would not; `status`
+    # reports the same fact three lines later, in full; `deploy` asks `schedule`
+    # with its stderr discarded, where a question would hang unseen. An
+    # unrecognised verb asks, because the recipe that has not been thought about
+    # is the one to be careful with.  see docs/sessions.md#how-loudly-the-forwarder-speaks
     case "$verb" in
-        listen|read)        heads_up=tell ;;
-        status|credentials) heads_up=none ;;
-        *)                  heads_up=ask ;;
+        listen|read|verify)          heads_up=tell ;;
+        status|credentials|schedule) heads_up=none ;;
+        *)                           heads_up=ask ;;
     esac
 
     # A heads-up when this tree is not what is deployed: a person typing `just

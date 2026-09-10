@@ -11,7 +11,7 @@ commands.
 | --- | --- |
 | `just run` | one unattended session, whole — the opening message, the session, the backup push at its end, the collection afterwards. This is what cron calls. `--listen` renders it live, `--wait` queues behind a running one, `--force` starts a second beside it, `--ignore-budget` starts one over the allowance, `--ignore-cooldown` starts one whatever the wait |
 | `just chat "…"` | a conversation you sit in. It waits for a running session rather than standing down; `--continue` resumes the last **conversation**, which is not the last session |
-| `just shell` | a shell in the container, carrying the environment a session gets, without starting one. What bootstrap uses. `--build` looks inside the candidate instead |
+| `just shell` | a shell in the container, carrying the environment a session gets, without starting one. What bootstrap uses |
 | `just test-container` | the same container with **no volume** — an empty home every run, for rehearsing recovery. Never where the agent runs |
 | `just listen` | the running session from its first line, live — or, with nothing running, the last one's tail. `--all` lifts the read ceiling, `--wait` waits for the next, `--live` never closes, `--remote` serves the live view to the tailnet |
 | `just read <n\|id>` | one transcript whole, and the only reader there is. A row number from `just sessions`, or a session or subagent id. `--subagent K`, `--full` |
@@ -325,10 +325,13 @@ deployed environment by default — its recipes, its scripts, its `.env`, its
 image. The working tree is where changes are made and tested, and a live
 command that ran the working tree would make every edit live before any deploy,
 which is the hole `just deploy` closes. Testing is what runs in the working
-tree: `verify`, `test-env`, and `just shell --build`.
+tree: `verify` and `test-container`.
 
 `host/lib/deployed.sh` is sourced by the scripts that are the live runner:
-run, chat, shell, listen, read, status, collect, publish-status.
+run, chat, shell, listen, read, status, credentials, collect, publish-status,
+schedule, and `verify --deployed`. `schedule` because the crontab that fires
+sessions is the deployed machine's; `verify --deployed` because the image cron
+runs is there, and so is the crontab line its host-tools probe reads.
 
 WHAT WAS TYPED CANNOT BE FORWARDED. `just` parses the declared flags itself and
 hands the script their values, so the argv is gone by the time anything here
@@ -381,11 +384,13 @@ shell, which is not always bash.
 The operator's ruling, 2026-08-30. The question is worth asking only where
 answering `n` saves something: `run`, `chat` and `shell` start a session,
 `collect` and `publish-status` write to the archive, and stopping there means
-deploying first and typing it again. `listen` and `read` only look, so `n` does
-nothing an interrupt would not — they are told, not asked. And `status` is told
-nothing at all: it reports the same fact three lines later, in full, with the
-subjects. An unrecognised verb asks, because the recipe that has not been
-thought about is the one to be careful with.
+deploying first and typing it again. `listen` and `read` only look and `verify
+--deployed` only proves, so `n` does nothing an interrupt would not — they are
+told, not asked. And `status`, `credentials` and `schedule` are told nothing at
+all: `status` reports the same fact three lines later, in full, with the
+subjects, and `deploy` asks `schedule --state` with its stderr discarded, where
+a question would hang unseen. An unrecognised verb asks, because the recipe that
+has not been thought about is the one to be careful with.
 
 The heads-up when this tree is not what is deployed is the operator's idea,
 2026-08-28: a person typing `just chat` here while sitting on undeployed
@@ -420,7 +425,7 @@ The operator's ruling, 2026-09-02. `--build` built the candidate and ran a
 session on it, for that invocation only. It was what this repository was driven
 with while there was nothing deployed to run instead, and once there was, an
 unattended session on an unproven image is a risk taken for nothing. `just
-shell --build` is what looks inside a candidate now, and `just verify` is what
+test-container` is what looks inside a candidate now, and `just verify` is what
 proves it — see docs/verify.md.
 
 `chat` keeps a named refusal for `--build`, and that is not politeness. Its

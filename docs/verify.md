@@ -158,7 +158,9 @@ Verify runs against **the candidate**, not against what is live: proving is
 what stands between a build and a deploy, and a probe that ran the deployed
 image would pass on the image you did not change. `--build` rebuilds first and
 runs what it built, for that invocation only. `--deployed` asks the same
-questions of what cron runs, for the day the host moved under it.
+questions of what cron runs, for the day the host moved under it, and asks them
+in the deployed checkout — on the machine that runs the agent, when that is
+another one.
 
 The image choice is made ahead of everything because the failure it removes is
 the quiet one: **verify run against a stale image proves the image you

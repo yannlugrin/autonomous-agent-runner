@@ -247,6 +247,12 @@ exists to prevent, so a failure leaves the schedule paused and says so on
 every exit path — the way the budget guard refuses rather than guessing. See
 docs/schedule.md.
 
+Every `schedule` call in the deploy passes `RUNNER_IS_DEPLOYED=yes`, because
+the recipe otherwise forwards to the deployed checkout, and a first deploy has
+not created it yet: `--state` answers nothing and an enabled schedule is never
+paused. The crontab is the user's whichever checkout reads it, so staying here
+loses nothing.
+
 ## `--state` is parsed twice
 
 `deploy --state` prints the same facts as fields, and both `just status`'s

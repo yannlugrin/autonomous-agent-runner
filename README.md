@@ -353,7 +353,7 @@ shows every option with what each one does.**
 | --- | --- |
 | `just run` | one unattended session, then archive its transcript and push it. `--listen` renders it live, `--wait` queues behind a running one, `--force` starts a second beside it, `--ignore-budget` starts one over the allowance, `--ignore-cooldown` starts one whatever the wait |
 | `just chat "…"` | a conversation. It waits for a running session rather than refusing; `--continue` resumes the last *conversation*, which is not the last session |
-| `just shell` | a shell in the container, carrying the same environment a session gets. This is what bootstrap uses. `--build` looks inside a candidate instead of the deployed image |
+| `just shell` | a shell in the container, carrying the same environment a session gets. This is what bootstrap uses |
 | `just test-container` | the same container with **no volume** — an empty home every run, for rehearsing the morning the volume is gone. Never where the agent runs |
 | `just listen` | the running session from its first line, live — or, with nothing running, the tail of the last one. `--all` lifts the read ceiling, `--wait` waits for the next, `--live` never closes, `--remote` serves the live view to any device on the tailnet |
 | `just read <n\|id>` | one transcript whole, and the only reader there is. A row number from the last listing, or a session or subagent id; `--subagent K`, `--full` |

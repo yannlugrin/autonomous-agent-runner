@@ -31,7 +31,7 @@ while [ $# -gt 0 ]; do
         # see docs/sessions.md#the-build-flag-left-run-and-chat
         --build)
             echo "--build is gone: a conversation runs the deployed image." >&2
-            echo "'just shell --build' looks inside a candidate; 'just verify' proves it." >&2
+            echo "'just test-container' looks inside a candidate; 'just verify' proves it." >&2
             exit 2 ;;
         *) break ;;
     esac

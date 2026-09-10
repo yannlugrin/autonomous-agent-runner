@@ -291,9 +291,10 @@ value `just schedule` must be given:
 in step 3 you pointed that at the worktree deploys build from. Given the wrong
 value it finds nothing, removes nothing, and reports `absent` — you would read
 that as disabled while cron kept firing, and copy the volume out from under a
-live session. So name the directory the crontab showed:
+live session. So name the directory the crontab showed, and keep the recipe on
+this machine — with `RUNNER_DEPLOY_HOST` set it would run on that host instead:
 
-    RUNNER_DEPLOYED=<that directory> just schedule --disable
+    RUNNER_DEPLOYED=<that directory> just RUNNER_IS_DEPLOYED=yes schedule --disable
 
 **Check with the crontab and not with the recipe**, for the same reason:
 
@@ -412,8 +413,8 @@ should show a run from that minute.
 
     ssh -t vps 'cd runner && just schedule --enable'
 
-**Check:** `ssh vps crontab -l` names the checkout, and `just schedule --state`
-on your own machine still says `disabled`.
+**Check:** `ssh vps crontab -l` names the checkout, and `crontab -l | grep -c
+'just run'` on your own machine still says `0`.
 
 ## The tailnet, and Tailscale SSH
 

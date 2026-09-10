@@ -7,8 +7,9 @@
 Runs on the host, under `just stats`. It reads the sealed records in
 RUNNER_RECORDS_DIR and nothing else — no transcript, no jq filter, no volume —
 and two facts from outside them: which build is live, from `just deploy
---state`, and the agent's newest journal heading, from this host's clone of its
-repository. Both are read, never written, and neither is required.
+--state`, and the agent's newest journal heading, from the clone of its
+repository `just stats` fetches first. Both are read, never written, and neither
+is required.
 
 Three traps, each of which produces a plausible wrong number and no symptom:
 
@@ -717,9 +718,9 @@ def live_commit():
 def newest_heading(monitor):
     """The agent's own newest journal heading, or why there is none to compare.
 
-    Read from this host's clone of its repository — the one `just records`
-    fetches at every session end, so it is current — and read is all this does.
-    A mirror that cannot be read is not agreement: nothing missing is zero.
+    Read from this host's clone of its repository, which `just stats` fetches
+    before it draws; read is all this does. A clone that cannot be read is not
+    agreement: nothing missing is zero.
     """
     if not monitor:
         return None, "RUNNER_MONITOR is not set"

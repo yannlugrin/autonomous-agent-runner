@@ -4,6 +4,7 @@
 set -uo pipefail
 # shellcheck source=SCRIPTDIR/../lib/root.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
+. host/lib/deployed.sh
 
 usage='Usage: just schedule [--enable [--cron "M H D M W"]] | --pause | --disable | --relocate | --state'
 
@@ -31,6 +32,19 @@ if [ "$mode" != enable ] && [ -n "$cron" ]; then
     echo "--cron describes the entry; --enable is what installs it." >&2
     echo "$usage" >&2
     exit 2
+fi
+
+
+# --- always the live runner ---
+# The crontab that fires sessions is on the machine the deployed checkout is on,
+# so every verb, --state included, runs there.
+# see docs/sessions.md#always-the-deployed-checkout
+
+if [ "$RUNNER_IS_DEPLOYED" = no ]; then
+    typed=()
+    for verb in enable pause disable relocate state; do typed_flag "--$verb" "${!verb}"; done
+    [ -z "$cron" ] || typed+=(--cron "$cron")
+    forward_to_deployed schedule ${typed[@]+"${typed[@]}"}
 fi
 
 
