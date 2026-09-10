@@ -237,6 +237,11 @@ chat_started "$chat_id"
 
 started=$(date +%s)   # see `run`: the summary must not report the session before
 
+# As in `run`: stopped at exit, so the collection is sampled and Ctrl-C leaves no sadc.
+source host/lib/sampler.sh
+trap sample_stop EXIT
+sample_start
+
 docker compose run --rm --name "$RUNNER_SESSION_NAME-$$" \
     "${SESSION_ENV[@]}" ${other[@]+"${other[@]}"} -w "$AGENT_REPO_DIR" agent \
     claude-session "${session_flags[@]}" ${message+"$message"}

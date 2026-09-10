@@ -14,6 +14,8 @@ set -uo pipefail
 . host/lib/deployed.sh
 # How the last run ended, and how this one will record that it did.
 . host/lib/run-record.sh
+# Sourced before the trap below names sample_stop.
+. host/lib/sampler.sh
 
 
 # --- what was asked for ---
@@ -45,7 +47,7 @@ fi
 
 alert() { host/schedule/notify.sh "$@" || true; }
 
-trap 'rc=$?; case $rc in 0|2|75) ;; *) alert "the unattended session exited $rc — see $RUNNER_RUN_LOG" ;; esac' EXIT
+trap 'rc=$?; sample_stop; case $rc in 0|2|75) ;; *) alert "the unattended session exited $rc — see $RUNNER_RUN_LOG" ;; esac' EXIT
 
 
 # --- always the live runner ---
@@ -353,6 +355,9 @@ started=$(date +%s)
 session_log=$(mktemp) || { echo "could not make a scratch file for the session's output" >&2; exit 1; }
 
 run_record_open "$RUNNER_SESSION_NAME-$$"
+
+# Stopped by the exit trap, so the collection after the session is sampled too.
+sample_start
 
 if [ -n "$view" ]; then
     docker compose run --rm --name "$RUNNER_SESSION_NAME-$$" \

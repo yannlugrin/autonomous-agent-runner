@@ -653,6 +653,7 @@ through `vault`, and by shape otherwise. [`docs/vault.md`](docs/vault.md)
         session-lock.sh      the one-session-at-a-time lock, and what is known from outside
         session-env.sh       what a session is told about itself, and the budget verdict
         docker-up.sh         stop early, and say why, when the daemon is not answering
+        sampler.sh           sysstat samples while a session runs, when asked for
         config-files.sh      the per-installation files, derived from their tracked examples
       session/             what a session is, watched or read
         run.sh               one unattended session — what cron calls
