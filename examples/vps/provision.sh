@@ -19,12 +19,15 @@
 # and they are in README.md beside this file.
 #
 #   scp examples/vps/provision.sh vps-admin:
-#   ssh vps-admin 'DEPLOY_USER=agent-deploy bash provision.sh'
+#   ssh vps-admin 'DEPLOY_USER=agent-deploy TIMEZONE=<zone> bash provision.sh'
 set -uo pipefail
 
 # The account the agent runs as. Neutral by default: the agent's name does not
 # appear in this repository's content.
 DEPLOY_USER="${DEPLOY_USER:-agent-deploy}"
+
+# The zone you work in. Records and `just stats` count days in the host's zone.
+TIMEZONE="${TIMEZONE:-}"
 
 # The oldest `just` the justfile can be read by — `set minimum-version` in it.
 # An older one dies at parse time, hourly, into a log nobody reads.
@@ -135,6 +138,24 @@ elif [ "$disk_gb" -ge "$DISK_MIN_GB" ]; then
     verdict LOOK "disk" "${disk_gb} GB free on / — about 7 of them go at once, and the archive clone grows with every session"
 else
     verdict FAIL "disk" "${disk_gb} GB free on /, under the ${DISK_MIN_GB} floor — roughly 7 GB is taken before anything runs"
+fi
+
+# A cloud image ships UTC. A zone already set by hand is left alone and not
+# reported, or the check would say LOOK on every re-run of a correct machine.
+zone=$(timedatectl show -p Timezone --value 2>/dev/null)
+if [ -n "$TIMEZONE" ] && [ "$zone" = "$TIMEZONE" ]; then
+    verdict ok "time zone" "$zone"
+elif [ -n "$TIMEZONE" ]; then
+    if sudo timedatectl set-timezone "$TIMEZONE"; then
+        verdict ok "time zone" "$TIMEZONE, was ${zone:-unknown}"
+    else
+        verdict FAIL "time zone" "could not set $TIMEZONE — 'timedatectl list-timezones' names the valid ones"
+    fi
+else
+    case "$zone" in
+        Etc/UTC|UTC|"") verdict LOOK "time zone" "${zone:-unknown} — records and 'just stats' count days in it; TIMEZONE=<zone> sets yours" ;;
+        *)              verdict ok "time zone" "$zone, as the machine had it" ;;
+    esac
 fi
 
 

@@ -79,7 +79,12 @@ does not exist yet.
 ## 1. Run the script
 
     scp examples/vps/provision.sh vps-admin:
-    ssh vps-admin 'DEPLOY_USER=<the deploy account> bash provision.sh'
+    ssh vps-admin 'DEPLOY_USER=<the deploy account> TIMEZONE=<the zone you work in> bash provision.sh'
+
+`TIMEZONE` is not cosmetic. A cloud image ships UTC, and a record's `local_day`
+and every day `just stats` counts are read in the host's zone. Measured
+2026-09-10: a session that started at 01:07 in the operator's night was written
+down on the day before, beside 650 records that said otherwise.
 
 It creates the account, puts it in the `docker` group, copies `ubuntu`'s
 `authorized_keys` across so your key reaches it, and **probes that it cannot
