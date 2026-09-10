@@ -122,9 +122,9 @@ done <<< "$(printf '%s\n' "$flagged_at" | sed '/^$/d')"
 # The count, for whoever wants it without a collection. It stops here — nothing
 # staged, no worktree, no commit — so it is safe to run beside a live session,
 # and it prints one machine-shaped line rather than leaving a caller to take the
-# tail, which would be the gitleaks hint. `just status` reads what the last
-# collection wrote to RUNNER_REVIEW_HELD instead: this path starts a container
-# and scans the volume for a number that only a session ending can change.
+# tail, which would be the gitleaks hint. `just status` and the status snapshot
+# read what the last collection wrote to RUNNER_REVIEW_HELD instead: this path
+# starts a container and scans the volume, all of it after a gate change.
 # see docs/archive.md#the-count-without-the-collection
 
 if [ "$HELD" = true ]; then

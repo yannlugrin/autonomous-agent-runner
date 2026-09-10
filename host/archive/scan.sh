@@ -128,7 +128,7 @@ fi
 # --- what has already been through this gate ---
 # A transcript already on `sessions` byte for byte has been through the gate
 # and reached origin with it, so reading it again cannot hold anything back —
-# only cost, and that is most of what `--held` spends on every `just status`. A
+# only cost, and that cost is most of what a run spends. A
 # redacted transcript settles on its ledger entry instead, its bytes never
 # matching.
 # see docs/archive.md#it-agrees-with-gits-own-object-id

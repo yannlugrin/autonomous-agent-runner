@@ -156,11 +156,13 @@ cleanup() {
 trap cleanup EXIT
 
 
-# --- what the review gate is holding, for a screen that cannot pay for this ---
-# `just status` used to ask `--held`, which starts a container and scans the
-# volume for a number that only a session ending can change — and a session
-# ending is exactly when this runs. Both endings write it: the collection
-# below, and the `--held` count in rule.sh, which is what refreshes it by hand.
+# --- what the review gate is holding, for readers that cannot pay for this ---
+# `just status` and the status snapshot read the count here rather than asking
+# `--held`, which starts a container and scans the volume — all of it after a
+# gate change, for longer than a publish can wait. A session ending changes the
+# count, and that is when this runs; a gate change shows only at the next run.
+# Both endings write it: the collection below, and the `--held` count in
+# rule.sh, which is what refreshes it by hand.
 #
 # The count and the instant, because a count on its own cannot be told from a
 # stale one and a reader must be able to say how old its answer is. Best effort

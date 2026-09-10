@@ -187,23 +187,33 @@ def budget():
 
 
 def transcripts():
-    """How many the collection gate is holding back.
+    """How many the collection gate is holding back, as the last count left it.
 
-    Asked of the collection script, which is the one implementation of that
-    rule. It costs a couple of seconds because answering means extracting and
-    scanning; it stops before staging anything, so it is safe beside a running
-    session.
+    Read from what `collect.sh` writes rather than counted: after a gate change
+    a count reads every transcript again, for longer than a publish can wait.
+    see docs/archive.md#the-count-without-the-collection
     """
-    code, out, err = run(["host/archive/collect.sh", "--held"], timeout=300)
-    n = fields(out).get("waiting-on-review")
-    if n is None or not n.isdigit():
+    try:
+        with open(os.environ.get("RUNNER_REVIEW_HELD") or "") as handle:
+            held = fields(handle.read().replace("=", ": "))
+    except OSError:
+        held = {}
+    count, at = held.get("count", ""), held.get("at", "")
+    if not count.isdigit():
         return {
             "waiting_on_review": None,
-            "error": (err or out or "no answer").splitlines()[0][:200]
-            if (err or out)
-            else "the review gate did not answer — run 'just collect' to see why",
+            "counted_at": None,
+            "error": "not counted on this host since its cache was cleared"
+            " — run 'just collect --held'",
         }
-    return {"waiting_on_review": int(n), "error": None}
+    return {
+        "waiting_on_review": int(count),
+        # A count without its instant cannot be told from a stale one.
+        "counted_at": datetime.fromtimestamp(int(at), UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if at.isdigit()
+        else None,
+        "error": None,
+    }
 
 
 def deploy():
@@ -289,9 +299,9 @@ def main():
 
     errors = []
 
-    # Docker first, and everything that needs it reads this. Without it three
-    # sections would each spend their own timeout discovering the same silence,
-    # and the collector would take minutes to say the one thing that was wrong.
+    # Docker first, and everything that needs it reads this. Without it each such
+    # section would spend its own timeout discovering the same silence, and the
+    # collector would take minutes to say the one thing that was wrong.
     code, _, err = run(["host/lib/docker-up.sh"], timeout=30)
     docker = code == 0
     if not docker:
@@ -398,12 +408,7 @@ def main():
                 else "not read — docker is not answering"
             ),
         },
-        "transcripts": transcripts()
-        if docker
-        else {
-            "waiting_on_review": None,
-            "error": "not read — docker is not answering",
-        },
+        "transcripts": transcripts(),
         "image": image(),
         "deploy": deploy(),
         "errors": errors,

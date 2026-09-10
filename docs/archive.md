@@ -1294,6 +1294,19 @@ runs to count now, and what fills the cache on an installation where no session 
 cleared. A missing cache is not a zero — the screen says the count has not been taken here, and names
 `--held`.
 
+**The status snapshot reads the cache too.** It asked `--held` at every publish, with 300 seconds to
+answer. After a gate change a count reads every transcript, and on the agent's one-vCPU host that
+takes longer: `subprocess.run` killed the script with SIGKILL, its `trap cleanup EXIT` never ran, and
+the extracted copy stayed in `$TMPDIR` — five of them, 2.4 GB with 4.5 GB free, measured 2026-09-10.
+The read never finished either, so the fingerprint was not written and the next publish did the same,
+until a session-end collection, which has no timeout, got through. Killing the process group with
+SIGTERM so the trap runs was rejected: it keeps a five-minute scan in every publish for a number the
+cache already holds. The snapshot carries the instant as `counted_at`, for the reason the screen
+says how old its count is.
+
+The cache is behind in one case: a gate change can change what is held without a session ending, and
+the count shows it at the next collection or `--held`.
+
 `just collect` declares no options of its own. `--approve <hash> <why>` and `--redact <hash> <why>`
 take two values each and repeat, which a declared option cannot express, so everything reaches
 `collect.sh` as it was typed — and a note is a sentence, which is why it travels as
@@ -1329,8 +1342,8 @@ answering produces no JSON at all, which on the page is indistinguishable from a
 switched off — and those two want opposite reactions from whoever is reading.
 
 Docker is asked first and everything that needs it reads that answer. Not for tidiness: without it,
-three sections would each spend their own timeout discovering the same silence, and the collector
-would take minutes to say the one thing that was wrong.
+each such section would spend its own timeout discovering the same silence, and the collector would
+take minutes to say the one thing that was wrong.
 
 ### It asks the one implementation of each rule
 
@@ -1348,7 +1361,8 @@ See docs/budget.md. The schedule comes from `just schedule --state`, which exist
 what counts as paused is a `#PAUSED ` prefix that recipe writes, and a second reader of the crontab
 would go on believing the old spelling; see docs/schedule.md. The deployment comes from `just deploy
 --state`, the one place the branch name, the tag names and the path of the deployed checkout are
-decided; see docs/release.md. The held count comes from `collect.sh --held`.
+decided; see docs/release.md. The held count comes from `RUNNER_REVIEW_HELD`, which every collection
+writes, and needs no docker; see [The count without the collection](#the-count-without-the-collection).
 
 `session-stats.py`'s lines are carried through verbatim as strings — the cost, and since 2026-08-28
 which model answered, which is the page's only witness to a downgrade. It has no machine dialect and
