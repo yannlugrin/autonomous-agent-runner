@@ -19,6 +19,8 @@ set -uo pipefail
 # shellcheck source=SCRIPTDIR/../lib/root.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
 . host/lib/mirror.sh
+# shellcheck source=SCRIPTDIR/../lib/deploy-host.sh
+. host/lib/deploy-host.sh
 
 need_mirror
 
@@ -72,34 +74,25 @@ problems=()
 unproven=()
 
 
-# --- who is mirroring whom ---
-# Slugs are derived, never written down twice: the archive's from the remote,
-# the source's from the workflow, which is what decides what gets mirrored.
-# Three substitutions rather than one capture, since ERE has no lazy quantifier
-# and the tempting one leaves the `.git` on.  see docs/archive.md#against-the-source
+# --- whose mirror ---
+# The slug is derived from the clone's remote, never written down twice. Three
+# substitutions rather than one capture, since ERE has no lazy quantifier and the
+# tempting one leaves the `.git` on.  see docs/archive.md#against-the-records
 
 archive=$(git -C "$MIRROR" remote get-url origin 2>/dev/null \
     | sed -E 's#\.git$##; s#^git@[^:]+:##; s#^https?://[^/]+/##')
-# Off origin/main and not the working tree: the operator edits in that folder, so
-# its files are what is being changed, not what runs. The blob is fetched on
-# demand, which is what a blobless clone is for.
-wf="$workflow on $archive"
-source=$(git -C "$MIRROR" show "origin/main:.github/workflows/$workflow" 2>/dev/null \
-    | sed -n 's#^ *SOURCE_URL: *git@github.com:\(.*\)\.git *$#\1#p')
 
 
 # --- the fetch ---
 # A status read off stale refs is worse than none, so fetching is first and a
 # failure says so rather than being swallowed. The namespace is named explicitly
 # because a clone's default refspec does not carry it, and everything below
-# would otherwise report "the mirror has never run" on a healthy one; `main`
-# comes too, because the workflow file is read out of it — into origin/main, and
-# never onto the local branch, which is checked out and belongs to the operator.
+# would otherwise report "the mirror has never run" on a healthy one. Nothing is
+# fetched onto a branch: the clone's `main` is checked out and the operator's.
 #   see docs/archive.md#a-ref-not-a-branch
 
 printf 'fetching     : '
-if git -C "$MIRROR" fetch --quiet --prune origin \
-    '+refs/memory/*:refs/memory/*' '+refs/heads/main:refs/remotes/origin/main' 2>/dev/null; then
+if git -C "$MIRROR" fetch --quiet --prune origin '+refs/memory/*:refs/memory/*' 2>/dev/null; then
     echo 'ok'
 else
     echo 'FAILED — everything below is from local refs and may be stale'
@@ -159,7 +152,7 @@ marks=$(git -C "$MIRROR" for-each-ref --sort=-refname --format='%(refname)' 'ref
 if [ -z "$marks" ]; then
     # Deliberately not "upstream never rewrote anything". These record what a
     # run saw, and a rewrite between two runs leaves none — which is what the
-    # source comparison below is for.
+    # check against the records below is for.
     echo "  none — no run has had to preserve a rewritten tip."
 else
     echo "  $(printf '%s\n' "$marks" | wc -l) rewrite(s) preserved. Nothing was lost; read them with:"
@@ -310,9 +303,6 @@ echo
 # and no run followed: a dispatch was owed and did not arrive — and that failure
 # says so on stderr, where cron is the only reader.
 #
-# Before the source comparison, which counts commits behind as unmirrored only
-# when something here is already wrong.
-#
 # The grace is for the seconds between a session ending and its run appearing
 # in the list: without it every `just status` in the minute after a session
 # would report a backup that is fine as late.
@@ -333,61 +323,62 @@ if [ -n "$last_run" ] && [ -n "$session_ended_at" ] \
 fi
 
 
-# --- against the source ---
-# The mirror can be healthy and still be behind: this asks the forge what
-# upstream actually holds right now. `diverged` is the interesting answer — it
-# means a rewrite has happened that no run has seen yet, and the next run is
-# what preserves it.  see docs/archive.md#against-the-source
+# --- against the records ---
+# Whether the mirror holds the memory as the agent last committed it: the newest
+# commit the sealed records name must be on the mirror ref. One commit and one git
+# question, however long the history. The records are read where they are sealed
+# — here, or the archive's `cache` branch when the agent runs elsewhere — and the
+# agent's own repository is never read.  see docs/archive.md#against-the-records
 
-echo "== against the source =="
-if [ -z "$source" ]; then
-    echo "  could not read SOURCE_URL from $wf — skipped."
-elif ! command -v gh >/dev/null 2>&1; then
-    echo "  gh is not installed — skipped."
+# The newest run that made a commit, as "<run end> <its newest commit>": a run's
+# commits are stored oldest first. Seven days back at most.
+newest_recorded() {
+    local filter='.runs[]? | select((.commits // []) | length > 0) | "\(.to) \(.commits | last)"'
+    local day found
+    if deploying_elsewhere; then
+        # shellcheck source=SCRIPTDIR/../lib/archive.sh
+        . host/lib/archive.sh
+        ( need_archive ) >/dev/null 2>&1 || return 0
+        git -C "$ARCHIVE" fetch --quiet origin cache 2>/dev/null
+        for day in $(git -C "$ARCHIVE" ls-tree -r --name-only origin/cache records 2>/dev/null \
+                       | sed 's#/[^/]*$##' | sort -u | tail -7 | sort -r); do
+            found=$(git -C "$ARCHIVE" archive origin/cache "$day" 2>/dev/null | tar -xO 2>/dev/null \
+                      | jq -r "$filter" 2>/dev/null | sort -n | tail -1)
+            [ -n "$found" ] && { printf '%s\n' "$found"; return 0; }
+        done
+    else
+        for day in $(printf '%s\n' "${RUNNER_RECORDS_DIR:-/nonexistent}"/*/* | sort -r | head -7); do
+            [ -d "$day" ] || continue
+            found=$(cat "$day"/*.json 2>/dev/null | jq -r "$filter" 2>/dev/null | sort -n | tail -1)
+            [ -n "$found" ] && { printf '%s\n' "$found"; return 0; }
+        done
+    fi
+}
+
+echo "== against the records =="
+newest=$(newest_recorded)
+if [ -z "$newest" ]; then
+    echo "  no sealed run made a commit in the last seven days of records — nothing to check."
 elif ! git -C "$MIRROR" rev-parse --verify --quiet "$ref" >/dev/null; then
     echo "  nothing mirrored yet — skipped."
 else
-    base=$(git -C "$MIRROR" rev-parse "$ref")
-    # One call, both outcomes read from it. The failures are not noise here —
-    # the two below are the loudest signals this recipe has.
-    if raw=$(gh api "repos/$source/compare/$base...main" 2>&1); then
-        # Three fields off one line, and `read` rather than `set --`: an answer
-        # that is not a comparison leaves nothing to split, and the positionals
-        # are then UNSET — read under `set -u`, that ends the recipe here, with
-        # no verdict and nothing on the screen to say why.
-        #   see docs/archive.md#a-reading-that-failed-is-not-a-judgement
-        read -r how ahead behind <<<"$(printf '%s' "$raw" \
-            | jq -r '"\(.status) \(.ahead_by) \(.behind_by)"' 2>/dev/null)"
-        case "$how" in
-            identical) echo "  current — $source@main is exactly what is mirrored." ;;
-            ahead)     printf '  behind by %s commit(s).\n' "$ahead"
-                       if [ ${#problems[@]} -eq 0 ]; then
-                           echo "  The next run fast-forwards — a session ending asks for one."
-                       else
-                           problems+=("$ahead commit(s) of $AGENT_NAME's memory are NOT mirrored")
-                       fi ;;
-            diverged)  printf '  DIVERGED — %s ahead, %s behind. Upstream rewrote history and no run\n' "$ahead" "$behind"
-                       echo "  has seen it yet. The next run marks the tip above before resetting." ;;
-            '')        echo "  could not be read — $source answered, but not with a comparison." ;;
-            *)         printf '  %s (ahead %s, behind %s)\n' "$how" "$ahead" "$behind" ;;
-        esac
+    read -r ended sha <<<"$newest"
+    short=${sha:0:7}
+    at=$(date -d "@$ended" '+%Y-%m-%d %H:%M' 2>/dev/null || printf '%s' "$ended")
+    mark=$(git -C "$MIRROR" for-each-ref --contains "$sha" --format='%(refname)' \
+             'refs/memory/rewound/*' 2>/dev/null | head -1)
+    if git -C "$MIRROR" merge-base --is-ancestor "$sha" "$ref" 2>/dev/null; then
+        echo "  current — $short, the newest commit in the records (a run that ended $at), is on the mirror."
+    elif [ -n "$mark" ]; then
+        echo "  REWRITTEN — $short, the newest commit in the records, is no longer on the mirror ref;"
+        echo "  $mark preserved it."
+        problems+=("$short, the newest commit in the records, was rewritten away — $mark holds it")
+    elif [ -n "$last_run" ] && [ "$ended" -lt "$last_run" ]; then
+        echo "  NOT MIRRORED — $short, from a run that ended $at, is not on the mirror, and a"
+        echo "  mirror run has happened since. Behind, or rewritten before any run saw it."
+        problems+=("$short, the newest commit in the records, is not in the mirror though a run followed it")
     else
-        case "$raw" in
-            # Not an error to report as one: the forge is saying the two
-            # histories share no root at all — a replacement rather than a
-            # rewrite. The mechanism handles it identically, and this is the
-            # window in which nothing has recorded it yet.
-            *"No common ancestor"*)
-                echo "  UNRELATED — $source@main shares no ancestor with the mirrored tip."
-                echo "  The history was replaced, not extended. Nothing is lost: the next run"
-                echo "  marks $(git -C "$MIRROR" rev-parse --short "$ref") at refs/memory/rewound/<ts>, pushes it, then resets." ;;
-            *"Not Found"*)
-                echo "  the mirrored tip is no longer known to $source."
-                echo "  A tip upstream cannot find is itself the signal: it was rewritten away"
-                echo "  and garbage-collected. Only our copy holds it now." ;;
-            *)  printf '  could not compare against %s:\n    %s\n' "$source" \
-                    "$(printf '%s' "$raw" | head -1 | cut -c1-120)" ;;
-        esac
+        echo "  not in the mirror yet — $short is from a run that ended $at, after the last mirror run."
     fi
 fi
 

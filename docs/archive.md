@@ -1599,7 +1599,7 @@ field nobody would think to doubt. `<ref>..<mark>` is exactly the commits the re
 the preserved tip, not from the ref now.
 
 "No marks" is deliberately not reported as "upstream never rewrote anything". Marks record what a *run* saw,
-and a rewrite between two runs leaves none — which is what the comparison against the source is for.
+and a rewrite between two runs leaves none — which is what the check [against the records](#against-the-records) is for.
 
 ### Health, and the state field
 
@@ -1640,22 +1640,30 @@ So a failed run has its jobs read — one call, only when the run failed — and
 `mirror`. Another job failing is a line and not a problem. A job that could not be read is not a job that
 passed, and lands with the ones that failed.
 
-### Against the source
+### Against the records
 
-The mirror can be healthy and still be behind, so `just mirror` asks the forge what upstream actually holds
-right now. `diverged` is the interesting answer — a rewrite has happened that no run has seen yet, and the
-next run is what preserves it.
+The mirror can be healthy and still be behind, so `just mirror-status` asks whether it holds the memory as the
+agent last committed it: the newest commit the sealed records name — the last one of the most recent run that
+made any — must be on `refs/memory/mirror`. One commit and one `git merge-base --is-ancestor`, however long the
+history: if the newest is there, everything before it is. The records are read where they are sealed, on the
+host that runs the agent, or from the archive's `cache` branch on one that does not; seven days back at most.
 
-Two failures of that call are not noise but the loudest signals the recipe has. "No common ancestor" means the
-forge is saying the two histories share no root at all — a replacement rather than a rewrite, which is what
-re-seeding a repository looks like; the mechanism handles it identically, and this is the window in which
-nothing has recorded it yet. "Not Found" means the mirrored tip is no longer known upstream: a tip upstream
-cannot find is itself the signal, it was rewritten away and garbage-collected, and only our copy holds it now.
+Three answers. On the ref: current. Not on the ref but inside a rewind mark: the memory was rewritten after it,
+and a run preserved what it held — a problem, because a rewrite of the memory is never information. Neither: a
+problem when a mirror run has started since that run ended — the mirror is behind, or the commit was rewritten
+away before any run saw it — and merely waiting otherwise.
 
-Slugs are derived, never written down twice. The archive's comes from the remote; the source's from the
-workflow file, which is what actually decides what gets mirrored. Three `sed` substitutions rather than one
-capture: ERE has no lazy quantifier, so the tempting `([^/]+/[^/]+?)(\.git)?$` leaves the `.git` on — and the
-slug then 404s in a way that reads as "no access".
+It replaced a comparison against the agent's own repository through the forge's API. The runner does not read
+that repository: the mirror is how the memory is reached. On the host that runs the agent the token reads only
+the mirror, so that comparison answered 404 there and reported it as a tip rewritten away. Measured 2026-09-10.
+
+A record also names commits on branches other than `main`, and commits whose push failed; either would read as
+not mirrored. Over the whole store on 2026-09-10 — 1,318 commits named by 668 runs — every one was in the
+mirror.
+
+The mirror repository's slug is derived from the clone's remote, never written down twice. Three `sed`
+substitutions rather than one capture: ERE has no lazy quantifier, so the tempting `([^/]+/[^/]+?)(\.git)?$`
+leaves the `.git` on — and the slug then 404s in a way that reads as "no access".
 
 ### Asking the mirror to run
 
