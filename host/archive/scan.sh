@@ -157,7 +157,9 @@ CACHE_DIR="${RUNNER_CACHE_DIR:?not set — run this through 'just', which derive
 FINGERPRINT_AT="$CACHE_DIR/gate-fingerprint"
 
 fingerprint=$({
-    find host/archive -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum
+    # C collation: a shell's locale sorts these apart from cron's, and the gate reads as changed.
+    # see docs/archive.md#the-order-is-the-locales
+    find host/archive -maxdepth 1 -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
     sha256sum image/config/secret-shapes.txt || echo "no shapes of this installation's own"
     if [ "$GITLEAKS" = true ]; then
         sha256sum "$(command -v gitleaks)"; gitleaks version

@@ -1121,6 +1121,22 @@ through this gate", and a run that skipped part of the archive cannot claim it. 
 directory that cannot be written costs nine seconds a run and nothing else, so it is not an
 error.
 
+### The order is the locale's
+
+The gate's files are hashed in `sort` order, and `sort` collates by locale. Cron runs in
+`C.UTF-8`; an ssh shell arrives with the client's `LC_ALL`, which Ubuntu's `ssh_config`
+sends, and where that locale is installed `archived.py` sorts to a different place. Measured
+2026-09-10 on both hosts: one unchanged gate hashed to `40d80543…` under `C` and to
+`8910b37e…` under `en_US.UTF-8`.
+
+Each then reads the other's fingerprint as a changed gate. A run from a shell after one from
+cron read every transcript, and the next cron run read them all again: 692 transcripts, about
+five minutes on the agent's one-vCPU host. It stayed out of sight because the `--held` count
+the status snapshot asks for writes no log, so `run.log` showed only cron's collections, and
+those skipped.
+
+So the sort is `LC_ALL=C`, which orders the same in every environment.
+
 ### What the run says about it
 
 "Clean" over 506 transcripts and "Clean" over the three of them anything looked at are
