@@ -254,8 +254,8 @@ status=$?
 # last spoke — told to the next session so it can tell silence from inactivity.
 #
 # --push, and the mirror, for the same reasons as in `run`: an archive that
-# stops at this machine is not a backup of it, and GitHub's schedule is not to
-# be relied on.
+# stops at this machine is not a backup of it, and the mirror has no schedule to
+# fall back on.
 
 session_ended
 chat_ended
@@ -278,7 +278,7 @@ host/archive/publish-status.sh --now || true
 just records || echo "RECORDS_NOT_SEALED — the reason is above; 'just records' picks it up next time." >&2
 
 # After the last push to the archive, as in `run`.
-host/archive/dispatch-mirror.sh || echo "MIRROR_NOT_DISPATCHED — the archive's mirror was not asked to run; its schedule is the only trigger left." >&2
+host/archive/dispatch-mirror.sh || echo "MIRROR_NOT_DISPATCHED — the archive's mirror was not asked to run, and nothing else will until the next session end." >&2
 
 # When the credentials the agent runs on expire. Here because this is the one
 # moment the answer is free — the dates are in the container, nothing is

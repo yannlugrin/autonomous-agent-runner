@@ -390,7 +390,7 @@ between a record that is current and one that is as current as something else
 managed to be.
 
 **Not the mirror.** It is refreshed by a GitHub Action asked to run at every
-session end, with a daily schedule behind it as a backstop: on 2026-09-06 it had
+session end, and by nothing else since the schedule went: on 2026-09-06 it had
 been failing since the 3rd, was 245 commits behind, and a third of the archive
 could not seal against it.
 
@@ -1363,3 +1363,8 @@ The honest question is whether an act succeeds. `setup-gh` posts a throwaway ref
 and reads the answer: a 403, `Resource not accessible by personal access token`,
 is the pass. When it succeeds the ref is deleted again, and the recipe refuses
 to finish.
+
+`setup-mirror` asks the same of the status page's token before storing it on the
+archive: the machine that runs the agent can push a workflow to the archive's
+`main`, and a workflow there can spend any secret the archive holds. Both call
+`mirror_cannot_write` in `host/lib/mirror.sh`.

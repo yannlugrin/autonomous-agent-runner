@@ -26,6 +26,7 @@
 set -uo pipefail
 # shellcheck source=SCRIPTDIR/../lib/root.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
+. host/lib/mirror.sh
 
 REPO="${AGENT_MIRROR_REPO:?not set — the mirror repository, owner/name, from .env}"
 
@@ -42,22 +43,6 @@ command -v gh >/dev/null || die "gh is not installed."
 
 reads_mirror() { gh api "repos/$REPO" --jq .full_name >/dev/null 2>&1; }
 
-# A ref that means nothing, created and then removed. A 403 is the answer this
-# wants: the token cannot write, which is the property being installed. The sha
-# is the mirror's own tip, so nothing about this depends on what is in the
-# repository. see docs/monitor.md#only-a-write-attempt-tells-the-tokens-apart
-cannot_write() {
-    local sha out
-    sha=$(gh api "repos/$REPO/git/ref/memory/mirror" --jq .object.sha 2>/dev/null) || return 0
-    [ -n "$sha" ] || return 0
-    out=$(gh api -X POST "repos/$REPO/git/refs" \
-        -f ref=refs/probe/permcheck -f "sha=$sha" 2>&1) && {
-        gh api -X DELETE "repos/$REPO/git/refs/probe/permcheck" >/dev/null 2>&1
-        return 1
-    }
-    printf '%s' "$out" | grep -q 'not accessible by personal access token'
-}
-
 
 # --- the credential ---
 
@@ -72,7 +57,7 @@ good() {
     gh auth status >/dev/null 2>&1 || return 1
     reads_mirror || return 1
     [ "$runtime" = no ] && return 0
-    cannot_write
+    mirror_cannot_write
 }
 
 if good; then
@@ -126,7 +111,7 @@ rather than passing the recipe as a command."
     reads_mirror || die "That token cannot read $REPO. Check the resource owner and the
 repository list — a fine-grained token reaches only what it names."
     if [ "$runtime" = yes ]; then
-        cannot_write || die "That token CAN write $REPO. It is the workflow's token, not this
+        mirror_cannot_write || die "That token CAN write $REPO. It is the workflow's token, not this
 host's. Make one with Contents: Read-only and try again."
         echo "  installed: reads $REPO, cannot write it."
     else
@@ -156,7 +141,7 @@ else
 fi
 
 if [ "$runtime" = yes ]; then
-    if cannot_write; then
+    if mirror_cannot_write; then
         echo "  write      : refused, which is what this host must not be able to do"
     else
         die "This host runs the agent and can write the record it is audited against.

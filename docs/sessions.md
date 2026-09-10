@@ -723,9 +723,9 @@ local archive checkout is a second copy on the same disk as the volume it
 copies, which is not a backup. The review gate has already taken the
 credential-shaped transcripts out of that commit — they stay in the volume and
 are offered again next time — so what goes to origin is exactly what was never
-at risk. The mirror is asked for immediately afterwards because the memory has
-just been pushed and GitHub keeps its schedule badly; a mirror that was not
-dispatched costs an hour of fidelity, not a run that went wrong. See
+at risk. The mirror is asked for once the session's pushes are done, because the
+memory has just been pushed and the workflow has no schedule; a mirror that was
+not dispatched waits for the next session end, and `just status` reports it late. See
 docs/archive.md.
 
 The status page is republished with `--force`, skipping its floor: a session

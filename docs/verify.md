@@ -190,9 +190,8 @@ what stops working without them so the operator can decide whether it matters
 here.
 
 `gh` is the `spare` that costs something real: without it no session end
-dispatches the mirror, and the schedule GitHub keeps badly becomes the only
-trigger again — which looks like nothing at all until a rewrite upstream is
-lost.
+dispatches the mirror, and the workflow has no other trigger — which looks like
+nothing at all until a rewrite upstream is lost.
 
 ### A missing flock reads as a held lock
 

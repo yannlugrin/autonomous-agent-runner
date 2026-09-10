@@ -44,7 +44,7 @@ fi
 # session end dispatches the mirror, which looks like nothing at all until a
 # rewrite upstream is lost.
 
-spare gh        "no session end asks the mirror to run, leaving it on its daily backstop"
+spare gh        "no session end asks the mirror to run, and nothing else does"
 spare gitleaks  "just collect runs its pattern floor alone"
 spare fuser     "the hint run prints when the lock is held with nothing running"
 spare systemctl "just schedule cannot say whether cron is actually running"

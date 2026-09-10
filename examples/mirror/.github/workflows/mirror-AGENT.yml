@@ -41,27 +41,9 @@
 name: mirror-REPLACE_WITH_AGENT
 
 on:
-  # Daily, at 04:19 UTC, and this is a backstop rather than the mechanism: the
-  # runner asks for a run at the end of every session — host/archive/
-  # dispatch-mirror.sh — and that is what keeps the mirror current. The floor
-  # exists for the day dispatch stops: a runner that is off, a token that
-  # expired, a workflow somebody disabled. Without it a mirror that stopped
-  # being asked stops forever, silently; with it the gap `just mirror-status`
-  # reports is bounded by a day.
-  #
-  # A rewrite upstream can only be preserved back to the last run, so what the
-  # fidelity window really is depends on the dispatch, not on this line.
-  #
-  # An odd minute and an unpopular hour on purpose: GitHub runs schedules on a
-  # best-effort basis and drops them under load, which is worst on the hour.
-  #
-  # Scheduled workflows run only from the default branch, and GitHub disables
-  # them after 60 days with no repository activity. Nothing but this workflow
-  # writes here, and whether its own pushes count has not been measured — if
-  # they do not, the schedule switches itself off one day and
-  # `just mirror-status` is what says so.
-  schedule:
-    - cron: '19 4 * * *'
+  # No schedule: the runner asks for a run at the end of every session —
+  # host/archive/dispatch-mirror.sh — and nothing else runs it. A rewrite
+  # upstream can only be preserved back to the last run.
   workflow_dispatch:
 
 permissions:

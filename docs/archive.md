@@ -23,7 +23,7 @@ the machine's own judgement.
 | `AGENT_MIRROR_WORKFLOW` | the mirror workflow's file name **in the mirror's repository**. `mirror-<agent>.yml` unless set; nothing here renames that file |
 | `AGENT_MIRROR_COOLDOWN` | minutes before a session may ask the mirror to run again. Unset or unreadable means every session asks — a cost knob, where the direction with no undo is a mirror that did not run |
 | `just setup-archive` | once: clone the archive, on your own `gh` credential |
-| `just setup-mirror` | once: write the three secrets the mirror's workflow runs on, in its own repository. The agent is told none of it |
+| `just setup-mirror` | once: write the three secrets the mirror's workflow runs on, in its own repository, and the status page's token that reads the mirror, on the archive. The agent is told none of it |
 | `just setup-gh` | once per host: the token that host reads the mirror and asks for a run with, and git's helper. On a host that runs the agent it proves the token cannot write the record |
 | `just collect` | read the transcripts out of the volume, put them through the gate, commit what passes. `--push` publishes, `--held` lists what is held back, `--approve <hash> "why"` archives one as it stands, `--redact <hash> "why"` archives it with the credential rewritten out |
 | `just read <id>` | one transcript whole, by the id `just stats --by-session` shows |
@@ -1603,15 +1603,15 @@ and a rewrite between two runs leaves none — which is what the comparison agai
 
 ### Health, and the state field
 
-`state` is the field that matters most and the one nothing else reveals: GitHub disables a schedule after 60
-days of repository inactivity, and a disabled workflow fails by never running, which looks exactly like an
-agent with nothing to say.
+`state` is the field that matters most and the one nothing else reveals: a disabled workflow fails by never
+running, which looks exactly like an agent with nothing to say.
 
 `gh` writes an error body to *stdout*, so `2>/dev/null` hides only half of a failure and the other half is
 captured as if it were the answer. The exit status is the only thing worth testing.
 
-The mirror is asked to run at every session end and scheduled daily behind that, and GitHub drops scheduled runs under load, so a missed one is normal and six
-in a row is not: past that runs are being skipped or failing, whatever the last conclusion was.
+The mirror is asked to run at every session end and has no schedule, so hours without a run are a quiet agent
+and not a fault. What is judged is whether a session end was followed by a run — see
+[Late, and merely due](#late-and-merely-due).
 
 ### A reading that failed is not a judgement
 
@@ -1659,17 +1659,15 @@ slug then 404s in a way that reads as "no access".
 
 ### Asking the mirror to run
 
-The mirror is scheduled `19 * * * *`, and GitHub runs schedules on a best-effort basis. Measured 2026-08-27,
-the last five runs were 03:22, 22:18, 19:19, 17:17 and 15:53 — gaps of five hours, three, two. That cadence is
-the mirror's fidelity knob and its only one: a rewrite upstream can only be preserved back to the last run, so
-a commit that appeared and was rewritten away inside a dropped gap was never seen and is gone. A session end is
+The mirror used to be scheduled `19 * * * *`, and GitHub runs schedules on a best-effort basis. Measured
+2026-08-27, the last five runs were 03:22, 22:18, 19:19, 17:17 and 15:53 — gaps of five hours, three, two. That
+cadence was the mirror's fidelity knob: a rewrite upstream can only be preserved back to the last run, so a
+commit that appeared and was rewritten away inside a dropped gap was never seen and is gone. A session end is
 the moment the memory actually moved — `push-on-exit` has just pushed it, see docs/backup.md — so it is the
-moment worth asking on, and the only one this host knows about that GitHub does not.
+moment worth asking on, and it is now the only thing that asks: the workflow has no schedule.
 
-The cooldown counts *every* run rather than only the ones dispatched from here. The schedule still fires; if
-this only remembered its own dispatches, a session ten minutes after a scheduled run would start a second one
-for nothing. Counting whatever ran last — cron, dispatch, someone pressing the button — is what keeps the total
-at about one an hour instead of one an hour plus one a session. That matters because the archive is private and
+The cooldown counts *every* run rather than only the ones dispatched from here, so a session ten minutes after
+a run started by hand does not start a second one for nothing. That matters because the mirror is private and
 Actions minutes there come out of a free monthly allowance.
 
 An unset or empty cooldown dispatches every time, deliberately. This is a cost knob and not a guard, which is
@@ -1683,32 +1681,33 @@ In-progress runs count, which is what we want: a mirror that started a minute ag
 dispatch takes a few seconds to appear in `gh run list`, so a cooldown of one or two minutes would sometimes
 miss the run it just asked for; nothing guards against that, because the value this is for is an hour. A
 negative age — GitHub's clock ahead of this one — reads as "ran just now" and skips, which is the safe direction
-here: a skipped dispatch costs an hour of fidelity the schedule still covers, and no clock skew makes a mirror
-wrong.
+here: a skipped dispatch waits for the next session end, and no clock skew makes a mirror wrong.
 
 `gh workflow run`'s own stdout is held back: it says "Created workflow_dispatch event for $WORKFLOW at main",
 which is the script's own line with more words.
 
 ### Late, and merely due
 
-**The mirror is not on a clock, so "overdue" is not a fault by itself.** What runs it is a session ending
-more than `AGENT_MIRROR_COOLDOWN` minutes after the last run; the schedule fires when GitHub feels
-like it — two of the last twelve runs on 2026-09-07 were `schedule`, the rest `workflow_dispatch`. So a run
-that is due and has not happened is usually a machine with nothing to say, and calling that a broken backup
-is how a real alarm stops being believed.
+**The mirror is not on a clock, so "overdue" is not a fault by itself.** The workflow has no schedule: what
+runs it is a session ending more than `AGENT_MIRROR_COOLDOWN` minutes after the last run, or every session end
+when that is unset. So hours without a run are usually a machine with nothing to say, and calling that a
+broken backup is how a real alarm stops being believed.
 
-It is late when a session HAS ended since the run was due and no run followed: a dispatch was owed and did
+It is late when a session HAS ended after the run was due and no run followed: a dispatch was owed and did
 not arrive. That failure is otherwise silent — `run.sh` writes `MIRROR_NOT_DISPATCHED` to stderr, and cron
-is the only reader. The grace is five minutes, for the seconds between a session ending and its run
-appearing in `gh run list`; without it every `just status` in the minute after a session would report a
-backup that is fine as late.
+is the only reader. So a late mirror is a problem, and the verdict FAIL. The grace is five minutes, for the
+seconds between a session ending and its run appearing in `gh run list`; without it every `just status` in the
+minute after a session would report a backup that is fine as late.
+
+This replaced a rule that counted six hours without any run as a problem whatever had been ending. It was
+written for an hourly schedule; with no schedule it would read every quiet night as a stopped backup.
 
 `mirror.sh --state [<last session end>]` prints that judgement and the instants behind it as `key: value`
 lines, for `just status`. It runs exactly the same code as the screen — stdout to `/dev/null`, the block on
-descriptor 3 — so the two cannot disagree, and the exit status is the same verdict either way. The epoch is
-handed in rather than read here, because `host/lib/session-lock.sh` is the one place that knows the shape of
-that stamp. The 6-hour staleness rule is unchanged and outside all of this: nothing at all for six hours is
-a problem whatever has been ending.
+descriptor 3 — so the two cannot disagree, and the exit status is the same verdict either way. The screen
+reads the last session end itself, through `session_ended_epoch` in `host/lib/session-lock.sh`, the one place
+that knows the shape of that stamp. A host where no session has ended since the last run has nothing to judge,
+so lateness is seen on the host that runs the sessions.
 
 
 ## The archive's setup

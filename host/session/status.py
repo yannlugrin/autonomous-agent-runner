@@ -609,7 +609,6 @@ def backup_section(fields, code, verdict, now):
     # here, and what runs the mirror is a session ending. mirror.sh decides
     # whether that has happened and this only says so.
     if one(fields, "late") == "yes":
-        verdict.problem("the backup was due and a session has ended since without one running")
         rows.append(("LATE", ["a session ended after it was due and no run followed"]))
     elif due is not None:
         rows.append(

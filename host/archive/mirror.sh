@@ -34,6 +34,14 @@ case "${1:-}" in
 esac
 if [ "$as_state" = yes ]; then exec 3>&1 1>/dev/null; else exec 3>/dev/null; fi
 
+# The screen reads the last session end itself; --state is handed it by `just
+# status`, which reads it once for everything it shows.
+if [ "$as_state" = no ]; then
+    # shellcheck source=SCRIPTDIR/../lib/session-lock.sh
+    . host/lib/session-lock.sh
+    session_ended_at=$(session_ended_epoch) || session_ended_at=""
+fi
+
 ref="refs/memory/mirror"
 workflow="${AGENT_MIRROR_WORKFLOW:-mirror-$AGENT_USER.yml}"
 # The job inside that workflow that IS the backup. Named rather than derived:
@@ -181,8 +189,7 @@ echo
 
 
 # --- the workflow ---
-# `state` is the field that matters most and the one nothing else reveals:
-# GitHub disables a schedule after 60 days of repository inactivity, and a
+# `state` is the field that matters most and the one nothing else reveals: a
 # disabled workflow fails by never running, which looks exactly like an agent
 # with nothing to say.  see docs/archive.md#health-and-the-state-field
 
@@ -224,9 +231,9 @@ else
         # stdout, a truncated read — and an age taken from a timestamp that is
         # not there is not an age.  see docs/archive.md#a-reading-that-failed-is-not-a-judgement
         echo "  last run   : COULD NOT BE READ — gh answered, but not with a run list."
-        echo "               The schedule is not judged below. Read it by hand:"
+        echo "               Lateness is not judged below. Read it by hand:"
         echo "                 gh run list --repo $archive --workflow $workflow"
-        unproven+=("gh answered with something that is not a run list, so the schedule was not read")
+        unproven+=("gh answered with something that is not a run list, so the last run was not read")
     else
         # GitHub answers in UTC and this is read by a person, so it is turned
         # round here — the age below stays arithmetic on the raw value.
@@ -235,21 +242,10 @@ else
             "$(printf '%s' "$run" | jq -r '.[0] | "\(.status)/\(.conclusion // "-")"')"
         printf '               %s\n' "$(printf '%s' "$run" | jq -r '.[0].url')"
         last_conclusion=$(printf '%s' "$run" | jq -r '.[0].conclusion // .[0].status')
-        # Hourly, and GitHub drops scheduled runs under load, so a missed hour
-        # is normal and six in a row is not: past that runs are being skipped
-        # or failing, whatever the last conclusion was.
-        #
         # The parse is tested rather than assumed: a timestamp this host cannot
-        # read leaves `age` unset, and reading it under `set -u` would end the
-        # recipe mid-screen with no verdict at all.
+        # read leaves `last_run` empty, and lateness is then not judged.
         if when=$(date -u -d "$created" +%s 2>/dev/null); then
             last_run="$when"
-            age=$(( ( $(date -u +%s) - when ) / 3600 ))
-            [ "$age" -ge 6 ] && {
-                printf '  STALE      : %s hours since the last run. A session end asks for one,\n' "$age"
-                printf '               and GitHub fires the schedule when it feels like it.\n'
-                problems+=("no run for $age hours, and sessions have been ending")
-            }
         else
             printf '  age        : UNKNOWN — %s is not a timestamp this host can read.\n' "$created"
         fi
@@ -304,6 +300,37 @@ else
     fi
 fi
 echo
+
+
+# --- late ---
+# THE MIRROR IS NOT ON A CLOCK: the workflow has no schedule, and what runs it is
+# a session ending more than AGENT_MIRROR_COOLDOWN minutes after the last run, or
+# every session end when that is unset. Hours without a run are a machine with
+# nothing to say. It is late only when a session HAS ended after the run was due
+# and no run followed: a dispatch was owed and did not arrive — and that failure
+# says so on stderr, where cron is the only reader.
+#
+# Before the source comparison, which counts commits behind as unmirrored only
+# when something here is already wrong.
+#
+# The grace is for the seconds between a session ending and its run appearing
+# in the list: without it every `just status` in the minute after a session
+# would report a backup that is fine as late.
+#   see docs/archive.md#late-and-merely-due
+GRACE=300
+cooldown="${AGENT_MIRROR_COOLDOWN:-}"
+case "$cooldown" in ''|*[!0-9]*) cooldown="" ;; esac
+due=""
+[ -n "$last_run" ] && [ -n "$cooldown" ] && due=$(( last_run + cooldown * 60 ))
+late=no
+if [ -n "$last_run" ] && [ -n "$session_ended_at" ] \
+   && [ "$session_ended_at" -gt "${due:-$last_run}" ] \
+   && [ "$(( $(date +%s) - session_ended_at ))" -gt "$GRACE" ]; then
+    late=yes
+    ago=$(( ( $(date +%s) - session_ended_at ) / 60 ))
+    printf '  LATE       : a session ended %sm ago and no run has followed it.\n\n' "$ago"
+    problems+=("a session ended ${ago}m ago and no mirror run followed it — the dispatch did not arrive")
+fi
 
 
 # --- against the source ---
@@ -366,33 +393,11 @@ fi
 
 
 # --- what --state prints ---
-# The lateness judgement is here and not in the screen that shows it, for the
-# reason the verdict below is: one place decides, everyone else reads.
-#
-# THE MIRROR IS NOT ON A CLOCK. GitHub fires the workflow's schedule when it
-# feels like it — two of the last twelve runs here — and what actually runs it
-# is a session ending more than AGENT_MIRROR_COOLDOWN minutes after the
-# last run. So a run that is due and has not happened is NOT late: it is
-# waiting for a session to end. It is late only when one has ended since, which
-# means a dispatch was owed and did not arrive — and that failure says so on
-# stderr, where cron is the only reader.
-#
-# The grace is for the seconds between a session ending and its run appearing
-# in the list: without it every `just status` in the minute after a session
-# would report a backup that is fine as late.
-GRACE=300
+# The lateness judgement is made above and not by the screen that shows it, for
+# the reason the verdict below is: one place decides, everyone else reads.
 
 emit_state() {
-    local verdict="$1" cooldown due="" late=no p u
-    cooldown="${AGENT_MIRROR_COOLDOWN:-}"
-    case "$cooldown" in ''|*[!0-9]*) cooldown="" ;; esac
-    [ -n "$last_run" ] && [ -n "$cooldown" ] && due=$(( last_run + cooldown * 60 ))
-    if [ -n "$due" ] && [ -n "$session_ended_at" ] \
-       && [ "$session_ended_at" -gt "$due" ] \
-       && [ "$session_ended_at" -gt "$last_run" ] \
-       && [ "$(( $(date +%s) - session_ended_at ))" -gt "$GRACE" ]; then
-        late=yes
-    fi
+    local verdict="$1" p u
     {
         printf 'verdict: %s\n' "$verdict"
         printf 'workflow: %s\n' "${workflow_state:-unknown}"

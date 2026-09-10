@@ -3,8 +3,8 @@
 # that is not a nicety — it runs on any host, and on one whose token only reads
 # the record it must leave everything it finds and say so rather than stop.
 # Nothing here is done twice: an installed key is left alone, an installed token
-# is left alone, settings it cannot read are left alone. FORCE_KEY=1 and
-# FORCE_TOKEN=1 are how each is replaced on purpose.
+# is left alone, settings it cannot read are left alone. FORCE_KEY=1,
+# FORCE_TOKEN=1 and FORCE_PAGE_TOKEN=1 are how each is replaced on purpose.
 #
 # It touches the mirror's own repository and the two it copies:
 #
@@ -13,7 +13,9 @@
 #   2. a fresh read-only deploy key on the agent's own repository, and one on
 #      the archive;
 #   3. those keys' private halves, stored on the mirror as <PREFIX>_SOURCE_KEY
-#      and <PREFIX>_ARCHIVE_KEY, and the push token as <PREFIX>_MIRROR_TOKEN.
+#      and <PREFIX>_ARCHIVE_KEY, and the push token as <PREFIX>_MIRROR_TOKEN;
+#   4. for the archive's status page, a token that reads the mirror and cannot
+#      write it, stored on the archive as <PREFIX>_MIRROR_READ_TOKEN.
 #
 # It does NOT make the clone `just mirror-status` reads. That one is made where
 # it is read — host/lib/mirror.sh — because the machine that runs the agent
@@ -28,6 +30,7 @@
 set -euo pipefail
 # shellcheck source=SCRIPTDIR/../lib/root.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
+. host/lib/mirror.sh
 
 MIRROR_REPO="${AGENT_MIRROR_REPO:?not set — the mirror repository, owner/name, from .env}"
 ARCHIVE_REPO="${AGENT_ARCHIVE_REPO:?not set — the archive repository, owner/name, from .env}"
@@ -319,6 +322,69 @@ repository selection."
     # --body is absent, and `--body -` would store the literal string "-".
     printf '%s' "$TOKEN" | gh secret set "$TOKEN_SECRET" --repo "$MIRROR_REPO"
     echo "  $TOKEN_SECRET set."
+fi
+
+
+# --- the status page's token on the mirror ---
+# Stored on the archive, whose `main` the machine that runs the agent can push, so
+# any workflow pushed there can spend it. It must read the mirror and never write
+# it, and that is proved by a write attempt rather than assumed.
+#   see docs/monitor.md#only-a-write-attempt-tells-the-tokens-apart
+
+step "The status page's token on $MIRROR_REPO, stored on $ARCHIVE_REPO"
+
+PAGE_SECRET="${AGENT_PREFIX}_MIRROR_READ_TOKEN"
+skip_page=false
+if secrets=$(gh secret list --repo "$ARCHIVE_REPO" 2>/dev/null); then
+    if printf '%s\n' "$secrets" | grep -q "^$PAGE_SECRET"; then
+        echo "$PAGE_SECRET is already set. Leaving it alone."
+        echo "  (FORCE_PAGE_TOKEN=1 replaces it — that is what you do when it expires.)"
+        [ "${FORCE_PAGE_TOKEN:-}" = 1 ] || skip_page=true
+    fi
+else
+    echo "This token cannot list the secrets of $ARCHIVE_REPO, so whether $PAGE_SECRET"
+    echo "is installed cannot be known from here. Leaving it alone."
+    skip_page=true
+fi
+
+if [ "$skip_page" != true ]; then
+    cat <<TEXT
+
+  Only for an archive that carries the status page — Enter on an empty line skips.
+
+  https://github.com/settings/personal-access-tokens/new
+
+    Token name          anything, e.g. $MIRROR_REPO status page
+    Resource owner      ${MIRROR_REPO%%/*}
+    Repository access   Only select repositories -> $MIRROR_REPO
+    Permissions         Contents: Read-only
+                        Actions:  Read-only
+
+TEXT
+    read -rsp "  paste the token (Enter to skip) : " PAGE_TOKEN; echo
+    if [ -z "$PAGE_TOKEN" ]; then
+        echo "  skipped — the page draws the mirror as unreadable until it is set."
+    else
+        GH_TOKEN="$PAGE_TOKEN" gh api "repos/$MIRROR_REPO/actions/workflows/$WORKFLOW" \
+                --jq .state >/dev/null 2>&1 \
+            || die "that token cannot read $WORKFLOW on $MIRROR_REPO. Check Actions: Read-only
+and the repository selection."
+        GH_TOKEN="$PAGE_TOKEN" gh api "repos/$MIRROR_REPO/git/ref/memory/mirror" \
+                --jq .object.sha >/dev/null 2>&1 \
+            || die "that token cannot read refs/memory/mirror on $MIRROR_REPO. Check Contents: Read-only."
+        mirror_cannot_write "$PAGE_TOKEN" \
+            || die "that token CAN write $MIRROR_REPO, and the machine that runs the agent
+can push a workflow that spends it. Make one with Contents: Read-only."
+        echo "  reads $MIRROR_REPO, cannot write it: ok"
+
+        exp=$(GH_TOKEN="$PAGE_TOKEN" gh api -i "repos/$MIRROR_REPO" 2>/dev/null \
+              | sed -n 's/^[Gg]ithub-[Aa]uthentication-[Tt]oken-[Ee]xpiration: *//p' | tr -d '\r')
+        echo "  expires: ${exp:-NO EXPIRY HEADER — not the fine-grained token asked for}"
+
+        printf '%s' "$PAGE_TOKEN" | gh secret set "$PAGE_SECRET" --repo "$ARCHIVE_REPO"
+        echo "  $PAGE_SECRET set on $ARCHIVE_REPO."
+    fi
+    unset PAGE_TOKEN
 fi
 
 cat <<MSG

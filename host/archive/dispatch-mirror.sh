@@ -5,14 +5,12 @@
 # part in this and is not told about it. It dispatches a workflow in the
 # operator's own archive repository; nothing here reads or writes the agent's.
 #
-# The mirror's schedule is its fidelity knob and its only one: a rewrite
-# upstream can only be preserved back to the last run, and GitHub runs schedules
-# on a best-effort basis. A session end is the moment the memory actually moved,
-# so it is the moment worth asking on, and the only one this host knows about
-# that GitHub does not.
+# The workflow has no schedule, so this is the only thing that asks it to run. A
+# rewrite upstream can only be preserved back to the last run, and a session end
+# is the moment the memory actually moved, so it is the moment worth asking on.
 #
-# The cooldown counts every run and not only the ones dispatched from here,
-# because the schedule still fires. An unset or empty cooldown dispatches every
+# The cooldown counts every run and not only the ones dispatched from here, so a
+# run started by hand counts too. An unset or empty cooldown dispatches every
 # time, deliberately: this is a cost knob and not a guard, and the irreversible
 # direction here is a mirror that did not run.
 #   see docs/archive.md#asking-the-mirror-to-run

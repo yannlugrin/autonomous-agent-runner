@@ -438,10 +438,10 @@ host/archive/publish-status.sh --now || true
 just records || echo "RECORDS_NOT_SEALED — the reason is above; 'just records' picks it up next time." >&2
 
 # The mirror is asked for after the last push to the archive, so its run carries this
-# session's transcript, snapshot and records; asked at all because GitHub keeps its
-# schedule badly.  see docs/archive.md#the-archives-records-are-mirrored-too
+# session's transcript, snapshot and records; asked at all because the workflow has
+# no schedule.  see docs/archive.md#the-archives-records-are-mirrored-too
 host/archive/dispatch-mirror.sh || {
-    echo "MIRROR_NOT_DISPATCHED — the archive's mirror was not asked to run; its schedule is the only trigger left." >&2
+    echo "MIRROR_NOT_DISPATCHED — the archive's mirror was not asked to run, and nothing else will until the next session end." >&2
     alert "MIRROR_NOT_DISPATCHED — the archive's mirror was not asked to run."
 }
 

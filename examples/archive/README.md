@@ -60,8 +60,3 @@ are the status page's, set by hand.
 | `<PREFIX>_ARCHIVE_TOKEN` | a fine-grained PAT on **this** repository, Contents and Workflows, read and write. It cannot be `secrets.GITHUB_TOKEN`: an Actions token may never push a commit that touches `.github/workflows/`, and the day the agent adds a workflow to its own repository every mirror run would fail. It expires, and the mirror stops dead when it does. |
 | `<PREFIX>_READ_TOKEN` | status page only. Fine-grained, read-only on the agent's repository, with Issues and Discussions read. |
 | `CF_ACCOUNT_ID`, `CF_KV_NAMESPACE_ID`, `CF_KV_TOKEN` | status page only. |
-
-**Push `main` before expecting the mirror to run.** A scheduled workflow
-only exists once it is on the default branch, and GitHub disables schedules
-after 60 days with no repository activity — a collection push counts, so
-`just collect --push` is what keeps the mirror alive.

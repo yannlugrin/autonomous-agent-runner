@@ -62,3 +62,24 @@ need_mirror() {
         echo "Could not make a clone of the mirror at $MIRROR." >&2; exit 1; }
     echo "Made a clone of $repo at $MIRROR." >&2
 }
+
+
+# --- mirror_cannot_write [token] ---
+# Whether a token is refused a ref on the mirror: gh's stored credential, or the
+# token given. A ref that means nothing, created and then removed; a 403 is the
+# answer this wants. The sha is the mirror's own tip, so nothing about this
+# depends on what is in the repository.
+# see docs/monitor.md#only-a-write-attempt-tells-the-tokens-apart
+
+# shellcheck disable=SC2120,SC2329  # the token is optional; called by setup-gh and setup-mirror
+mirror_cannot_write() (
+    repo="${AGENT_MIRROR_REPO:?not set — the mirror repository, owner/name, from .env}"
+    [ -z "${1:-}" ] || export GH_TOKEN="$1"
+    sha=$(gh api "repos/$repo/git/ref/memory/mirror" --jq .object.sha 2>/dev/null) || exit 0
+    [ -n "$sha" ] || exit 0
+    if out=$(gh api -X POST "repos/$repo/git/refs" -f ref=refs/probe/permcheck -f "sha=$sha" 2>&1); then
+        gh api -X DELETE "repos/$repo/git/refs/probe/permcheck" >/dev/null 2>&1
+        exit 1
+    fi
+    printf '%s' "$out" | grep -q 'not accessible by personal access token'
+)

@@ -445,7 +445,7 @@ fi
 # machine want it: `dispatch-mirror.sh`, which asks the mirror to run at the end
 # of every session, and `mirror-status`, which the status page reads for the
 # workflow's state and its last run. Both degrade rather than fail without it —
-# the mirror falls back to its daily backstop — which is why
+# nothing else asks the mirror to run — which is why
 # host/verify/host-tools.sh calls gh `spare` and not required.
 #
 # The credential they need is a separate matter and arrives later; the binary is
@@ -468,7 +468,7 @@ fi
 if command -v gh >/dev/null 2>&1; then
     verdict ok "gh" "$(gh --version 2>/dev/null | head -1)"
 else
-    verdict FAIL "gh" "not installed — no session end would ask the mirror to run, leaving it on its daily backstop"
+    verdict FAIL "gh" "not installed — no session end would ask the mirror to run, and nothing else does"
 fi
 
 
