@@ -386,9 +386,12 @@ fi
 # Asked of the real needler, which runs its own probe end to end on a synthetic
 # key and prints the verdict, so `just collect` and this line cannot be reading
 # two different winnows. see docs/verify.md#the-public-winnow
+#
+# The same run asks for a hex key in the spellings a tool may print it in.
+# see docs/verify.md#the-hex-spellings
 
 winnow=$(python3 host/archive/needles.py --selftest 2>/dev/null)
-verdicts_from <<< "${winnow:-FAIL|public winnow|needles.py --selftest PRINTED NOTHING — it could not run, and the winnow is unproved}"
+verdicts_from <<< "${winnow:-FAIL|public winnow|needles.py --selftest PRINTED NOTHING — it could not run, and neither the winnow nor the hex spellings are proved}"
 
 
 # --- session login ---

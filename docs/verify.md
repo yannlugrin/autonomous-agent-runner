@@ -480,6 +480,21 @@ listed: a probe spelling `=== ssh` would go on passing after a rename that had
 stopped the real thing being compared at all.
 
 
+## The hex spellings
+
+**2026-09-11.** The vault comparison matched a secret only as it was stored.
+Measured with a test key through the real needler and GNU `grep -F`: a key stored
+as `0x…` was not found printed without its prefix, and no stored form was found
+in capitals. gitleaks passes bare hex by design, so such a transcript reached the
+archive with the key sitting in the vault.
+
+The needler now adds, for a value that is nothing but hex, its digits without the
+prefix in lower and upper case. The probe stores a 32-byte key with `0x` and asks
+for both other spellings among the needles: losing either passes a transcript
+that prints the key that way, with no symptom. It runs in the same
+`needles.py --selftest` as the winnow, which prints one line for each.
+
+
 ## The archive skip
 
 The skip in `just collect` rests on one number agreeing with git's: a staged

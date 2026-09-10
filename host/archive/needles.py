@@ -6,8 +6,8 @@ r"""The strings whose presence in a transcript means a real credential is in it.
 Runs on the host, inside `just collect`. Reads the volume stream — the
 `=== <section>` blocks `read-volume.sh` extracts from the volume, plus the
 `=== exempt` list appended to it — on stdin, and prints one needle per line
-on stdout for `grep -F -f -`. `--selftest` prints one `just verify` verdict
-line instead and reads nothing.
+on stdout for `grep -F -f -`. `--selftest` prints `just verify` verdict lines
+instead and reads nothing.
 
 Imported by `check.py` and `redact.py`, which need the same sections, the
 same needles and the same whole values: two spellings of one rule drift, and
@@ -44,6 +44,7 @@ see docs/archive.md#the-verbatim-layer
 
 import base64
 import json
+import re
 import sys
 
 MIN = 12  # a whole-file secret shorter than this is an identifier
@@ -51,6 +52,7 @@ DOCUMENT_MIN = 40  # a secret picked out of a document, where words live too
 WINDOW = 24
 STRIDE = 8
 ARMOUR = "-----"
+HEX = re.compile(r"(?:0[xX])?[0-9a-fA-F]+")
 
 
 # --- the volume stream ---
@@ -143,6 +145,17 @@ def winnow(found, public):
     return [n for n in found if not (public and n in public)]
 
 
+def spellings(value):
+    """The value, and for hex its digits without `0x`, in either case."""
+    # A tool prints a key with or without its prefix, in whatever case it likes.
+    # see docs/archive.md#a-hex-secret-is-compared-in-every-spelling
+    if not HEX.fullmatch(value):
+        return [value]
+    digits = value[2:] if value[:2] in ("0x", "0X") else value
+    forms = [value] + [f for f in (digits.lower(), digits.upper()) if len(f) >= MIN]
+    return list(dict.fromkeys(forms))
+
+
 def needles(raw):
     """Every newline-free string whose presence proves this secret is there."""
     raw = raw.strip()
@@ -160,13 +173,14 @@ def needles(raw):
     except ValueError:
         parsed = None
     if parsed is not None:
-        return [v for v in leaves(parsed) if len(v) >= DOCUMENT_MIN]
-
-    if "\n" in raw:
+        found = [v for v in leaves(parsed) if len(v) >= DOCUMENT_MIN]
+    elif "\n" in raw:
         # Unparseable is not the same as absent: fall back to long words, so
         # a malformed login file cannot read as "nothing to compare against".
-        return [w for w in raw.split() if len(w) >= DOCUMENT_MIN]
-    return [raw] if len(raw) >= MIN else []
+        found = [w for w in raw.split() if len(w) >= DOCUMENT_MIN]
+    else:
+        found = [raw] if len(raw) >= MIN else []
+    return [s for v in found for s in spellings(v)]
 
 
 def values(raw):
@@ -222,6 +236,11 @@ def picked(stream):
 
 
 def selftest():
+    """Every probe of the needler, one verdict line each; non-zero if any failed."""
+    return max(winnow_selftest(), hex_selftest())
+
+
+def winnow_selftest():
     """The public-half winnow, asked in both directions, as a verdict line.
 
     Printed in `just verify`'s `state|label|detail` protocol and read by
@@ -272,6 +291,28 @@ def selftest():
         "ok|public winnow|the body is still found, its published window is not, "
         "and the public key is not itself a needle"
     )
+    return 0
+
+
+def hex_selftest():
+    """A key stored with `0x`, looked for as a tool may print it, as a verdict line.
+
+    Losing a spelling passes every transcript that prints the key the other
+    way, with no symptom.  see docs/verify.md#the-hex-spellings
+    """
+    # 32 bytes, as an EVM private key is; its hex holds letters, so the cases differ.
+    digits = bytes(range(32)).hex()
+    found = picked("=== vault-cache\n=== vault:probe\n0x" + digits + "\n=== exempt\n")
+
+    missed = [
+        said
+        for said, form in (("without 0x", digits), ("in capitals", digits.upper()))
+        if form not in found
+    ]
+    if missed:
+        print("FAIL|hex spellings|a key stored with 0x is not found printed " + " or ".join(missed))
+        return 1
+    print("ok|hex spellings|a key stored with 0x is found printed without it, and in capitals")
     return 0
 
 

@@ -537,6 +537,22 @@ every transcript mentioning it would be switched off within a day. A credential
 in a document is a long unbroken run; a scope name is a word. A file whose whole
 content is one secret has no such problem and keeps the lower floor of 12.
 
+### A hex secret is compared in every spelling
+
+Until 2026-09-11 a vault value was a needle only as stored. Measured with a test
+key through `needles.py` and GNU `grep -F`: stored as `0x…`, it was not found
+printed without the prefix, and no stored form was found in capitals. Nothing
+else covers that case — gitleaks passes bare hex (see *A value that is nothing but
+hex*) — so the verbatim layer is the only thing standing between a hex key and
+the archive.
+
+`spellings()` now adds, for a value that is nothing but hex, its digits without
+`0x` in lower and upper case, each at least `MIN` long. `values()` reuses the
+needles, so a redaction replaces those too, the prefixed form first because it
+is the longest. What it costs: a hex leaf of 40 characters or more in a vault
+document — an address stored beside its key — now also holds a transcript that
+prints it in lower case.
+
 ### Public halves are not secrets
 
 An OpenSSH private key file *contains* its own public key, so a window of its
