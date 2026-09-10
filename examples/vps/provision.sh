@@ -212,10 +212,33 @@ fi
 
 printf '         installing the base packages\n'
 if slow sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        git jq python3 python3-venv curl ca-certificates gnupg cron util-linux; then
-    verdict ok "apt base" "git jq python3 curl cron util-linux"
+        git jq python3 python3-venv curl ca-certificates gnupg cron util-linux gitleaks; then
+    verdict ok "apt base" "git jq python3 curl cron util-linux gitleaks"
 else
     verdict FAIL "apt base" "apt-get failed — nothing below will hold"
+fi
+
+# gitleaks is the one package in that list this host can do without: it is the
+# second opinion in `just collect`'s secret scan, and without it the pattern
+# floor runs alone — one objector instead of two, on the path that pushes
+# transcripts to a repository. host/verify/host-tools.sh calls it `spare` for
+# that reason, so it gets a verdict of its own rather than sharing the FAIL
+# above. Ubuntu's build lags upstream and this takes it anyway: what that costs
+# is patterns added since, and what a hand-installed binary costs is a tool no
+# `apt upgrade` ever moves again. The release tarball is in the message
+# `collect` prints when it finds none.
+if command -v gitleaks >/dev/null 2>&1; then
+    # Ubuntu's build answers `gitleaks version` with "version is set by build
+    # process" and no number, so the package's own version is the only one there
+    # is to report — and it is the number that matters, since the patterns lag.
+    gl=$(gitleaks version 2>/dev/null | head -1)
+    case "$gl" in
+        *[0-9].[0-9]*) ;;
+        *) gl=$(dpkg-query -W -f='${Version}' gitleaks 2>/dev/null || echo "version not reported") ;;
+    esac
+    verdict ok "gitleaks" "$gl"
+else
+    verdict LOOK "gitleaks" "not installed — 'just collect' scans with its pattern floor alone, and says so on every run"
 fi
 
 sudo systemctl enable --now cron >/dev/null 2>&1

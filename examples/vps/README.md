@@ -173,10 +173,29 @@ the agent's own repository, and not on the mirror's.
 
     ssh -t vps 'cd runner && just setup-archive'
 
+That account also needs a git identity, and there is none to inherit: a fresh
+account has no `~/.gitconfig`, and the deploy carries `.env` and the config
+files, not git's own settings. Without it `just collect` gets all the way
+through the extraction and the secret scan and then dies on the commit —
+
+    Author identity unknown
+    fatal: empty ident name (for <deploy@host>) not allowed
+
+— which is the end of the first session, after the work is done.
+
+Use the identity the archive's commits already carry, so its history stays one
+author. Read it here, then set it there:
+
+    git -C "$(just --evaluate AGENT_ARCHIVE)" log -1 --format='%an <%ae>' sessions
+
+    ssh vps 'git config --global user.name "<that name>" \
+        && git config --global user.email "<that email>"'
+
 **Check:**
 
     ssh vps 'ssh -T git@github.com'          # names the account; exit 1 is its success
     ssh vps 'cd runner && just sessions'     # answers; an empty archive is an answer
+    ssh vps 'git config --global --get-regexp "^user\."'   # both lines
 
 ## 7. The mirror's token, and the credential helper on both machines
 
