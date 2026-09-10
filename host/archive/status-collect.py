@@ -7,11 +7,11 @@ what the collection gate is holding back. The dashboard's other half — session
 issues, articles, the archive itself — is already on GitHub and is read there by
 the workflow that renders the page. Nothing is gathered twice.
 
-This is the only gatherer: `just status` renders what this prints and does not
-go looking on its own, and the publisher sends the same bytes to the archive.
-Every fact is asked of the one implementation of its rule — the lock library,
-the budget gate, `just schedule --state`, `just deploy --state` — because a
-second reader of a rule does not fail when it drifts, it answers wrongly.
+The publisher sends what this prints to the archive, byte for byte. `just status`
+does not read it: it gathers its own facts in host/session/status.sh, from the
+same owners. Every fact is asked of the one implementation of its rule — the
+lock library, the budget gate, `just schedule --state`, `just deploy --state` —
+because a second reader of a rule does not fail when it drifts, it answers wrongly.
 
 Nothing missing is zero. Every section carries its own `error`, and a section
 that could not be read says so rather than reporting an empty count: a page that

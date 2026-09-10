@@ -1322,8 +1322,9 @@ worktree, the same way `collect.sh` writes `sessions`. The dashboard's other hal
 sessions, issues, articles, the archive itself — is already on GitHub and is read there by the
 workflow that renders the page. Nothing is gathered twice.
 
-`status-collect.py` is the only gatherer. `just status` renders what it prints and does not go
-looking on its own; the publisher sends the same bytes to the archive.
+The publisher sends what `status-collect.py` prints to the archive, byte for byte. `just status` does
+not read it: it gathers its own facts and asks the same owners of each rule; see
+docs/sessions.md#where-just-status-gets-its-answers.
 
 ### Nothing missing is zero
 
