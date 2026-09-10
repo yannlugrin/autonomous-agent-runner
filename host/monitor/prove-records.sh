@@ -122,7 +122,7 @@ printf 'Proving the store against %s — %s record(s).\n\n' \
 printf '%s\n' "just read <id>"
 heads=0; foots=0; subs=0; broke=""
 
-reads() { id="$1" subagent="$2" full=no RUNNER_IS_DEPLOYED=yes \
+reads() { id="$1" subagent="$2" full=no RUNNER_IS_DEPLOYED=yes ARCHIVE_REF="$ARCHIVE_REF" \
           host/session/read.sh </dev/null 2>/dev/null; }
 
 while IFS= read -r path; do

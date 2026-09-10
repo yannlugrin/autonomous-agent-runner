@@ -3,9 +3,10 @@
 # cron runs from — rather than in the working tree you are standing in.
 #
 # Sourced by the scripts that are the live runner: run, chat, shell, listen,
-# read, status, credentials, collect, publish-status, schedule, and verify
-# --deployed. They act on the deployed environment by default — its recipes,
-# its scripts, its `.env`, its image, its crontab — because a live command that
+# status, credentials, collect, publish-status, schedule, verify --deployed, and
+# read for a transcript the archive does not hold. They act on the deployed
+# environment by default — its recipes, its scripts, its `.env`, its image, its
+# crontab — because a live command that
 # ran the working tree would make every edit live before any deploy, which is
 # the hole `just deploy` closes. Testing is what runs here: `verify` and
 # `test-container`.

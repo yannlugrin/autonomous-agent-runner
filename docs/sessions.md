@@ -329,10 +329,11 @@ which is the hole `just deploy` closes. Testing is what runs in the working
 tree: `verify` and `test-container`.
 
 `host/lib/deployed.sh` is sourced by the scripts that are the live runner:
-run, chat, shell, listen, read, status, credentials, collect, publish-status,
-schedule, and `verify --deployed`. `schedule` because the crontab that fires
-sessions is the deployed machine's; `verify --deployed` because the image cron
-runs is there, and so is the crontab line its host-tools probe reads.
+run, chat, shell, listen, status, credentials, collect, publish-status,
+schedule, `verify --deployed`, and read for a transcript the archive does not
+hold. `schedule` because the crontab that fires sessions is the deployed
+machine's; `verify --deployed` because the image cron runs is there, and so is
+the crontab line its host-tools probe reads; `read` because the volume is.
 
 WHAT WAS TYPED CANNOT BE FORWARDED. `just` parses the declared flags itself and
 hands the script their values, so the argv is gone by the time anything here
@@ -1262,8 +1263,13 @@ of their names and `just read <session-id>` matched the lot. When exactly one
 hit is not a subagent, that is plainly the thing asked for; ask for a subagent
 by its own id and the rule never fires.
 
-The archive first, the volume second. The archive holds every transcript ever
-collected, including those of a home that has since been rebuilt, and the
+The archive first, the volume second. The archive is read here, fetched first
+when the agent runs on another machine, as `cost` and `tools` read it; only an
+id it does not hold goes to the deployed checkout, which reads the volume where
+the agent runs. That is a session not collected yet — most often the one that
+just finished, whose id `just listen` prints. The archive holds every
+transcript ever collected, including those of a home that has since been
+rebuilt, and the
 volume holds only what is there now. Where both have a file they have the same
 bytes — except a redacted one, and there the archive's copy is the rewritten
 one, which is the copy anybody should be reading. See docs/archive.md.

@@ -4,8 +4,9 @@
 # lists, this opens, and two implementations of "show me a transcript" is one of
 # them drifting out of date unread.
 #
-# Runs on the host. Every declared argument arrives as an environment variable:
-# id, agent, full.
+# Runs on the host, against the archive checkout here; only an id the archive
+# does not hold goes to the deployed checkout, where the volume is. Every
+# declared argument arrives as an environment variable: id, subagent, full.
 #
 # `listen` follows the session that is running; this reads one that has
 # finished, by name, and shows the subagent lines `listen` leaves out — a
@@ -20,13 +21,6 @@ set -uo pipefail
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
 . host/lib/deployed.sh
 . host/lib/archive.sh
-
-if [ "$RUNNER_IS_DEPLOYED" = no ]; then
-    typed=("$id")
-    [ -z "$subagent" ] || typed+=(--subagent "$subagent")
-    typed_flag --full "$full"
-    forward_to_deployed read "${typed[@]}"
-fi
 
 
 # --- an id ---
@@ -61,13 +55,28 @@ pick() {
 
 src=archive
 ref=sessions
+listing=""
 
-listing=$(git -C "$ARCHIVE" ls-tree -r sessions --name-only -- transcripts 2>/dev/null || true)
+# The archive here, read as `cost` and `tools` read it: fetched first when the
+# agent runs on another machine, since nothing here writes the local branch. The
+# proof reads every session through this script and hands over the ref it fetched.
+if git -C "$ARCHIVE" rev-parse --git-dir >/dev/null 2>&1; then
+    [ -n "${ARCHIVE_REF:-}" ] || archive_ref
+    ref=$ARCHIVE_REF
+    listing=$(git -C "$ARCHIVE" ls-tree -r "$ref" --name-only -- transcripts 2>/dev/null || true)
+fi
 hits=$(pick "$listing")
 
-# A hit in the archive settles it. No hit falls through to the volume, which is
-# where a session that has not been collected yet lives — the one that just
-# finished, most often.
+# A hit in the archive settles it. No hit is a session not collected yet — the one
+# that just finished, most often, whose id `just listen` prints — and it is in the
+# volume, on the machine the agent runs on: the deployed checkout reads it there.
+if [ -z "$hits" ] && [ "$RUNNER_IS_DEPLOYED" = no ]; then
+    typed=("$id")
+    [ -z "$subagent" ] || typed+=(--subagent "$subagent")
+    typed_flag --full "$full"
+    forward_to_deployed read "${typed[@]}"
+fi
+
 if [ -z "$hits" ]; then
     src=volume
     host/lib/docker-up.sh --image "${RUNNER_IMAGE:-$RUNNER_IMAGE_DEPLOYED}" || exit $?
