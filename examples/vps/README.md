@@ -198,9 +198,13 @@ author. Read it here, then set it there:
 
 **Check:**
 
-    ssh vps 'ssh -T git@github.com'          # names the account; exit 1 is its success
+    ssh -o ForwardAgent=no vps 'ssh -T git@github.com'   # names the archive; exit 1 is its success
     ssh vps 'cd runner && just sessions'     # answers; an empty archive is an answer
     ssh vps 'git config --global --get-regexp "^user\."'   # both lines
+
+`-o ForwardAgent=no` on the first, if your own ssh config forwards the agent:
+with it, the check authenticates with your key and passes on a host that has
+none of its own.
 
 ## 7. The mirror's token, and the credential helper on both machines
 
@@ -391,11 +395,13 @@ it is a one-way door.
 
 ## 10. One session, by hand
 
-    ssh -t vps 'cd runner && just run --listen'
+    ssh -t -o ForwardAgent=no vps 'cd runner && just run --listen'
 
 **The real acceptance test**, and nothing below it matters until this passes: the
-session starts, does work, the exit hook backs the memory up, and `just collect`
-files the transcript. Watch what it costs while it runs:
+session starts, does work, the exit hook backs the memory up, `just collect`
+files the transcript, and `just records` writes its record — the last line about
+records says published, not `RECORDS_NOT_SEALED`. Without the agent forwarded,
+for the reason step 6 gives. Watch what it costs while it runs:
 
     ssh vps 'docker stats --no-stream'
 
