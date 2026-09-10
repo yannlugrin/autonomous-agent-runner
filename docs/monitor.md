@@ -196,8 +196,9 @@ the first run — exactly as `deployed/` and `archive/` are (R12): a clone of th
 repository arranges nothing outside its own directory.
 
     monitor/mirror/              the audit clone — the ARCHIVE's copy of the memory
-    monitor/memory/              the agent's repository itself, bare, fetched by
-                                 `just records`; see below for why they are two
+    monitor/memory.log           the commits in the agent's checkout, read out of
+                                 its volume by `just records`; see below for why
+                                 they are two
     monitor/logs/                one line per run: when, the range, what it found
     monitor/drift-audit/         the session's working directory
     monitor/drift-audit/CLAUDE.md    the run procedure, copied there each run
@@ -354,18 +355,18 @@ exact:
 | the fields | final when |
 | --- | --- |
 | everything read from the transcript | the transcript is on `origin/sessions` — settled, past the credential gate, past a redact ruling |
-| every run's `commits` and `commit_stat` | the agent's repository was **fetched later than** the transcript's `end` |
+| every run's `commits` and `commit_stat` | the agent's checkout was **read later than** the transcript's `end` |
 | `runner_commit`, `runner_image` | a `status` snapshot exists with `generated_at` **later than** the session's `start` |
 
 **All three hold the moment a session ends**, which is why the session end is
 where this is called and not a schedule of its own. `just collect --push` has
-put the transcript on origin; the container's exit hook has pushed the memory
-and `sync_memory` fetches it; `publish-status --now` has just written a
-snapshot. Nothing is waited for.
+put the transcript on origin; the container has exited and `sync_memory` reads
+its checkout; `publish-status --now` has just written a snapshot. Nothing is
+waited for.
 
-The last two are exact rather than a wait. A fetch that happened after a session
+The last two are exact rather than a wait. A read that happened after a session
 ended has every commit that session made, whether or not the agent has committed
-since — which is the whole reason the source is the repository and not a copy of
+since — which is the whole reason the source is the checkout and not a copy of
 it. And once a snapshot exists after a session's start, the latest snapshot at
 or before that start can no longer change.
 
@@ -375,27 +376,44 @@ because a store that quietly stopped sealing looks exactly like one with nothing
 left to do.
 
 `~/.cache/<agent>/records-state.json` records what the sealing was done
-against: the three sources, and when the agent's repository was last read. It
+against: the three sources, and when the agent's checkout was last read. It
 stays on this host and is not published — the branch is written once per file,
 and this is the one file that would change on every run.
 
-### The commits come from the agent's repository
+### The commits come from the agent's checkout
 
-Not from the archive's mirror of it, and this is the difference between a record
-that is current and one that is as current as a workflow managed to be. The
-mirror is refreshed by a GitHub Action asked to run at every session end, with a
-daily schedule behind it as a backstop: on
-2026-09-06 it had been failing since the 3rd, was 245 commits behind, and a
-third of the archive could not seal against it. `sync_memory` in
-`host/monitor/clone.sh` keeps a bare clone at `monitor/memory/` and fetches the
-agent's repository directly, at the moment the record is written. Read and never
-written — rule 2 is about writing, and `just drift-audit` already reads the same
-remote.
+Read out of the volume, where a session makes them — not from the archive's
+mirror, and not from the agent's repository on GitHub. This is the difference
+between a record that is current and one that is as current as something else
+managed to be.
 
-That also simplifies the sealing rule. **The condition is that the fetch
-happened after the session ended**, taken from `FETCH_HEAD`'s mtime, and it is
-exact: everything that session committed is then present whether or not the
-agent has committed since. Against a mirror the only answerable question was the
+**Not the mirror.** It is refreshed by a GitHub Action asked to run at every
+session end, with a daily schedule behind it as a backstop: on 2026-09-06 it had
+been failing since the 3rd, was 245 commits behind, and a third of the archive
+could not seal against it.
+
+**Not the repository on GitHub either**, which records were read from between
+2026-09-06 and 2026-09-10, through a bare clone this host fetched. The move to a
+host of its own measured two faults in it. The repository is private, so the
+fetch needs a credential for it, and the host running the agent held only the
+archive's key: every session there ended `RECORDS_NOT_SEALED`, and the one run
+that sealed was typed by hand over an ssh that forwards the operator's key. And
+origin is not where a commit is made: two instances ran at once that night, the
+commits of one did not reach origin until a merge an hour later, and its record
+sealed without two of them.
+
+`sync_memory` in `host/monitor/clone.sh` runs one `git log` in the deployed
+image, the volume mounted read-only and no network, into `monitor/memory.log`.
+Read and never written — rule 2 is about writing, and `just collect` already
+reads the same volume. The checkout's git config is the agent's, so the settings
+that would change those lines are overridden on the command line. A commit whose
+push failed is in the log, and so is one on a branch never pushed: **a record
+can name a sha origin never had.**
+
+That also keeps the sealing rule exact. **The condition is that the read
+happened after the session ended**, taken from the log's mtime: once a session's
+container has exited, its checkout holds everything it committed, whether or not
+the agent has committed since. Against a mirror the only answerable question was the
 weaker one — has a copy moved past that instant — which left a session that
 committed nothing waiting for some later session's commit to arrive.
 

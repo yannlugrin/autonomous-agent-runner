@@ -1,14 +1,14 @@
 # shellcheck shell=bash
-# The clones the monitor keeps, where everything it writes lives, and how each
-# is brought up to date. Two of them, reading two different things:
+# What the monitor reads the agent's memory from, where everything it writes
+# lives, and how each is brought up to date. Two sources, reading two things:
 #
-#   mirror/   the ARCHIVE's mirror of the agent's memory — a copy, refreshed by
-#             a workflow on GitHub's schedule, and what the drift audit reads
-#             because the audit is about what moved between two anchors
-#   memory/   the agent's repository ITSELF, fetched by this host on demand, and
-#             what `just records` reads because a record must be current at the
-#             moment it is sealed rather than as current as an hourly workflow
-#             managed to be
+#   mirror/      the ARCHIVE's mirror of the agent's memory — a copy, refreshed
+#                by a workflow on GitHub's schedule, and what the drift audit
+#                reads because the audit is about what moved between two anchors
+#   memory.log   the commits in the agent's checkout ITSELF, read out of its
+#                volume on demand, and what `just records` reads because a record
+#                must be current at the moment it is sealed rather than as
+#                current as an hourly workflow managed to be
 #
 # Sourced by `drift-audit` and `drift-status`, the two that need the mirror to
 # be current, by `just records`, which needs the second, and by `drift-accept`
@@ -26,10 +26,9 @@
 MONITOR="${RUNNER_MONITOR:?not set — run this through 'just', which computes it}"
 
 AUDIT_CLONE="$MONITOR/mirror"
-# The agent's repository as this host reads it. Bare: nothing is ever checked
-# out of it and nothing is ever written to it — rule 2 is about writing, and
-# this only fetches.
-MEMORY_CLONE="$MONITOR/memory"
+# The agent's checkout as this host last read it: one `git log`, replaced whole
+# on every read.
+MEMORY_LOG="$MONITOR/memory.log"
 # The session's working directory: the run procedure, the anchors it is given,
 # and the reports it writes. `../mirror` from in there is the clone, which is
 # how the auditor's settings.json spells what it may read.
@@ -121,38 +120,44 @@ sync_clone() {
 
 
 # --- sync_memory ---
-# The agent's own repository, brought up to date here and now.
+# The commits in the agent's own checkout, read out of its volume here and now.
 #
-# NOT the mirror, and that is the whole point. The mirror is the archive's copy,
-# advanced by a workflow on GitHub's best-effort schedule, so a record sealed
-# against it would be as current as that workflow last managed to be — which was
-# three days, once. This fetches the source at the moment the record is written,
-# which is what makes "the commits this session made" a settled fact rather than
-# a guess about whether a copy has caught up.
+# Not the mirror, a copy only as current as a workflow last managed to be, and
+# not the repository on GitHub, which takes a credential the host running the
+# agent does not hold and lacks any commit whose push did not go through. The
+# checkout is where a session's commits are made.
+#   see docs/monitor.md#the-commits-come-from-the-agents-checkout
 #
-# It is read and never written: no push refspec, no checkout, no commit. The
-# fetch stamps FETCH_HEAD, and that mtime is how a later run knows how recently
-# the source was actually read.
-#   see docs/monitor.md#the-commits-come-from-the-agents-repository
+# Read-only mount, no network, and the entrypoint replaced so nothing
+# bootstraps. Written aside and moved into place, so the log's mtime is the
+# moment of a read that completed — the instant a record waits on.
 
 sync_memory() {
-    # No apostrophe in the message: inside ${var:?word} bash opens a single
+    # No apostrophe in the messages: inside ${var:?word} bash opens a single
     # quote even within double quotes, and the file then fails to parse far
     # below, at an error naming neither this line nor the quote.
     #   see docs/archive.md#a-quoting-trap-in-three-files
-    local remote="${AGENT_REPO:?not set — the repository the agent owns, from .env}"
+    local volume="${AGENT_VOLUME:?not set — run this through just}"
+    local home="${AGENT_HOME:?not set — run this through just}"
+    local checkout="${AGENT_REPO_DIR:?not set — run this through just}"
+    local image="${RUNNER_IMAGE:-${RUNNER_IMAGE_DEPLOYED:?not set — run this through just}}"
+    local tmp
 
-    if [ ! -d "$MEMORY_CLONE" ]; then
-        mkdir -p "$MONITOR" || exit 1
-        git init -q --bare "$MEMORY_CLONE" || exit 1
-        git -C "$MEMORY_CLONE" remote add origin "$remote" || exit 1
-        git -C "$MEMORY_CLONE" config remote.origin.fetch \
-            '+refs/heads/*:refs/remotes/source/*' || exit 1
-    fi
+    mkdir -p "$MONITOR" || return 1
+    tmp=$(mktemp "$MEMORY_LOG.XXXXXX") || return 1
 
-    if ! git -C "$MEMORY_CLONE" fetch --prune --quiet origin; then
-        echo "Could not reach $remote. The commits a session made cannot be read," >&2
-        echo "so nothing is sealed against a source that may be behind." >&2
+    # The checkout's git config is the agent's, so what would change these lines
+    # is overridden here: signatures, colour, renames, and every global setting.
+    if ! docker run --rm --network none --read-only \
+            -v "$volume:$home:ro" \
+            -e GIT_CONFIG_GLOBAL=/dev/null -e GIT_CONFIG_NOSYSTEM=1 \
+            --entrypoint git "$image" \
+            -C "$checkout" log --no-renames --no-show-signature --no-color \
+            --format='C%H %ct' --numstat --branches --remotes=origin >"$tmp"; then
+        rm -f "$tmp"
+        echo "Could not read the commits out of the checkout in $volume. The commits a session" >&2
+        echo "made cannot be read, so nothing is sealed against a source that may be behind." >&2
         return 1
     fi
+    mv "$tmp" "$MEMORY_LOG"
 }

@@ -9,10 +9,11 @@
                                       that was added to every record at once
     session-records.py --selftest     prove the arithmetic and stop
 
-Runs on the host, under `just records`, which is what fetches the two joined
+Runs on the host, under `just records`, which is what reads the two joined
 sources before calling this and what publishes what it writes. Reading only:
-the archive's `sessions` and `status` branches, and this host's own clone of
-the agent's repository. It writes nothing outside RUNNER_RECORDS_DIR.
+the archive's `sessions` and `status` branches, and the log of the agent's
+checkout this host last read out of its volume. It writes nothing outside
+RUNNER_RECORDS_DIR.
 
 WHAT A RECORD IS. One archived transcript: when it ran, what it was, what it
 spent, which commits it made, which version of the runner it ran under, and what
@@ -55,7 +56,7 @@ it is final, and the three conditions are exact rather than a wait:
 
   the transcript is on `origin/sessions`   settled, past the credential gate,
                                            past any redact ruling
-  the agent's repository was fetched        every commit that session made is
+  the agent's checkout was read             every commit that session made is
   LATER than the session's `end`            then present, whether or not the
                                             agent has committed since
   a `status` snapshot exists LATER than     the latest snapshot at or before
@@ -63,7 +64,7 @@ it is final, and the three conditions are exact rather than a wait:
 
 All three hold the moment a session ends, which is why `run` and `chat` call
 this there: `just collect --push` has put the transcript on origin, the
-container's exit hook has pushed the memory and this fetches it, and
+session's container has exited and its checkout is read, and
 `publish-status --now` has just written a snapshot. A session with no record is
 computed on demand by whoever wants it.
 
@@ -109,13 +110,12 @@ SESSIONS_REF = "refs/remotes/origin/sessions"
 STATUS_REFS = ("refs/heads/status", "refs/remotes/origin/status")
 STATUS_FILE = "snapshot.json"
 
-# The agent's own repository, as this host fetched it — not the archive's mirror
-# of it. A record must be current at the moment it is sealed, and the mirror is
-# a copy advanced by a workflow on GitHub's schedule: it was three days behind
-# on 2026-09-06 and a third of the archive could not seal. The clone is made and
-# fetched by sync_memory in host/monitor/clone.sh, and is never written.
-# see docs/monitor.md#the-commits-come-from-the-agents-repository
-MEMORY_REFS = "refs/remotes/source/*"
+# The commits in the agent's checkout, as `git log --numstat` printed them when
+# sync_memory in host/monitor/clone.sh read them out of its volume. Not the
+# archive's mirror, a copy only as current as a workflow, and not the repository
+# on GitHub, which lacks any commit whose push did not go through.
+# see docs/monitor.md#the-commits-come-from-the-agents-checkout
+MEMORY_LOG = "memory.log"
 
 CHECKOUT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -617,7 +617,7 @@ def record_path(transcript):
 
 
 class Memory:
-    """The agent's repository, as this host last fetched it.
+    """The commits in the agent's checkout, as this host last read them.
 
     A sealed record is the only lasting witness to these shas: this is a
     repository the agent may rewrite. The archive keeps rewound history under
@@ -625,57 +625,49 @@ class Memory:
     only copy — and it is the reason the field is worth sealing rather than
     recomputing forever.
 
-    `fetched_at` is FETCH_HEAD's mtime, which is when this host last actually
-    read the source. That is what sealing turns on, and it is exact: a fetch
-    that happened after a session ended has every commit that session made,
-    whether or not the agent has committed since. The mirror could only ever
-    answer the weaker question — has a copy of it moved past that instant.
+    `read_at` is the log's mtime, which is when this host last actually read
+    the checkout. That is what sealing turns on, and it is exact: once a
+    session's container has exited, its checkout holds every commit it made,
+    pushed or not, whether or not the agent has committed since. The mirror
+    could only ever answer the weaker question — has a copy of it moved past
+    that instant.
     """
 
-    def __init__(self, clone):
+    def __init__(self, log):
         self.head = None
-        self.fetched_at = None
+        self.read_at = None
         self.commits = []
         self.stat = {}
-        if not clone or not os.path.isdir(clone):
+        if not log or not os.path.isfile(log):
             return
-        stamp = os.path.join(clone, "FETCH_HEAD")
-        if os.path.exists(stamp):
-            self.fetched_at = int(os.path.getmtime(stamp))
-        refs = git_lines(clone, "rev-parse", "--glob=" + MEMORY_REFS, check=False)
-        if not refs:
-            self.fetched_at = None
-            return
-        self.head = refs[0]
 
-        # --no-renames so the file count does not depend on git's rename
-        # heuristics moving under a record that was sealed years earlier.
         sha = None
-        for line in git_lines(
-            clone,
-            "log",
-            "--no-renames",
-            "--format=C%H %ct",
-            "--numstat",
-            "--glob=" + MEMORY_REFS,
-        ):
-            if line.startswith("C"):
-                sha, _, when = line[1:].partition(" ")
-                self.commits.append((int(when), sha))
-                self.stat[sha] = {"files": set(), "insertions": 0, "deletions": 0}
-                continue
-            added, removed, path = (line.split("\t", 2) + ["", "", ""])[:3]
-            if sha is None:
-                continue
-            entry = self.stat[sha]
-            entry["files"].add(path)
-            # A binary file reports `-` for both, and is a changed file with no
-            # line count rather than a zero one.
-            if added.isdigit():
-                entry["insertions"] += int(added)
-            if removed.isdigit():
-                entry["deletions"] += int(removed)
+        with open(log, errors="replace") as lines:
+            for raw in lines:
+                line = raw.rstrip("\n")
+                if not line:
+                    continue
+                if line.startswith("C"):
+                    sha, _, when = line[1:].partition(" ")
+                    self.head = self.head or sha
+                    self.commits.append((int(when), sha))
+                    self.stat[sha] = {"files": set(), "insertions": 0, "deletions": 0}
+                    continue
+                added, removed, path = (line.split("\t", 2) + ["", "", ""])[:3]
+                if sha is None:
+                    continue
+                entry = self.stat[sha]
+                entry["files"].add(path)
+                # A binary file reports `-` for both, and is a changed file with no
+                # line count rather than a zero one.
+                if added.isdigit():
+                    entry["insertions"] += int(added)
+                if removed.isdigit():
+                    entry["deletions"] += int(removed)
         self.commits.sort()
+        # A read that found no commits found no branches, and nothing seals on it.
+        if self.commits:
+            self.read_at = int(os.path.getmtime(log))
 
     def within(self, start, end):
         """The commits made inside [start, end], and what they changed.
@@ -959,7 +951,7 @@ def sealed(record, memory, snapshots):
     """
     if record["start"] is None:
         return None
-    if memory.fetched_at is None or memory.fetched_at <= record["end"]:
+    if memory.read_at is None or memory.read_at <= record["end"]:
         return "memory"
     if snapshots.latest is None or snapshots.latest <= record["start"]:
         return "status"
@@ -1041,9 +1033,9 @@ def orphans(archive, root):
     return found
 
 
-def seal(archive, clone, root, state_path, only=None, dry_run=False, reseal=False):
+def seal(archive, memory_log, root, state_path, only=None, dry_run=False, reseal=False):
     index, sizes = archive_index(archive)
-    memory = Memory(clone)
+    memory = Memory(memory_log)
     snapshots = Snapshots(archive)
 
     wanted = sorted(index) if only is None else [only]
@@ -1064,8 +1056,8 @@ def seal(archive, clone, root, state_path, only=None, dry_run=False, reseal=Fals
         holding = sealed(record, memory, snapshots)
         if holding and dry_run:
             # A record is stored and its own source no longer reaches past it,
-            # which means that source moved backwards — a clone remade, or the
-            # status branch rewound. Said, not counted as waiting: there is a
+            # which means that source moved backwards — an older log put back, or
+            # the status branch rewound. Said, not counted as waiting: there is a
             # record here.
             differs.append((session, "sealed, but the %s no longer reaches it" % holding))
             continue
@@ -1105,7 +1097,7 @@ def why_waiting(waiting, memory, snapshots):
         counts[holding] = counts.get(holding, 0) + 1
     said = []
     for holding, n in sorted(counts.items()):
-        latest = {"memory": memory.fetched_at, "status": snapshots.latest}.get(holding)
+        latest = {"memory": memory.read_at, "status": snapshots.latest}.get(holding)
         when = time.strftime("%Y-%m-%d %H:%MZ", time.gmtime(latest)) if latest else "nothing there"
         said.append("%d waiting on the %s (last read %s)" % (n, holding, when))
     return ", ".join(said)
@@ -1134,7 +1126,7 @@ def save_state(path, archive, memory, snapshots, root):
                 "status": snapshots.head,
                 "status_latest": snapshots.latest,
                 "memory": memory.head,
-                "memory_fetched_at": memory.fetched_at,
+                "memory_read_at": memory.read_at,
                 "records": kept,
             },
             handle,
@@ -1390,7 +1382,7 @@ def main():
         return selftest()
 
     archive = os.environ.get("AGENT_ARCHIVE") or ""
-    clone = os.path.join(os.environ.get("RUNNER_MONITOR") or "", "memory")
+    memory_log = os.path.join(os.environ.get("RUNNER_MONITOR") or "", MEMORY_LOG)
     root = os.environ.get("RUNNER_RECORDS_DIR") or ""
     state = os.environ.get("RUNNER_RECORDS_STATE") or ""
     if not archive or not root or not state:
@@ -1401,7 +1393,7 @@ def main():
         return 0
 
     if args.recheck:
-        _w, waiting, differs, same, _sources = seal(archive, clone, root, state, dry_run=True)
+        _w, waiting, differs, same, _sources = seal(archive, memory_log, root, state, dry_run=True)
         for session, why in differs:
             print("DIFFERS  %s — %s" % (session[:8], why))
         gone = orphans(archive, root)
@@ -1418,7 +1410,7 @@ def main():
         return 1 if differs else 0
 
     if args.reseal:
-        _w, waiting, differs, same, _sources = seal(archive, clone, root, state, reseal=True)
+        _w, waiting, differs, same, _sources = seal(archive, memory_log, root, state, reseal=True)
         for session, why in differs:
             print("REWROTE  %s — %s" % (session[:8], why))
         print(
@@ -1432,14 +1424,14 @@ def main():
         hits = [s for s in index if s.startswith(args.rewrite)]
         if len(hits) != 1:
             sys.exit("'%s' matches %d sessions on %s." % (args.rewrite, len(hits), SESSIONS_REF))
-        written, waiting, _d, _s, _sources = seal(archive, clone, root, state, only=hits[0])
+        written, waiting, _d, _s, _sources = seal(archive, memory_log, root, state, only=hits[0])
         if waiting:
             sys.exit("%s has not sealed yet — nothing rewritten." % hits[0][:8])
         print("rewrote %s" % written[0])
         return 0
 
     if args.seal:
-        written, waiting, _d, _s, sources = seal(archive, clone, root, state)
+        written, waiting, _d, _s, sources = seal(archive, memory_log, root, state)
         print("%d record(s) written, %d without one yet" % (len(written), len(waiting)))
         if waiting:
             print("  " + why_waiting(waiting, *sources))

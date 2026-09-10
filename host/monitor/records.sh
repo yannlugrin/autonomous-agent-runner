@@ -5,8 +5,8 @@
 # the flags recheck, reseal, prove and publish, and the value rewrite.
 #
 # What a record holds and when it may be written is host/monitor/session-records.py;
-# this is the half that has to be here. The two sources are fetched here — the
-# agent's repository through sync_memory and the archive through git — and the
+# this is the half that has to be here. The two sources are read here — the
+# agent's checkout through sync_memory and the archive through git — and the
 # `cache` branch is written the way host/archive/publish-status.sh writes
 # `status`: one writer, a throwaway worktree, a lock across the read and the push.
 #
