@@ -498,8 +498,9 @@ placeholder that resolved to "focus on X today" would be direction arriving
 outside the trusted channel, in the one layer nobody reviews. Everything the
 renderer fills in is checkable against a command.
 
-A placeholder that survives is a refusal to start: the script exits before
-exec'ing claude, naming what it could not fill. Without that, a literal
+A `{{` in the template that is not a placeholder the script knows is a refusal
+to start: the script exits before exec'ing claude, naming what it could not
+fill. Without that, a literal
 `{{NOW}}` would reach the model as an ordinary line of its prompt and nothing
 would flag it. A refusal is a session that never starts, and so cannot report
 itself, which is why `just verify` renders in the test twin to prove none
@@ -543,6 +544,21 @@ paths, `datetime.timezone` where this one had moved to `datetime.UTC`. A second
 renderer is a second thing to keep true about what a session is told, and this
 one is reviewed like the boundary. It was deleted when the monitor was folded
 in; see docs/monitor.md.
+
+## The template is checked, not what it renders
+
+The renderer looks for an unknown `{{` in the template before filling anything
+in, and never searches what it filled in. `{{GIT_STATUS}}` carries commit
+subjects and filenames the agent wrote, and any of them may quote a
+placeholder. The substitution is a single pass for the same reason: a value is
+never searched for placeholders of its own.
+
+Until 2026-09-10 the check ran on the rendered text. Measured that day on a
+scratch repository: a commit subject `Quote {{NOW}} in a note` made `--render`
+exit 1. In the container that is no session at all until five newer commits
+push the subject out of `git log -5` — commits no session can make. It had not
+happened in the agent's history, but writing about the renderer is enough to
+trigger it.
 
 ## Three lines that are read, not measured
 

@@ -63,8 +63,9 @@ is checkable against a command:
   {{OPERATOR_NAME}}   OPERATOR_NAME — who the agent is and who the operator is,
                       as `just` exports them on the host.
 
-A placeholder that survives is a refusal to start: the script exits before
-exec'ing claude, with the name of what it could not fill. Without it, a literal
+A `{{` in the template that is not one of the placeholders above is a refusal
+to start: the script exits before exec'ing claude, with the name of what it
+could not fill. Without it, a literal
 `{{NOW}}` would reach the model as an ordinary line of its prompt, and nothing
 would flag it.
 
@@ -80,6 +81,7 @@ import getpass
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import tempfile
@@ -88,6 +90,9 @@ from datetime import UTC, datetime
 # The image's own, and the one every container session renders. `--template`
 # names another.
 TEMPLATE = "/usr/local/share/agent/system-prompt-template.md"
+
+# The only spelling the renderer fills; any other `{{` in a template refuses.
+PLACEHOLDER = re.compile(r"\{\{([A-Z_]+)\}\}")
 
 
 def _prefix():
@@ -260,17 +265,21 @@ def render(template=TEMPLATE, settings=SETTINGS):
     with open(template) as f:
         text = f.read()
 
-    for name, measure in placeholders(settings).items():
-        token = "{{" + name + "}}"
-        if token in text:
-            text = text.replace(token, measure())
-
-    if "{{" in text:
-        start = text.index("{{")
+    # The template is checked, never the result: a measured value may quote a placeholder.
+    # see docs/sessions.md#the-template-is-checked-not-what-it-renders
+    measures = placeholders(settings)
+    unknown = PLACEHOLDER.sub(lambda m: "" if m.group(1) in measures else m.group(0), text)
+    if "{{" in unknown:
+        start = unknown.index("{{")
         sys.exit(
             f"claude-session: unfilled placeholder in {template}: "
-            f"{text[start : start + 40].splitlines()[0]!r} — refusing to start"
+            f"{unknown[start : start + 40].splitlines()[0]!r} — refusing to start"
         )
+
+    asked = set(PLACEHOLDER.findall(text))
+    values = {name: measure() for name, measure in measures.items() if name in asked}
+    # One pass, so a value is never searched for placeholders of its own.
+    text = PLACEHOLDER.sub(lambda m: values[m.group(1)], text)
 
     # Two blank lines where an empty CONCURRENCY block left three.
     while "\n\n\n" in text:
