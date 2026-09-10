@@ -23,7 +23,7 @@ the machine's own judgement.
 | `AGENT_MIRROR_WORKFLOW` | the mirror workflow's file name **in the mirror's repository**. `mirror-<agent>.yml` unless set; nothing here renames that file |
 | `AGENT_MIRROR_COOLDOWN` | minutes before a session may ask the mirror to run again. Unset or unreadable means every session asks — a cost knob, where the direction with no undo is a mirror that did not run |
 | `just setup-archive` | once: clone the archive, on your own `gh` credential |
-| `just setup-mirror` | once: write the two secrets the mirror's workflow runs on, in its own repository. The agent is told none of it |
+| `just setup-mirror` | once: write the three secrets the mirror's workflow runs on, in its own repository. The agent is told none of it |
 | `just setup-gh` | once per host: the token that host reads the mirror and asks for a run with, and git's helper. On a host that runs the agent it proves the token cannot write the record |
 | `just collect` | read the transcripts out of the volume, put them through the gate, commit what passes. `--push` publishes, `--held` lists what is held back, `--approve <hash> "why"` archives one as it stands, `--redact <hash> "why"` archives it with the credential rewritten out |
 | `just read <id>` | one transcript whole, by the id `just stats --by-session` shows |
@@ -1543,6 +1543,25 @@ Everything `mirror.sh` does reads. The two records the archive holds have exactl
 collect --push` for `sessions`, the mirror workflow for `refs/archive/<agent>` — and a second writer on a
 record whose whole value is that it has one would be the end of it. Both are read through `git show` and
 `git for-each-ref`, never checked out.
+
+### The archive's records are mirrored too
+
+The mirror workflow copies the archive's `sessions`, `cache`, `status` and `config` beside the memory, onto
+`refs/<branch>/mirror` in the mirror repository, with the same `rewound/` marks. The machine that runs the
+agent can write every branch of the archive, and a private repository carries no rulesets, so a record only
+the archive holds is one that machine can rewrite. The workflow reads the archive with a read-only deploy key
+of its own, `<PREFIX>_ARCHIVE_KEY`, installed by `just setup-mirror` the way the memory's key is.
+
+One job with one step per record, each step running whatever happened to the ones before it. GitHub bills a
+job rounded up to a whole minute, so five steps inside a minute cost what the memory alone did, where five jobs
+would cost five minutes a run — about 2,550 a month at 17 runs a day, against 2,000 free on a private
+repository. If the steps together pass a minute, the archive moves to a workflow of its own with a cooldown.
+
+A session end asks for the run after its last push to the archive — `just records` — so the run carries that
+session's transcript, snapshot and records.
+
+`just mirror-status` still reads the memory's ref only, and judges the `mirror` job: a failed archive step makes
+that job fail, and reads there as the memory's backup failing.
 
 ### A ref, not a branch
 

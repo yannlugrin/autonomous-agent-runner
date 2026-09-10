@@ -262,8 +262,6 @@ chat_ended
 
 just collect --push || echo "COLLECT_FAILED — the transcript may not have reached the archive. It is still in the volume; run 'just collect --push' by hand." >&2
 
-host/archive/dispatch-mirror.sh || echo "MIRROR_NOT_DISPATCHED — the archive's mirror was not asked to run; its schedule is the only trigger left." >&2
-
 
 # --- the last word ---
 # --force on the publish, skipping the floor: the page saying a session is
@@ -278,6 +276,9 @@ host/archive/publish-status.sh --now || true
 # A session is recorded when it ends, and this is the only moment where no
 # source has to be waited for.  see docs/monitor.md#one-record-per-session
 just records || echo "RECORDS_NOT_SEALED — the reason is above; 'just records' picks it up next time." >&2
+
+# After the last push to the archive, as in `run`.
+host/archive/dispatch-mirror.sh || echo "MIRROR_NOT_DISPATCHED — the archive's mirror was not asked to run; its schedule is the only trigger left." >&2
 
 # When the credentials the agent runs on expire. Here because this is the one
 # moment the answer is free — the dates are in the container, nothing is

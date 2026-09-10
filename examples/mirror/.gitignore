@@ -1,0 +1,4 @@
+# Tool caches.
+.mypy_cache/
+__pycache__/
+.ruff_cache/

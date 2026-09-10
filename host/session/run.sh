@@ -408,8 +408,7 @@ rm -f "$session_log"
 # still ran.
 #
 # --push, not a bare collect: a commit that only ever lands in the local archive
-# checkout is a second copy on the same disk as the volume it copies. The mirror
-# is asked for straight afterwards because GitHub keeps its schedule badly.
+# checkout is a second copy on the same disk as the volume it copies.
 # see docs/archive.md
 
 session_ended
@@ -417,11 +416,6 @@ session_ended
 just collect --push || {
     echo "COLLECT_FAILED — the transcript may not have reached the archive. It is still in the volume; run 'just collect --push' by hand." >&2
     alert "COLLECT_FAILED — the transcript is still only in the volume. Run 'just collect --push'."
-}
-
-host/archive/dispatch-mirror.sh || {
-    echo "MIRROR_NOT_DISPATCHED — the archive's mirror was not asked to run; its schedule is the only trigger left." >&2
-    alert "MIRROR_NOT_DISPATCHED — the archive's mirror was not asked to run."
 }
 
 
@@ -442,6 +436,14 @@ host/archive/publish-status.sh --now || true
 # A session is recorded when it ends, and this is the only moment where no
 # source has to be waited for.  see docs/monitor.md#one-record-per-session
 just records || echo "RECORDS_NOT_SEALED — the reason is above; 'just records' picks it up next time." >&2
+
+# The mirror is asked for after the last push to the archive, so its run carries this
+# session's transcript, snapshot and records; asked at all because GitHub keeps its
+# schedule badly.  see docs/archive.md#the-archives-records-are-mirrored-too
+host/archive/dispatch-mirror.sh || {
+    echo "MIRROR_NOT_DISPATCHED — the archive's mirror was not asked to run; its schedule is the only trigger left." >&2
+    alert "MIRROR_NOT_DISPATCHED — the archive's mirror was not asked to run."
+}
 
 # When the credentials the agent runs on expire. Here because this is the one
 # moment the answer is free — the dates are in the container, nothing is

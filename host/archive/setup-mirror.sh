@@ -6,14 +6,14 @@
 # is left alone, settings it cannot read are left alone. FORCE_KEY=1 and
 # FORCE_TOKEN=1 are how each is replaced on purpose.
 #
-# It touches three things, all on the mirror's own repository and none on the
-# archive:
+# It touches the mirror's own repository and the two it copies:
 #
-#   1. that repository's Actions token, which defaults to read-only and cannot
+#   1. the mirror's Actions token, which defaults to read-only and cannot
 #      be raised by the workflow's own `permissions:` block;
-#   2. a fresh read-only deploy key on the agent's own repository;
-#   3. that key's private half, stored there as <PREFIX>_SOURCE_KEY, and the
-#      push token as <PREFIX>_MIRROR_TOKEN.
+#   2. a fresh read-only deploy key on the agent's own repository, and one on
+#      the archive;
+#   3. those keys' private halves, stored on the mirror as <PREFIX>_SOURCE_KEY
+#      and <PREFIX>_ARCHIVE_KEY, and the push token as <PREFIX>_MIRROR_TOKEN.
 #
 # It does NOT make the clone `just mirror-status` reads. That one is made where
 # it is read — host/lib/mirror.sh — because the machine that runs the agent
@@ -21,15 +21,16 @@
 # is one of them drifting. The archive's clone is not the same case: it is
 # written, by `just collect`, and setting it up is a legitimate act on any host.
 #
-# Step 2 needs *admin* on the agent's repository. Without it the key is added by
-# hand in a browser and this waits; either way step 3 happens only once the new
-# key is proved to read, so a run that cannot finish changes nothing.
+# Step 2 needs *admin* on each repository a key goes on. Without it the key is
+# added by hand in a browser and this waits; either way step 3 happens only once
+# the new key is proved to read, so a run that cannot finish changes nothing.
 #   see docs/monitor.md#the-mirror-is-not-in-the-archive
 set -euo pipefail
 # shellcheck source=SCRIPTDIR/../lib/root.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
 
 MIRROR_REPO="${AGENT_MIRROR_REPO:?not set — the mirror repository, owner/name, from .env}"
+ARCHIVE_REPO="${AGENT_ARCHIVE_REPO:?not set — the archive repository, owner/name, from .env}"
 
 die() { printf '\n%s\n\n' "$*" >&2; exit 1; }
 step() { printf '\n== %s\n' "$*"; }
@@ -47,7 +48,6 @@ step() { printf '\n== %s\n' "$*"; }
 SOURCE=$(printf '%s' "${AGENT_REPO:?not set — the repository the agent commits to, from .env}" \
     | sed -E 's#\.git$##; s#^git@[^:]+:##; s#^https?://[^/]+/##')
 WORKFLOW="${AGENT_MIRROR_WORKFLOW:-mirror-$AGENT_USER.yml}"
-KEY_SECRET="${AGENT_PREFIX}_SOURCE_KEY"
 TOKEN_SECRET="${AGENT_PREFIX}_MIRROR_TOKEN"
 TITLE="$MIRROR_REPO mirror (read-only)"
 
@@ -102,8 +102,8 @@ else
 fi
 
 
-# --- the read key on the agent's repository ---
-# THE ORDER IS THE POINT: the public half goes on the agent's repository and is
+# --- the read keys, on the agent's repository and on the archive ---
+# THE ORDER IS THE POINT: the public half goes on the source repository and is
 # proved to read it before the private half replaces the secret the mirror is
 # running on. A run that cannot finish leaves the working mirror untouched.
 #
@@ -117,54 +117,60 @@ fi
 # host that cannot add one, into a run that could never finish. FORCE_KEY=1
 # rotates it deliberately, as FORCE_TOKEN=1 rotates the token.
 
-step "Read key for $SOURCE"
+# One directory for every key made here, so one trap removes them all.
+keyroot=$(mktemp -d)
+trap 'rm -rf "$keyroot"' EXIT
 
-# Not being able to LIST the secrets is not the same as their being absent, and
-# the difference is a key. A host whose token only reads the record gets 403
-# here, and a test that reads that as "not installed" makes a fresh deploy key
-# on the agent's repository every run. Unknown means leave it alone.
-# see docs/archive.md#gh-api-prints-its-errors-on-stdout
-if [ "${FORCE_KEY:-}" = 1 ]; then
-    make_key=yes
-elif secrets=$(gh secret list --repo "$MIRROR_REPO" 2>/dev/null); then
-    if printf '%s\n' "$secrets" | grep -q "^$KEY_SECRET"; then
-        echo "$KEY_SECRET is already set. Leaving the key alone."
-        echo "  (FORCE_KEY=1 makes a new one — that is what you do when it is compromised.)"
-        make_key=no
-    else
+install_read_key() {
+    local source="$1" secret="$2" make_key admin keydir pub secrets others n
+
+    step "Read key for $source"
+
+    # Not being able to LIST the secrets is not the same as their being absent, and
+    # the difference is a key. A host whose token only reads the record gets 403
+    # here, and a test that reads that as "not installed" makes a fresh deploy key
+    # on the source repository every run. Unknown means leave it alone.
+    # see docs/archive.md#gh-api-prints-its-errors-on-stdout
+    if [ "${FORCE_KEY:-}" = 1 ]; then
         make_key=yes
+    elif secrets=$(gh secret list --repo "$MIRROR_REPO" 2>/dev/null); then
+        if printf '%s\n' "$secrets" | grep -q "^$secret"; then
+            echo "$secret is already set. Leaving the key alone."
+            echo "  (FORCE_KEY=1 makes a new one — that is what you do when it is compromised.)"
+            make_key=no
+        else
+            make_key=yes
+        fi
+    else
+        echo "This token cannot list the secrets, so whether $secret is installed"
+        echo "cannot be known from here. Leaving it alone."
+        make_key=no
     fi
-else
-    echo "This token cannot list the secrets, so whether $KEY_SECRET is installed"
-    echo "cannot be known from here. Leaving it alone."
-    make_key=no
-fi
 
-if [ "$make_key" = yes ]; then
+    [ "$make_key" = yes ] || return 0
 
-# Asked before anything is generated, so the run says which path it is on
-# rather than discovering it halfway through.
-admin=$(gh api "repos/$SOURCE" --jq '.permissions.admin // false' 2>/dev/null) || admin=false
+    # Asked before anything is generated, so the run says which path it is on
+    # rather than discovering it halfway through.
+    admin=$(gh api "repos/$source" --jq '.permissions.admin // false' 2>/dev/null) || admin=false
 
-keydir=$(mktemp -d)
-trap 'rm -rf "$keydir"' EXIT
-ssh-keygen -q -t ed25519 -N '' -C "$TITLE" -f "$keydir/key"
-pub=$(cat "$keydir/key.pub")
-echo "Generated (it lives in a temp dir this script deletes on exit)."
+    keydir=$(mktemp -d "$keyroot/key.XXXXXX")
+    ssh-keygen -q -t ed25519 -N '' -C "$TITLE" -f "$keydir/key"
+    pub=$(cat "$keydir/key.pub")
+    echo "Generated (it lives in a temp dir this script deletes on exit)."
 
-# The raw API rather than `gh repo deploy-key`: it takes read_only as an
-# explicit argument instead of a default, and its output does not shift between
-# gh versions.
-if [ "$admin" = true ]; then
-    gh api "repos/$SOURCE/keys" -f title="$TITLE" -f key="$pub" -F read_only=true \
-        --jq '"Added key \(.id), read_only=\(.read_only)."'
-else
-    cat <<MSG
+    # The raw API rather than `gh repo deploy-key`: it takes read_only as an
+    # explicit argument instead of a default, and its output does not shift between
+    # gh versions.
+    if [ "$admin" = true ]; then
+        gh api "repos/$source/keys" -f title="$TITLE" -f key="$pub" -F read_only=true \
+            --jq '"Added key \(.id), read_only=\(.read_only)."'
+    else
+        cat <<MSG
 
-  $who has no admin on $SOURCE, so this half is yours to add. That is the
+  $who has no admin on $source, so this half is yours to add. That is the
   normal path when the agent's account is reachable only by browser.
 
-  https://github.com/$SOURCE/settings/keys/new
+  https://github.com/$source/settings/keys/new
 
     Title               $TITLE
     Key                 the line below, whole
@@ -176,48 +182,50 @@ $pub
   has, and stays on it until the check below passes.
 
 MSG
-    read -rp "  press enter once the key is added (ctrl-c to abandon) : " _
-fi
+        read -rp "  press enter once the key is added (ctrl-c to abandon) : " _
+    fi
 
 
-step "Verify the key can read $SOURCE"
+    step "Verify the key can read $source"
 
-# ssh -T against github always exits 1 for a deploy key, so it proves nothing.
-# A ls-remote does: it is exactly what the workflow runs. On every path, and
-# before the secret moves — this check sat inside the API branch until
-# 2026-09-06, which is the one branch that did not need it.
-if GIT_SSH_COMMAND="ssh -i $keydir/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
-   git ls-remote --heads "git@github.com:$SOURCE.git" main >/dev/null 2>&1; then
-    echo "Read access confirmed."
-else
-    die "The new key cannot read $SOURCE, so it was NOT stored.
+    # ssh -T against github always exits 1 for a deploy key, so it proves nothing.
+    # A ls-remote does: it is exactly what the workflow runs. On every path, and
+    # before the secret moves — this check sat inside the API branch until
+    # 2026-09-06, which is the one branch that did not need it.
+    if GIT_SSH_COMMAND="ssh -i $keydir/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+       git ls-remote --heads "git@github.com:$source.git" main >/dev/null 2>&1; then
+        echo "Read access confirmed."
+    else
+        die "The new key cannot read $source, so it was NOT stored.
 
 Nothing changed: the mirror is still running on whatever key it had. Check the
-key landed on $SOURCE itself, read-only, and run this again."
-fi
-
-
-step "Secret $KEY_SECRET on $MIRROR_REPO"
-gh secret set "$KEY_SECRET" -R "$MIRROR_REPO" < "$keydir/key"
-echo "Set. The mirror now reads $SOURCE with this key."
-
-if [ "$admin" = true ]; then
-    others=$(gh api "repos/$SOURCE/keys" --jq \
-        ".[] | select(.title == \"$TITLE\") | \"  \(.id)  added \(.created_at)\"" 2>/dev/null | head -20)
-    n=$(printf '%s\n' "$others" | grep -c . || true)
-    if [ "${n:-0}" -gt 1 ]; then
-        echo
-        echo "$n keys on $SOURCE carry this title. The newest is the live one;"
-        echo "remove the others when the next mirror run has gone green:"
-        printf '%s\n' "$others"
+key landed on $source itself, read-only, and run this again."
     fi
-else
-    echo
-    echo "Remove any older key with this title at"
-    echo "https://github.com/$SOURCE/settings/keys once the next run is green."
-fi
 
-fi
+
+    step "Secret $secret on $MIRROR_REPO"
+    gh secret set "$secret" -R "$MIRROR_REPO" < "$keydir/key"
+    echo "Set. The mirror now reads $source with this key."
+
+    if [ "$admin" = true ]; then
+        others=$(gh api "repos/$source/keys" --jq \
+            ".[] | select(.title == \"$TITLE\") | \"  \(.id)  added \(.created_at)\"" 2>/dev/null | head -20)
+        n=$(printf '%s\n' "$others" | grep -c . || true)
+        if [ "${n:-0}" -gt 1 ]; then
+            echo
+            echo "$n keys on $source carry this title. The newest is the live one;"
+            echo "remove the others when the next mirror run has gone green:"
+            printf '%s\n' "$others"
+        fi
+    else
+        echo
+        echo "Remove any older key with this title at"
+        echo "https://github.com/$source/settings/keys once the next run is green."
+    fi
+}
+
+install_read_key "$SOURCE" "${AGENT_PREFIX}_SOURCE_KEY"
+install_read_key "$ARCHIVE_REPO" "${AGENT_PREFIX}_ARCHIVE_KEY"
 
 
 # --- the token the mirror pushes with ---
@@ -317,8 +325,9 @@ cat <<MSG
 
 == Left to do
 
-  1. Seed the mirror's own default branch from examples/mirror/, if it is
-     not there: a workflow only exists once it is on that branch.
+  1. Seed the mirror's own default branch from examples/mirror/, or bring it
+     up to date — the workflow and scripts/mirror-ref.sh: a workflow only
+     exists once it is on that branch.
   2. Run it once by hand and read what it prints. This is also what proves the
      token carries Workflows and not only Contents:
      gh workflow run $WORKFLOW --repo $MIRROR_REPO
