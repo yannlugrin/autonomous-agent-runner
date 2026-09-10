@@ -328,7 +328,7 @@ below are the only reason a person runs it by hand.
 | `just records --no-publish` | write them here and push nothing. For looking at the store without touching the archive |
 | `RUNNER_RECORDS_DIR` | where they live — `~/.cache/<agent>/records/` unless set |
 
-`just stats` reads them, the listing of sessions included. `just read`, `just
+`just stats` reads them. `just read`, `just
 tools` and `just cost` still derive everything from the raw transcripts on every
 call, and each becomes a renderer over this store in a later, separate piece of
 work. Until then the store's one obligation is that it will be **enough** when
@@ -436,7 +436,7 @@ transcript the gate is holding or that has not been collected. Author date and
 committer date give the same answer; the committer date is what is read, being
 when the commit landed.
 
-An earlier attempt using the time `just sessions` displays left 141 commits
+An earlier attempt using the displayed start time left 141 commits
 apparently unattributed, all within 60s *after* a session's end. That was an
 artefact and not a phenomenon: the displayed time is `HH:MM`, so every window
 start was floored to the minute and every window ended up to 59 seconds short.

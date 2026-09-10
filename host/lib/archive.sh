@@ -9,7 +9,7 @@
 # `collect` and `publish-status` write the archive and carry their own refusal:
 # theirs is reached deep inside a run that has already extracted transcripts,
 # and the sentence belongs where the work stops.
-# see docs/archive.md#the-listing
+# see docs/archive.md#reading-the-archive
 
 ARCHIVE="${AGENT_ARCHIVE:?not set — run this through 'just', which computes it}"
 
@@ -40,7 +40,7 @@ need_archive() {
 # runs, it commits to the local `sessions`, so that is the one ahead and
 # origin/sessions is the fallback for a fresh clone. Where the agent runs on
 # another machine nothing here writes `sessions`, so origin is fetched and read.
-# see docs/archive.md#the-listing
+# see docs/archive.md#reading-the-archive
 
 # shellcheck disable=SC2034  # ARCHIVE_REF is this function's output, read by its callers
 archive_ref() {

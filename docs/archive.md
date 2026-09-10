@@ -1255,22 +1255,19 @@ pattern line makes grep match every line of every file — which would hold the 
 and read exactly like a catastrophic leak. Nothing is printed at all when there is nothing to
 compare, for the same reason: a pattern file of one empty line is not an empty pattern file.
 
-### The subagent legend was a race
+### `grep -q` under `pipefail` is a race
 
-`just sessions` went on 2026-09-10; `stats --by-session` decides its legend in Python, where no
-pipe does. The pattern below is not specific to that script.
+A shell script decided whether to print a legend with `printf '%s\n' "$shown" | grep -q 'msg  +'
+&& …`, and on 2026-09-06 that printed the legend **once in six runs** over the same 580 rows.
+`grep -q` exits on the first match — row 61 there — and the `printf` still feeding it then dies of
+SIGPIPE, which under `set -o pipefail` becomes the pipeline's status, so the `&&` does not fire.
+Whether printf finishes its 50KB write before grep quits is the race, and nothing about the output
+says which way it went.
 
-`just sessions` decided whether to print its `+N marks subagents` line with `printf '%s\n'
-"$shown" | grep -q 'msg  +' && …`, and on 2026-09-06 that printed the legend **once in six runs**
-over the same 580 sessions. `grep -q` exits on the first match — row 61 here — and the `printf`
-still feeding it then dies of SIGPIPE, which under `set -o pipefail` becomes the pipeline's
-status, so the `&&` does not fire. Whether printf finishes its 50KB write before grep quits is
-the race, and nothing about the output says which way it went.
-
-It grew in with the archive rather than being wrong from the start: while the whole listing
-fitted in one write there was no window to lose. Matched with a `case` on the variable now, which
-starts no process and cannot lose. It was found by `just records --prove`, which diffs the
-command against a renderer over the session records and had no reason to be intermittent.
+It grows in with the data rather than being wrong from the start: while the whole input fits in
+one write there is no window to lose. A `case` on the variable starts no process and cannot lose.
+It was found by `just records --prove`, which diffs a command against a renderer over the session
+records and had no reason to be intermittent.
 
 
 ## The count without the collection
@@ -1473,18 +1470,9 @@ question. Nothing is committed when nothing changed, which is most deploys.
 secret this installation has, and the archive is a repository like any other.
 The three files hold rules and no values.
 
-## The listing
+## Reading the archive
 
-**Since 2026-09-10 the listing is `just stats --by-session`**, over the sealed records, and `just read`
-takes an id only: `sessions.sh` and `archive_rows` are gone, and what follows is the record of the listing
-they were. `need_archive` and `archive_ref` are still what the read-only recipes share.
-
-`just sessions` prints the archived sessions newest first; `just read` opens one, by its number here or by
-its own id. Both build the table through `archive_rows` in `host/lib/archive.sh`, which is the one place it
-is built: the number a listing shows and the number `read` takes are then the same handle by construction
-rather than by two orderings agreeing.
-
-Neither writes the archive. `sessions` is written by `just collect --push` and by nothing else; the branch is read with
+The recipes that read the archive never write it. `sessions` is written by `just collect --push` and by nothing else; the branch is read with
 `git show`, never checked out, so the archive clone stays on whatever branch it is on. `need_archive` uses
 `rev-parse` rather than a test on `.git`, which is a directory in a clone and a file in a linked worktree —
 `collect.sh` checks it the same way and for the same reason. The refusal sentence lives in
@@ -1499,59 +1487,20 @@ so the local one is the one that is ahead.
 
 ### A subagent is not a session
 
-Still true in `stats --by-session`: a sub-agent is never a row, and `+N` marks the session that spawned
-them, in a column of its own.
-
 A sub-agent writes a transcript of its own beside its session, as
-`<session-id>--agent-<agent-id>.jsonl`, and it is not a session: listed as one it is a row with no title
+`<session-id>--agent-<agent-id>.jsonl`, and it is not a session: counted as one it is a row with no title
 that nothing accounts for, and its output would be counted twice — once as itself, once inside the session
-that spawned it. So the two lists are separated, and the session and whatever it spawned go through
-`session-meta.jq` together: their requests and their output belong to it, and the reduce tells them apart by
-`isSidechain`.
+that spawned it. So a session and whatever it spawned go through `session-meta.jq` together: their requests
+and their output belong to it, and the reduce tells them apart by `isSidechain`.
 
-`+N` marks a session that spawned subagents, in its own column rather than appended to the title. Nothing
-else on the row says they exist: the messages and tokens are cumulated into the session's, so a session that
-did half its reading through an agent looks exactly like one that did it itself. The legend is printed only
-when one is on screen.
-
-### Newest first, and what a number means
-
-No longer applies: a row carries the first eight characters of its id, which does not move when the next
-collection lands.
-
-Newest first on the local date and clock the row carries: the session you want is nearly always the last one
-that ran. The price is that a number is a handle for the moment you listed and not a name — the next
-collection pushes everything down by one — which is why a read prints the uuid.
-
-Rows are numbered before anything is dropped. The number is a handle into the whole list, so `just read 137`
-has to mean the same thing whether or not 137 was on screen; a row numbered within its own page would
-renumber every time the page changed, which is a handle that lies.
-
-### Where the clock and the path part company
-
-No longer applies: a record carries `local_day`, and `stats --by-session` lists by it with no footnote.
-`--day` still takes both spellings.
-
-The row shows the local day the session started, and the archive files the file under its UTC day and always
-will, so the two part company either side of midnight. The count of rows where they differ is read off the
-path rather than carried as a second field: the path is the archive's own answer, and it is the one printed
-beside a session when you read it.
-
-`--day` matches as a substring, so `--day 08-26` and `--day 2026-08-26` both work — one of the two is what
-anybody types and guessing which would be wrong half the time.
-
-The footnotes each name something you would otherwise go on not knowing: a transcript nothing could date
-(counted rather than dropped in silence, since it would sit at the top of the list with no day against it), a
-collection that never left this machine, and a day on screen that is not the day in the path.
-
-Paging happens only when someone is watching and only when there is more than a screenful: piping this into
-grep or a file must not hand the output to `less`, and neither must a list of six. `page` is 20 because that
-is what fits above the prompt on an ordinary terminal with the header and the footnotes.
+`+N` marks a session that spawned sub-agents in `just stats --by-session`. Nothing else on the row says they
+exist, so a session that did half its reading through an agent would look exactly like one that did it
+itself. The legend is printed only when one is on screen.
 
 ### What `session-meta.jq` measures
 
 One streaming pass per transcript — `reduce inputs` rather than `-s`, so a long session is never held in
-memory whole: these grow without bound and the list must stay cheap enough to run reflexively.
+memory whole: these grow without bound and a read must stay cheap.
 
 The date and the time are local and everything the transcript stores stays UTC: a time read by a person is
 read against the clock in the room, and a time the agent is given, or a path the archive files a session

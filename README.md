@@ -578,7 +578,7 @@ through `vault`, and by shape otherwise. [`docs/vault.md`](docs/vault.md)
 
     docs/                the records, one file per topic — what was measured, what it
                          decided, and where it lives in the code now
-      archive.md           collection, the gate, redaction, the listing, the mirror
+      archive.md           collection, the gate, redaction, reading it, the mirror
       backup.md            the push-on-exit hook, and why it fails closed
       boundary.md          managed settings, the guard, the withdrawal of 2026-09-01
       budget.md            the usage read, the ramp, and the two credentials

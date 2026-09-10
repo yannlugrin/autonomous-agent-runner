@@ -250,7 +250,7 @@ message is better evidence than any inference from their name.
       lib/           shared: the checkout root, the lock, the session env, docker, forwarding
       session/       run, chat, shell, test-container, listen, remote, read,
                      status, credentials
-      archive/       collect, publish-status, sessions, mirror, the archive's setup
+      archive/       collect, publish-status, mirror, the archive's setup
       monitor/       the drift audit — what moved in the agent's memory — and
                      what the archive has cost; drift-audit/ is what the
                      auditing session is told and what it may do
