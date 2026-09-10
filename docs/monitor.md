@@ -677,8 +677,9 @@ re-derivation of an old record finds nothing where the first pass found an
 instant — and a reseal would then write that null over the only copy, silently,
 because a blanked field and a run that never had one look identical. So
 `keep_measured` carries the stored value forward run by run, matched on the
-run's `from`, and only a null is ever computed twice. `--selftest` holds the
-case.
+run's `from`. `--selftest` holds the case. The reverse does not happen: a null
+is computed again, but from the same status snapshot, which never changes — so a
+run sealed on an image that predates the field stays null until filled by hand.
 
 **The 639 records that predate the change were filled from `runner_commit`**,
 the deployed branch at each run's start, rather than left null — the agent

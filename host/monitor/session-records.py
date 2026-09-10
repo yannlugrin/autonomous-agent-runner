@@ -965,7 +965,8 @@ def keep_measured(record, target):
     that a re-derivation of an old record finds nothing. A null written over a
     real instant is indistinguishable from a run that never had one, and there
     would be nothing left to read it back from — so the stored value wins
-    wherever this pass came up empty, and only a null is ever computed twice.
+    wherever this pass came up empty. A stored null is re-read from the same
+    snapshot and stays null: only a hand edit fills one.
     see docs/monitor.md#the-push-a-run-was-built-from
 
     Silent when there is no stored record, which is every first seal.
