@@ -1,10 +1,8 @@
 # What one archived session cost and what it was, as one TSV row.
 #
-# Read by `just sessions` for the listing and by `just read` for the header
-# over one transcript — through archive_rows in host/lib/archive.sh, the one
-# place the table is built — and by the archive's own dashboard workflow, which
-# keeps its own copy beside render.py: that action runs in the archive checkout
-# and cannot reach this tree.
+# Read by `just read` for the header over one transcript, and by the archive's
+# own dashboard workflow, which keeps its own copy beside render.py: that action
+# runs in the archive checkout and cannot reach this tree.
 #
 # Fed one session's transcript plus its sub-agents', concatenated, with
 # `jq -rn -f`. Emits: date, time, duration, messages, kind, requests, subagent

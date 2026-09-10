@@ -13,8 +13,8 @@
 #
 # The day is the archive's, which is UTC: a transcript is filed under the UTC
 # day of its first timestamp and the pricing tool dates a session the same way,
-# so a day directory holds exactly one day of sessions. `just sessions` is where
-# the local day lives, and it says so when the two differ.
+# so a day directory holds exactly one day of sessions. `just stats --by-session`
+# is where the local day lives.
 # see docs/monitor.md#what-the-archive-cost
 set -uo pipefail
 # shellcheck source=SCRIPTDIR/../lib/root.sh

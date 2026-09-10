@@ -38,7 +38,7 @@ transcripts. There is no duration field for exactly this reason: `end - start`
 on a resumed transcript is 8.6 hours for 3.4 hours of work, and it is the number
 a reader reaches for first because it looks like the answer. A duration is the
 sum of `to - from` over the runs. It is not a statistics command and must not be
-shaped by one: `just sessions`, `just read`, `just tools` and `just cost` each
+shaped by one: `just read`, `just tools`, `just cost` and `just stats` each
 want a different slice, and assembling many records into a table is the
 reader's job, not the store's.
 
@@ -100,7 +100,7 @@ AGENT_MARK = "--agent-"
 TRANSCRIPTS = "transcripts"
 
 # The ref every field is settled against. Deliberately not the local `sessions`
-# branch `just sessions` reads: local is what `just collect` has committed and
+# branch `just read` reads: local is what `just collect` has committed and
 # may still be redacted or held, and a record sealed against it could need
 # rewriting. Sealing waits for the push.
 SESSIONS_REF = "refs/remotes/origin/sessions"
@@ -477,8 +477,8 @@ class Chain:
             # what was consumed: a request that fell back carries an
             # `iterations` array whose first attempt was really billed and
             # which the top-level usage omits. `output_reported` is what the
-            # top level states, which is the figure `just sessions` and
-            # `just read` show. They differ on 2 of 579 sessions in the archive
+            # top level states, which is the figure `just read` shows. They
+            # differ on 2 of 579 sessions in the archive
             # on 2026-09-06, by 1452 and 672 tokens — the only two requests
             # that ever fell back.  see docs/monitor.md#the-two-output-figures
             row["output_reported"] += usage.get("output_tokens", 0) or 0
@@ -834,7 +834,7 @@ def build(archive, session, main, subs, sizes, memory, snapshots, machine=(None,
     # The UTC day directory the archive filed it under, which is the archive's
     # own answer and the day `just cost` groups by; `local_day` is the day the
     # session started against the clock in the room, which is what a person
-    # means by "yesterday" and what `just sessions` shows.
+    # means by "yesterday" and what `just stats --day` takes.
     where = main[len(TRANSCRIPTS) + 1 :].rsplit("/", 1)[0]
     day = where.replace("/", "-") if where != "undated" else None
 

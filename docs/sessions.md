@@ -14,7 +14,7 @@ commands.
 | `just shell` | a shell in the container, carrying the environment a session gets, without starting one. What bootstrap uses |
 | `just test-container` | the same container with **no volume** — an empty home every run, for rehearsing recovery. Never where the agent runs |
 | `just listen` | the running session from its first line, live — or, with nothing running, the last one's tail. `--all` lifts the read ceiling, `--wait` waits for the next, `--live` never closes, `--remote` serves the live view to the tailnet |
-| `just read <n\|id>` | one transcript whole, and the only reader there is. A row number from `just sessions`, or a session or subagent id. `--subagent K`, `--full` |
+| `just read <id>` | one transcript whole, and the only reader there is. A session or subagent id, as `just stats --by-session` shows it. `--subagent K`, `--full` |
 | `just status` | the one-screen answer: what is running and of what kind, what it has spent, whether scheduling is on, what the budget gate sees, what the collection gate is holding, and what this checkout has that is not live |
 
 **One session at a time**, and the lock is held by whoever starts one rather
@@ -44,7 +44,8 @@ with no session.
 **What you type day to day.** Usually nothing — cron runs `just run`. When you
 want to see it, `just listen`; when you want to talk to it, `just chat "…"`,
 which goes in prefixed with a marker saying a *person* wrote it, the one
-channel the agent's own rules treat as direction. Afterwards, `just read 1`.
+channel the agent's own rules treat as direction. Afterwards, `just stats
+--by-session`, and `just read <id>` for one.
 
 **Two distinctions worth knowing before they surprise you.** `chat --continue`
 resumes the last conversation and not the last session — usually the hourly
@@ -1240,24 +1241,17 @@ unread.
 
 ## Opening one finished transcript
 
-`just read` is the only reader there is: `just sessions` lists, this opens, and
-two implementations of "show me a transcript" is one of them drifting out of
+`just read` is the only reader there is: `just stats --by-session` lists, this
+opens, and two implementations of "show me a transcript" is one of them drifting out of
 date unread. `listen` follows the session that is running; this reads one that
 has finished, by name, and shows the subagent lines `listen` leaves out — a
 subagent's transcript is made of nothing else, so filtering them there and
 keeping them here is the same rule read from two sides.
 
-What tells a listing position from an id is the SHAPE, and it has to be a rule
-a person can hold in their head: a position is one to three decimal digits, an
-id fragment is hex and at least four characters. `just read 12` is the twelfth
-row of the last listing; `just read 2db4` is the session whose id begins that
-way. Four decimal digits are therefore an id and not a position — a list long
-enough to need one is read with `--day` or `--all` and then by id, which is the
-durable handle anyway.
+An id is hex and at least four characters: `just read 2db4` is the session whose
+id begins that way, and anything shorter is refused as too little to mean one.
 
-A position is counted into the same table `just sessions` prints, from the same
-function, so the number on screen and the number taken here cannot mean two
-different sessions. An id is matched on the FILE NAME, never on the whole path:
+An id is matched on the FILE NAME, never on the whole path:
 a subagent's transcript lives under a directory named for the session that
 spawned it, so `just read 2db4fc43` matched both and refused as ambiguous —
 when one of the two is plainly the thing asked for.

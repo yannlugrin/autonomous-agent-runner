@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 # Where the archive checkout is, and the sentence for "it is not there".
 #
-# Sourced by the recipes that read the archive and never write it — `sessions`,
-# `read`, `cost`, `tools`, `records --prove` and `stats` — so they agree on one
+# Sourced by the recipes that read the archive and never write it — `read`,
+# `cost`, `tools`, `records --prove` and `stats` — so they agree on one
 # spelling of the missing-clone message. With the agent on another machine they
 # fetch it first. The path itself is computed once in the justfile and exported.
 #
@@ -42,6 +42,7 @@ need_archive() {
 # another machine nothing here writes `sessions`, so origin is fetched and read.
 # see docs/archive.md#the-listing
 
+# shellcheck disable=SC2034  # ARCHIVE_REF is this function's output, read by its callers
 archive_ref() {
     if deploying_elsewhere; then
         git -C "$ARCHIVE" fetch --quiet origin sessions 2>/dev/null \
@@ -58,46 +59,4 @@ archive_ref() {
         echo "It is created by 'just collect --push'." >&2
         exit 1
     fi
-}
-
-
-# --- archive_rows ---
-# The sessions branch as one ordered table, newest first, and the two lists
-# behind it: ARCHIVE_FILES, ARCHIVE_SUBS, ARCHIVE_ROWS — over the ref
-# archive_ref picks.
-#
-# One implementation, because `sessions` prints this table and `read` counts
-# into it: the number a listing shows and the number `read` takes are the same
-# handle by construction rather than by two orderings agreeing.
-#
-# A row is the transcript's path, then session-meta.jq's fourteen fields. A
-# session and whatever it spawned go through that pass together, and the reduce
-# in there tells them apart by isSidechain.
-# see docs/archive.md#newest-first-and-what-a-number-means
-
-# shellcheck disable=SC2034  # ARCHIVE_FILES, ARCHIVE_SUBS and ARCHIVE_ROWS are
-# this function's output, read by sessions.sh and read.sh after they call it
-archive_rows() {
-    need_archive
-    archive_ref
-
-    # A sub-agent writes a transcript of its own beside its session, as
-    # <session-id>--agent-<agent-id>.jsonl, and is not a session: listed as one
-    # it is a row with no title, and its output would be counted twice.
-    # see docs/archive.md#a-subagent-is-not-a-session
-    local all_files
-    all_files=$(git -C "$ARCHIVE" ls-tree -r --name-only "$ARCHIVE_REF" -- transcripts | grep '\.jsonl$')
-    ARCHIVE_FILES=$(printf '%s\n' "$all_files" | grep -v -- '--agent-')
-    ARCHIVE_SUBS=$(printf '%s\n' "$all_files" | grep -- '--agent-')
-    [ -n "$ARCHIVE_FILES" ] || {
-        echo "No transcripts under transcripts/ on $ARCHIVE_REF." >&2; exit 1; }
-
-    ARCHIVE_ROWS=$(for f in $ARCHIVE_FILES; do
-        printf '%s\t' "$f"
-        { git -C "$ARCHIVE" show "$ARCHIVE_REF:$f"
-          for s in $(printf '%s\n' "$ARCHIVE_SUBS" | grep -F "${f%.jsonl}--agent-"); do
-              git -C "$ARCHIVE" show "$ARCHIVE_REF:$s"
-          done
-        } | jq -rn -f host/archive/session-meta.jq
-    done | sort -r -t"$(printf '\t')" -k2,2 -k3,3)
 }

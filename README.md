@@ -328,10 +328,10 @@ they carry a credential until you rule on them. `just run` has already
 called it with `--push`; by hand it commits only.
 [`docs/archive.md`](docs/archive.md)
 
-    just read 1
+    just stats --by-session
 
-The newest session, rendered whole. `just sessions` is the listing that
-number is a row of.
+The sessions newest first, each with its id; `just read <id>` renders one
+whole.
 
 Then `just schedule --enable --cron "* * * * *"`, when you mean
 it to run without you: an hour after each session ends, and never two at
@@ -356,7 +356,7 @@ shows every option with what each one does.**
 | `just shell` | a shell in the container, carrying the same environment a session gets. This is what bootstrap uses |
 | `just test-container` | the same container with **no volume** — an empty home every run, for rehearsing the morning the volume is gone. Never where the agent runs |
 | `just listen` | the running session from its first line, live — or, with nothing running, the tail of the last one. `--all` lifts the read ceiling, `--wait` waits for the next, `--live` never closes, `--remote` serves the live view to any device on the tailnet |
-| `just read <n\|id>` | one transcript whole, and the only reader there is. A row number from the last listing, or a session or subagent id; `--subagent K`, `--full` |
+| `just read <id>` | one transcript whole, and the only reader there is. A session or subagent id, as `just stats --by-session` shows it; `--subagent K`, `--full` |
 | `just status` | whether anything needs attention, and then: what is running and what it has spent, or when the last one ended and when the next may start; what today has held; what the budget gate sees; whether the backup is still running; how many transcripts the collection gate is holding; what is live and since when |
 
 ### After a session is stopped
@@ -386,13 +386,12 @@ the measurements.
 
 ### archive
 
-[`docs/archive.md`](docs/archive.md) — the collection, the credential gate, the listing, the mirror.
+[`docs/archive.md`](docs/archive.md) — the collection, the credential gate, the mirror.
 
 | | |
 | --- | --- |
 | `just collect` | archive transcripts to the private archive. `--push` publishes, `--held` lists what is held back, `--approve H "why"` archives one as it stands, `--redact H "why"` archives it with the credential rewritten out |
 | `just publish-status` | put the host's half of the status page where a dashboard can read it. `--now` ignores the ten-minute floor |
-| `just sessions` | what the archive holds, newest first — the listing, and nothing else. `--all`, `--day D` |
 | `just credentials` | read when the agent's Claude and GitHub credentials expire, now — `just status` shows the last reading rather than taking a new one, because taking one costs a container start |
 | `just mirror-status` | how the mirror of the agent's memory is doing: the ref, any preserved rewrites, whether the workflow is still enabled, whether it is behind. It only reads |
 | `just setup-archive` | clone the archive. Runs on your own `gh` credential |
@@ -411,7 +410,7 @@ the measurements.
 | `just drift-status` | the mirror ref, the two anchors and how far behind each is, and the last runs. It fetches first |
 | `just cost` | what the archived sessions cost, priced from their own transcripts. `--by-day`, `-d N`, or session ids. API list rates: weight, not an invoice |
 | `just tools` | how many times each tool was called, per day (`-d N`), in the archived transcripts; name tools for one line per day |
-| `just stats` | what the agent has been doing, and whether that is changing — one screen over the sealed records: how many unattended sessions and how long, the last seven days day by day, the weeks side by side, and which build carried what. `-d N` narrows it to the last N whole days, today excluded; `--system` shows the machine day by day instead |
+| `just stats` | what the agent has been doing, and whether that is changing — one screen over the sealed records: how many unattended sessions and how long, the last seven days day by day, the weeks side by side, and which build carried what. `-d N` narrows it to the last N whole days, today excluded; `--system` shows the machine day by day instead; `--by-session` lists the sessions one row each, newest first, and `--day D` one local day's |
 | `just records` | one durable record per archived session — what it was, what it spent, what it committed, which runner built it. Every session end seals its own and publishes it to the archive's `cache` branch, so this is machinery rather than something to type; `--recheck`, `--rewrite` and `--prove` are what a person runs |
 
 ### release
@@ -503,7 +502,7 @@ the last session — usually the hourly unattended run — a distinction only
 possible because `chat` decides each conversation's session id itself and
 writes it down. [`docs/sessions.md`](docs/sessions.md)
 
-**`just read` opens one transcript and `just sessions` lists them.** The
+**`just read` opens one transcript, by the id `just stats --by-session` lists.** The
 archive's `sessions` branch first and the volume second, so a session
 collected long ago reads the same as the one that just finished, and a
 redacted transcript reads as the archive holds it. [`docs/sessions.md`](docs/sessions.md)
@@ -520,10 +519,9 @@ would be told. [`docs/sessions.md`](docs/sessions.md)
 
 **Every time a person reads is local; every time the agent is given is UTC.**
 The container runs `TZ=UTC`, the transcript stores UTC, and the archive files
-a session under its UTC day. What `listen`, `read`, `sessions` and `status`
+a session under its UTC day. What `listen`, `read`, `stats` and `status`
 put on the screen is converted to the clock in the room — display only,
-nothing written down moves. `just sessions --day` therefore means a local
-day, and says so when a session's file is filed under a different UTC one.
+nothing written down moves. `just stats --day` therefore means a local day.
 [`docs/sessions.md`](docs/sessions.md)
 
 **The budget guard** reads the account's own rate limits before an unattended
@@ -689,9 +687,8 @@ through `vault`, and by shape otherwise. [`docs/vault.md`](docs/vault.md)
         publish-status.sh    the host's half of the status page, onto the status branch
         status-collect.py    what goes in it
         dispatch-mirror.sh   ask the archive to mirror the memory, at a session end
-        sessions.sh          what the archive holds, listed newest first
         mirror.sh            how the mirror is doing
-        session-meta.jq      one archived session as a row — the listing, and the header
+        session-meta.jq      one archived session as a row — the header over a read
         setup.sh             clone the archive, and set up the mirror's credentials
       monitor/             the drift audit, and what the archive has cost
         clone.sh             the audit clone: where it is, and bringing it current

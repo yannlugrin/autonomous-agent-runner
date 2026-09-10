@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Read one transcript whole — a session, or one of its subagents — from the
-# archive or the volume. The only reader there is: `just sessions` lists, this
-# opens, and two implementations of "show me a transcript" is one of them
-# drifting out of date unread.
+# archive or the volume. The only reader there is: `just stats --by-session`
+# lists, this opens, and two implementations of "show me a transcript" is one of
+# them drifting out of date unread.
 #
 # Runs on the host. Every declared argument arrives as an environment variable:
 # id, agent, full.
@@ -29,31 +29,23 @@ if [ "$RUNNER_IS_DEPLOYED" = no ]; then
 fi
 
 
-# --- a number or an id ---
-# What tells them apart is the shape, and it has to be a rule a person can hold
-# in their head: a listing position is one to three decimal digits, an id
-# fragment is hex and at least four characters. Four decimal digits are
-# therefore an id and not a position — a list long enough to need one is read
-# with `--day` or `--all` and then by id, the durable handle anyway.
-# see docs/sessions.md#opening-one-finished-transcript
+# --- an id ---
+# Hex and at least four characters: enough of an id to mean one transcript, and
+# short enough to type.  see docs/sessions.md#opening-one-finished-transcript
 
 case "$id" in
-    [0-9]|[0-9][0-9]|[0-9][0-9][0-9]) want=position ;;
     *[!0-9a-f]*|?|??|???)
-        echo "Usage: just read <number|session-id|agent-id> [--subagent K] [--full]" >&2
-        echo "A number is a row of the last 'just sessions' — 1 to 3 digits." >&2
-        echo "Anything else is an id, or enough of one: hex, four characters or more." >&2
+        echo "Usage: just read <session-id|agent-id> [--subagent K] [--full]" >&2
+        echo "An id, or enough of one: hex, four characters or more." >&2
+        echo "'just stats --by-session' shows one on every row." >&2
         exit 2 ;;
-    *) want=id ;;
 esac
 
 
 # --- which transcript ---
-# A position is counted into the same table `just sessions` prints, from the
-# same function, so the number on screen and the number taken here cannot mean
-# two different sessions. An id is matched on the file name, never on the whole
-# path: a subagent's transcript lives under a directory named for the session
-# that spawned it, so a session id matches both.
+# An id is matched on the file name, never on the whole path: a subagent's
+# transcript lives under a directory named for the session that spawned it, so a
+# session id matches both.
 #
 # The archive first, the volume second. The archive holds every transcript ever
 # collected, including those of a home that has since been rebuilt; the volume
@@ -67,59 +59,47 @@ pick() {
     done
 }
 
-row=""
 src=archive
 ref=sessions
 
-if [ "$want" = position ]; then
-    archive_rows
-    ref="$ARCHIVE_REF"
-    row=$(printf '%s\n' "$ARCHIVE_ROWS" | sed -n "${id}p")
-    [ -n "$row" ] && [ "$id" != 0 ] || {
-        echo "No session $id in the archive. Run 'just sessions' for the list." >&2; exit 1; }
-    path=$(printf '%s' "$row" | cut -f1)
-    listing="$ARCHIVE_FILES"$'\n'"$ARCHIVE_SUBS"
-else
-    listing=$(git -C "$ARCHIVE" ls-tree -r sessions --name-only -- transcripts 2>/dev/null || true)
+listing=$(git -C "$ARCHIVE" ls-tree -r sessions --name-only -- transcripts 2>/dev/null || true)
+hits=$(pick "$listing")
+
+# A hit in the archive settles it. No hit falls through to the volume, which is
+# where a session that has not been collected yet lives — the one that just
+# finished, most often.
+if [ -z "$hits" ]; then
+    src=volume
+    host/lib/docker-up.sh --image "${RUNNER_IMAGE:-$RUNNER_IMAGE_DEPLOYED}" || exit $?
+    # Read as the agent: the transcripts are 0600 owned by that uid, so this
+    # needs no privilege, and a root container is the one that leaves root-owned
+    # files behind. --entrypoint overrides the bootstrap.
+    listing=$(docker compose run --rm -T --entrypoint sh agent \
+        -c 'find "$HOME/.claude/projects" -name "*.jsonl" 2>/dev/null' 2>/dev/null | tr -d '\r')
     hits=$(pick "$listing")
-
-    # A hit in the archive settles it. No hit falls through to the volume,
-    # which is where a session that has not been collected yet lives — the one
-    # that just finished, most often.
-    if [ -z "$hits" ]; then
-        src=volume
-        host/lib/docker-up.sh --image "${RUNNER_IMAGE:-$RUNNER_IMAGE_DEPLOYED}" || exit $?
-        # Read as the agent: the transcripts are 0600 owned by that uid, so
-        # this needs no privilege, and a root container is the one that leaves
-        # root-owned files behind. --entrypoint overrides the bootstrap.
-        listing=$(docker compose run --rm -T --entrypoint sh agent \
-            -c 'find "$HOME/.claude/projects" -name "*.jsonl" 2>/dev/null' 2>/dev/null | tr -d '\r')
-        hits=$(pick "$listing")
-    fi
-
-    # A session outranks its own subagents. They are filed beside it as
-    # `<session-id>--agent-<id>.jsonl`, so the session's id is a prefix of every
-    # one of their names. When exactly one hit is not a subagent, that is
-    # plainly the thing asked for; ask for a subagent by its own id and this
-    # never fires.
-    if [ "$(printf '%s\n' "$hits" | sed '/^$/d' | wc -l)" -gt 1 ]; then
-        sessions=$(printf '%s\n' "$hits" | grep -v -- '--agent-' || true)
-        [ "$(printf '%s\n' "$sessions" | sed '/^$/d' | wc -l)" -eq 1 ] && hits="$sessions"
-    fi
-
-    count=$(printf '%s\n' "$hits" | sed '/^$/d' | wc -l)
-    if [ "$count" -eq 0 ]; then
-        echo "No transcript matching '$id' on sessions in $ARCHIVE, nor in the volume." >&2
-        exit 1
-    fi
-    if [ "$count" -gt 1 ]; then
-        echo "'$id' matches $count transcripts:" >&2
-        printf '%s\n' "$hits" | sed 's|.*/||; s|^|    |' >&2
-        echo "Give more of the id." >&2
-        exit 2
-    fi
-    path="$hits"
 fi
+
+# A session outranks its own subagents. They are filed beside it as
+# `<session-id>--agent-<id>.jsonl`, so the session's id is a prefix of every one
+# of their names. When exactly one hit is not a subagent, that is plainly the
+# thing asked for; ask for a subagent by its own id and this never fires.
+if [ "$(printf '%s\n' "$hits" | sed '/^$/d' | wc -l)" -gt 1 ]; then
+    sessions=$(printf '%s\n' "$hits" | grep -v -- '--agent-' || true)
+    [ "$(printf '%s\n' "$sessions" | sed '/^$/d' | wc -l)" -eq 1 ] && hits="$sessions"
+fi
+
+count=$(printf '%s\n' "$hits" | sed '/^$/d' | wc -l)
+if [ "$count" -eq 0 ]; then
+    echo "No transcript matching '$id' on sessions in $ARCHIVE, nor in the volume." >&2
+    exit 1
+fi
+if [ "$count" -gt 1 ]; then
+    echo "'$id' matches $count transcripts:" >&2
+    printf '%s\n' "$hits" | sed 's|.*/||; s|^|    |' >&2
+    echo "Give more of the id." >&2
+    exit 2
+fi
+path="$hits"
 
 
 # --- which subagent, if one was asked for ---
@@ -175,14 +155,11 @@ if [ "$file" = "$path" ]; then body="$tmp/session"
 else cat_transcript "$file" > "$tmp/agent"; body="$tmp/agent"
 fi
 
-# The row `sessions` would have shown, when this read did not come from that
-# table: the session and whatever it spawned in one pass, because their
-# requests and their output belong to it.
-if [ -z "$row" ]; then
-    row=$path$'\t'$({ cat "$tmp/session"
-                      for s in $mine; do cat_transcript "$s"; done
-                    } | jq -rn -f host/archive/session-meta.jq)
-fi
+# The header's figures: the session and whatever it spawned in one pass, because
+# their requests and their output belong to it.
+row=$path$'\t'$({ cat "$tmp/session"
+                  for s in $mine; do cat_transcript "$s"; done
+                } | jq -rn -f host/archive/session-meta.jq)
 
 
 # --- the header ---

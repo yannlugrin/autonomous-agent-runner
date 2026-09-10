@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""What `just sessions`, `just read`, `just tools` and `just cost` print today,
-rendered from the sealed records alone.
+"""What `just read`, `just tools` and `just cost` print today, rendered from the
+sealed records alone.
 
-    records-render.py rows                       the table archive_rows builds
-    records-render.py sessions --ref REF         `just sessions --all`
+    records-render.py rows                       session-meta.jq's row, for every session
     records-render.py read ID [--footer|--subagent K]  `just read ID` — its header,
                                                        its sub-agent listing, or one
                                                        sub-agent's own header
@@ -18,7 +17,7 @@ halfway through rewriting a command, months later, with the store published and
 its shape awkward to change.
 
 It reads the records and nothing else — no transcript, no jq filter, no volume.
-The one thing it is given is which ref the listing names, because that is a fact
+The one thing it is given is which ref the archive is read from, because that is a fact
 about the archive clone and not about any session.
 
 When the commands are normalised onto the store, this file is what they become
@@ -67,11 +66,10 @@ def records(root):
 
 
 # --------------------------------------------------------------------------
-# The table `just sessions` prints and `just read` heads a transcript with
+# The row `just read` heads a transcript with
 # --------------------------------------------------------------------------
-# host/lib/archive.sh builds one row per session — the transcript's path, then
-# host/archive/session-meta.jq's fourteen fields — and both commands are a pure
-# function of it. Reproducing the row is therefore what proves both.
+# The transcript's path, then host/archive/session-meta.jq's fourteen fields: the
+# header is a pure function of it, so reproducing the row is what proves it.
 
 
 def human_duration(seconds):
@@ -107,7 +105,7 @@ def row(record):
     start = record["start"]
     when = time.localtime(start) if start is not None else None
     output, thinking, subrequests = totals(record)
-    # The transcript's span, which is what `just sessions` shows and what
+    # The transcript's span, which is what `just read` shows and what
     # `session-meta.jq` computes. NOT stored: on a resumed transcript it is not
     # a duration at all, and a stored one is the field a reader takes for the
     # answer.  see docs/monitor.md#one-file-is-not-always-one-run
@@ -129,72 +127,6 @@ def row(record):
         "" if record["generating"] is None else str(record["generating"]),
         record["title"] or "(untitled)",
     ]
-
-
-def ordered_rows(root):
-    """Newest first, through the sort host/lib/archive.sh uses.
-
-    Its own `sort`, not a comparison written here: the last-resort ordering of
-    equal keys is a whole-line byte comparison under the caller's locale, and a
-    second implementation of that is a difference nobody would find.
-    """
-    lines = [TAB.join(row(r)) for r in records(root).values()]
-    sorted_out = subprocess.run(
-        ["sort", "-r", "-t", TAB, "-k2,2", "-k3,3"],
-        input="\n".join(lines) + "\n",
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-    return [line for line in sorted_out.split("\n") if line]
-
-
-# --------------------------------------------------------------------------
-# just sessions --all
-# --------------------------------------------------------------------------
-
-
-def sessions(root, ref):
-    lines = ordered_rows(root)
-    fields = [line.split(TAB) for line in lines]
-    out = ["%s — %d session(s), newest first" % (ref, len(fields))]
-
-    undated = sum(1 for f in fields if f[0].startswith("transcripts/undated/"))
-    if undated:
-        out.append("  %d transcript(s) carry no timestamp and are filed under undated/" % undated)
-
-    # The "collection(s) not pushed" footnote is deliberately absent: it counts
-    # commits on the local `sessions` branch that origin does not have, and a
-    # record is only sealed against origin. `just records --prove` refuses to
-    # run while the two differ, so the footnote can never be on screen.
-
-    shifted = 0
-    for f in fields:
-        parts = f[0].split("/")
-        if "%s-%s" % (parts[1], parts[2]) != f[1]:
-            shifted += 1
-    if shifted:
-        out.append(
-            "  %d started on a different UTC day than the local one shown"
-            " — the path beside a read says which" % shifted
-        )
-
-    table = []
-    for n, f in enumerate(fields, 1):
-        mark = "+%s" % f[8] if int(f[8]) > 0 else ""
-        table.append(
-            "  %3d  %s %s  %5s  %4s msg  %-3s %-4s  %s"
-            % (n, f[1], f[2], f[3], f[4], mark, f[5], f[14])
-        )
-
-    if any("msg  +" in line for line in table):
-        out.append("  +N marks subagents — 'just read <number> --agent K' reads one")
-
-    out.append("")
-    out += table
-    out.append("")
-    out.append("Read one:  just read <number>   or  just read <id>")
-    return "\n".join(out)
 
 
 # --------------------------------------------------------------------------
@@ -443,9 +375,9 @@ def cost(root, ref, days, by_day, ids):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("what", choices=["rows", "sessions", "read", "tools", "cost"])
+    parser.add_argument("what", choices=["rows", "read", "tools", "cost"])
     parser.add_argument("ids", nargs="*")
-    parser.add_argument("--ref", default="sessions", help="which ref the listing names")
+    parser.add_argument("--ref", default="sessions", help="which ref the archive is read from")
     parser.add_argument("--subagent", type=int, help="the K-th sub-agent's header instead")
     parser.add_argument(
         "--footer", action="store_true", help="the sub-agent listing that follows a read"
@@ -459,9 +391,7 @@ def main():
         sys.exit("Run this through 'just records --prove', which computes where the store is.")
 
     if args.what == "rows":
-        print("\n".join(ordered_rows(root)))
-    elif args.what == "sessions":
-        print(sessions(root, args.ref))
+        print("\n".join(TAB.join(row(r)) for r in records(root).values()))
     elif args.what == "read":
         found = records(root)
         hits = [i for i in found if i.startswith(args.ids[0])]

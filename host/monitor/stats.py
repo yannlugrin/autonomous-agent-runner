@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """What the agent has been doing, and whether that is changing — one screen.
 
-    stats.py [-d N] [--all] [--system]   the screen
+    stats.py [-d N | --day D] [--all] [--system] [--by-session]   the screen
     stats.py --selftest       prove the arithmetic and stop
 
 Runs on the host, under `just stats`. It reads the sealed records in
@@ -34,11 +34,14 @@ import argparse
 import collections
 import datetime
 import importlib.util
+import json
 import math
 import os
+import re
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 
 CHECKOUT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -58,8 +61,8 @@ FULL = 150_000
 # What a session nobody was in is called, on screen and in this repository's own
 # prose — 115 uses across docs/ and AUTO-MODE.md. The distinction it names is
 # attendance and not autonomy: a chat session is no less the agent's own. The
-# stored field is still `kind: auto`, which is what `just sessions` and
-# `session-meta.jq` speak; this is the label, and only the label.
+# stored field is still `kind: auto`, which is what `session-meta.jq` speaks;
+# this is the label, and only the label.
 #
 # Clipped to SHORT where the full word would set a column eight characters wider
 # than the two-digit numbers under it.
@@ -168,6 +171,23 @@ def spellings(n):
 # --------------------------------------------------------------------------
 
 
+def parse_day(text, today):
+    """`08-26` or `2026-08-26` as a date, and None for anything else.
+
+    A month and a day name the latest such day not after today, so `12-31` typed in January
+    is the December just gone.
+    """
+    if not re.fullmatch(r"(\d{4}-)?\d\d-\d\d", text):
+        return None
+    try:
+        if len(text) == 10:
+            return datetime.date.fromisoformat(text)
+        day = datetime.date.fromisoformat("%d-%s" % (today.year, text))
+        return day if day <= today else day.replace(year=today.year - 1)
+    except ValueError:
+        return None
+
+
 class Window:
     """The records and the runs the screen reports on, and the days they sit in.
 
@@ -176,7 +196,7 @@ class Window:
     move a session into the day before.
     """
 
-    def __init__(self, records, days=None, every=False):
+    def __init__(self, records, days=None, every=False, day=None):
         runs = [(r, run) for r in records for run in r["runs"]]
         today = datetime.date.today()
         yesterday = today - datetime.timedelta(days=1)
@@ -191,13 +211,18 @@ class Window:
         self.today = [p for p in runs if local_day(p[1]["from"]) == today]
         self.today_records = [r for r in records if local_day(r["start"]) == today]
 
-        if days:
+        # `--day D` is a window of one local day, so section one and the listing under it agree.
+        self.day = day
+        if day:
+            self.until = self.since = day
+        elif days:
             self.until, self.since = yesterday, yesterday - datetime.timedelta(days=days - 1)
+        if day or days:
             runs = [p for p in runs if self.since <= local_day(p[1]["from"]) <= self.until]
             records = [r for r in records if self.since <= local_day(r["start"]) <= self.until]
         self.runs = sorted(runs, key=lambda p: p[1]["from"])
         self.records = records
-        if not days:
+        if not (day or days):
             # Everything the records hold, and the window runs to TODAY rather
             # than to the last day a session ran: a day the agent did not wake
             # is still a day, and following the newest session instead would
@@ -428,6 +453,21 @@ def machine(window):
     return [("%.0f%% cpu" % c["cpu"], wrap(items))]
 
 
+MEASURED = ["cpu", "load95", "io95", "mem MB", "swap MB", "disk MB"]
+
+
+def measured(c):
+    """A `combine()` as the machine tables print it."""
+    return [
+        "%.0f%%" % c["cpu"],
+        "—" if c["load95"] is None else "%.2f" % c["load95"],
+        "—" if c["io95"] is None else "%.0f%%" % c["io95"],
+        "—" if c["mem"] is None else str(c["mem"]),
+        "%.0f" % c["swap"],
+        "—" if c["disk"] is None else str(c["disk"]),
+    ]
+
+
 def machine_days(window, cost):
     """`--system`: the machine day by day, in place of the tables about the agent.
 
@@ -445,23 +485,16 @@ def machine_days(window, cost):
         runs = by_day[day]
         if not runs:
             return ["   " + day.strftime("%m-%d"), "0"] + ["—"] * 7
-        c = combine([run["system"] for run in runs])
         return [
             "   " + day.strftime("%m-%d"),
             str(len(runs)),
             duration(sum(run["to"] - run["from"] for run in runs)),
-            "%.0f%%" % c["cpu"],
-            "—" if c["load95"] is None else "%.2f" % c["load95"],
-            "—" if c["io95"] is None else "%.0f%%" % c["io95"],
-            "—" if c["mem"] is None else str(c["mem"]),
-            "%.0f" % c["swap"],
-            "—" if c["disk"] is None else str(c["disk"]),
-        ]
+        ] + measured(combine([run["system"] for run in runs]))
 
     days = [window.first_full + datetime.timedelta(days=n) for n in range(window.full)]
     lines = cost.table(
         [row(day) for day in days] + [row(datetime.date.today())],
-        ["", "sessions", "awake", "cpu", "load95", "io95", "mem MB", "swap MB", "disk MB"],
+        ["", "sessions", "awake"] + MEASURED,
     )
     return (
         lines[:-1]
@@ -470,6 +503,103 @@ def machine_days(window, cost):
             "   Over the sessions measured. cpu is the mean over their samples, load95 and",
             "   io95 the worst session's p95, mem MB and disk MB the lowest free, swap MB",
             "   what was swapped out.",
+        ]
+    )
+
+
+# What the table lists by itself: a screenful above the prompt.
+SCREENFUL = 20
+
+
+def listed(window, every, keep=lambda run: True):
+    """The runs a table of sessions lists, newest first, and a line for any it left out.
+
+    Today's are added under `-d N`, whose window ends yesterday: the session that just ran
+    is the one a listing is most often opened for. The cap is on what the table does by
+    itself, so `--all` and `--day` lift it.
+    """
+    today = window.today if window.until < datetime.date.today() and not window.day else []
+    pairs = sorted(
+        (pair for pair in window.runs + today if keep(pair[1])),
+        key=lambda pair: pair[1]["from"],
+        reverse=True,
+    )
+    if every or window.day or len(pairs) <= SCREENFUL:
+        return pairs, []
+    older = local_day(pairs[SCREENFUL][1]["from"]).strftime("%m-%d")
+    return pairs[:SCREENFUL], [
+        "",
+        "   %d older not shown — --all, or --day %s" % (len(pairs) - SCREENFUL, older),
+    ]
+
+
+def run_cells(record, run):
+    kind = SHORT if record["kind"] == "auto" else "chat"
+    return [when(run["from"]), kind, record["id"][:8], duration(run["to"] - run["from"])]
+
+
+def sessions_table(window, cost, every):
+    """`--by-session`: one row per run, newest first, in place of the tables about the days.
+
+    TWO DENOMINATORS LIVE IN ONE RECORD. `awake` and `commits` are the run's; `msgs`,
+    `ctx+out`, `+N` and `$` are the transcript's, and go on its newest listed row only:
+    printed on both runs of a resumed transcript, a sum down a column counts them twice.
+    see docs/monitor.md#session-by-session
+    """
+    pairs, left_out = listed(window, every)
+    if not pairs:
+        return ["   nothing ran in this period"]
+    rows, seen = [], set()
+    for record, run in pairs:
+        commits = str(len(run["commits"]))
+        if record["id"] in seen:
+            rows.append(run_cells(record, run) + ["", "", commits, "", ""])
+            continue
+        seen.add(record["id"])
+        context = record["end_context"] + sum(u["output"] for u in record["usage"])
+        spawned = len(record["subagents"])
+        rows.append(
+            run_cells(record, run)
+            + [
+                str(record["messages"]),
+                "%.0fk" % (context / 1000),
+                commits,
+                "+%d" % spawned if spawned else "",
+                "%.2f" % usd_of(record, cost),
+            ]
+        )
+
+    headers = ["when", "kind", "id", "awake", "msgs", "ctx+out", "commits", "+N", "$"]
+    out = ["   " + line for line in cost.table(rows, headers, left=3)]
+    out += left_out + [""]
+    if any(row[7] for row in rows):
+        out.append("   +N marks sub-agents — 'just read <id> --subagent K' reads one")
+    return out + ["   Read one:  just read <id>"]
+
+
+def machine_sessions(window, cost, every):
+    """`--system --by-session`: the machine run by run, each row from that run's own summary.
+
+    A run the sampler did not see is not a row; the `% cpu` line above says how many were.
+    """
+    pairs, left_out = listed(window, every, keep=lambda run: run.get("system"))
+    if not pairs:
+        return ["   no session in this period was measured"]
+    # No kind: every kind runs on the one machine, and with it the row passes 78 columns.
+    # combine() over one run is that run's own figures, spelled as the day table spells them.
+    rows = [
+        [when(run["from"]), record["id"][:8], duration(run["to"] - run["from"])]
+        + measured(combine([run["system"]]))
+        for record, run in pairs
+    ]
+    lines = cost.table(rows, ["when", "id", "awake"] + MEASURED, left=2)
+    return (
+        ["   " + line for line in lines]
+        + left_out
+        + [
+            "",
+            "   One run to a row. cpu is the mean over its samples, load95 and io95",
+            "   its p95, mem MB and disk MB the lowest free, swap MB what was swapped out.",
         ]
     )
 
@@ -841,23 +971,34 @@ def newest_heading(monitor):
 # --------------------------------------------------------------------------
 
 
-def screen(records, name, monitor, days, cost, every=False, system=False):
+def screen(records, name, monitor, days, cost, every=False, system=False, listing=False, day=None):
     """Four titled sections, in the order someone opens this to read them.
 
     What it has done in all, what the last week looked like, whether that is
     changing, and what it ran on. Everything covers the window in the first
     heading; the second section names its own days, and the third its own weeks.
-    `system` puts the machine day by day in place of the last three.
+    `system` puts the machine day by day in place of the last three, and `listing`
+    one row per session, of the agent or of the machine.
     see docs/monitor.md#the-shape-of-the-screen
     """
     lifetime = Window(records)
-    window = Window(records, days, every) if days or every else lifetime
+    window = Window(records, days, every, day) if days or every or day else lifetime
     out = opening(lifetime, name, newest_heading(monitor))
     out += rule(
         "all %d sessions · %s → %s · %d days"
         % (len(window.runs), window.since, window.until, window.days)
     )
     out += whole(window, cost)
+
+    if listing and system:
+        out += rule("the machine, session by session")
+        out += machine_sessions(window, cost, every)
+        return "\n".join(out)
+
+    if listing:
+        out += rule("session by session")
+        out += sessions_table(window, cost, every)
+        return "\n".join(out)
 
     if system:
         out += rule("the machine, the last %d full days" % window.full)
@@ -1243,6 +1384,99 @@ def selftest():
         "today has its row below the break", sum(1 for line in table if "today, up to" in line), 1
     )
 
+    # --by-session. A resumed transcript is one record holding two runs: a row each, and the
+    # transcript's own figures once, on the newer.
+    def named(record, ident):
+        record.update(id=ident)
+        return record
+
+    def rows_of(lines, marker=SHORT):
+        return sum(1 for line in lines if marker in line)
+
+    resumed = named(on(yesterday, kind="chat"), "aaaa1111-0000")
+    resumed["runs"].append(
+        {"from": resumed["start"] + 7200, "to": resumed["start"] + 9000, "commits": ["c1"]}
+    )
+    resumed["subagents"] = [{"usage": [], "type": "Explore"}] * 2
+    table = sessions_table(Window([resumed, named(on(yesterday), "bbbb2222-0000")]), cost, False)
+    both = [line for line in table if "aaaa1111" in line]
+    check("one row per run", len(both), 2)
+    check(
+        "the transcript's figures once, on its newer run", [len(r.split()) for r in both], [10, 7]
+    )
+    check(
+        "its sub-agents among them, and the legend said",
+        ("+2" in both[0].split(), rows_of(table, "+N marks")),
+        (True, 1),
+    )
+    check("each run keeps its own commits", (both[0].split()[7], both[1].split()[-1]), ("1", "0"))
+    check("the newer run's awake is its own", both[0].split()[4], "30m")
+
+    # A probe is not a session, and the reader of the store is what leaves it out.
+    with tempfile.TemporaryDirectory() as root:
+        for ident, by in (("cccc3333", "runner"), ("dddd4444", None)):
+            with open(os.path.join(root, ident + ".json"), "w") as handle:
+                json.dump(named(on(yesterday), ident) | {"started_by": by}, handle)
+        check("a probe is not listed", [r["id"] for r in load(root)], ["cccc3333"])
+
+    fresh_today = named(on(datetime.date.today()), "eeee5555")
+    check(
+        "today is listed under -d N",
+        rows_of(sessions_table(Window([fresh_today], days=3), cost, False), "eeee5555"),
+        1,
+    )
+
+    many = [named(on(yesterday - datetime.timedelta(days=n)), "%08x" % n) for n in range(25)]
+    capped = sessions_table(Window(many), cost, False)
+    check("twenty rows unless asked", rows_of(capped), 20)
+    check("and what was left out is said", rows_of(capped, "5 older not shown"), 1)
+    check(
+        "--all lists every one", rows_of(sessions_table(Window(many, every=True), cost, True)), 25
+    )
+
+    sept = datetime.date(2026, 9, 10)
+    check("--day takes a month and a day", parse_day("08-26", sept), datetime.date(2026, 8, 26))
+    check("or the whole date", parse_day("2026-08-26", sept), datetime.date(2026, 8, 26))
+    check(
+        "a month and a day still to come are last year's",
+        parse_day("12-31", datetime.date(2027, 1, 2)),
+        datetime.date(2026, 12, 31),
+    )
+    check(
+        "anything else is refused",
+        [parse_day(t, sept) for t in ("8-26", "02-30", "26")],
+        [None] * 3,
+    )
+    one = Window(many, day=yesterday - datetime.timedelta(days=2))
+    check(
+        "--day is that day's runs",
+        (len(one.runs), rows_of(sessions_table(one, cost, False))),
+        (1, 1),
+    )
+
+    seen_run = named(sampled(yesterday, 100, 20.0, 1.5, 10.0, 1200, 0.0, 7000), "ffff6666")
+    unseen_run = named(on(yesterday), "abab7777")
+    by_run = machine_sessions(Window([seen_run, unseen_run]), cost, False)
+    check(
+        "a measured run is a row of its own figures",
+        [line.split()[5:] for line in by_run if "ffff6666" in line],
+        [["20%", "1.50", "10%", "1200", "0", "7000"]],
+    )
+    check("an unmeasured run is not a row", rows_of(by_run, "abab7777"), 0)
+    check("and the table fits the screen", max(len(line) for line in by_run) <= WIDTH, True)
+    sampled_many = [
+        named(
+            sampled(yesterday - datetime.timedelta(days=n), 10, 5.0, 1.0, 1.0, 900, 0.0, None),
+            "%08x" % n,
+        )
+        for n in range(25)
+    ]
+    check(
+        "the machine table is capped too",
+        rows_of(machine_sessions(Window(sampled_many), cost, False), "00m"),
+        20,
+    )
+
     # A breakdown breaks between items and never inside one.
     check(
         "a long breakdown wraps whole",
@@ -1270,11 +1504,27 @@ def main():
     parser.add_argument(
         "--system", action="store_true", help="the machine day by day instead of the agent"
     )
+    parser.add_argument(
+        "--by-session", action="store_true", help="one row per session instead of the days"
+    )
+    parser.add_argument("--day", help="one local day's sessions, listed: 08-26 or 2026-08-26")
     parser.add_argument("--selftest", action="store_true", help="prove the arithmetic and stop")
     args = parser.parse_args()
 
     if args.selftest:
         return selftest()
+
+    day = None
+    if args.day:
+        day = parse_day(args.day, datetime.date.today())
+        if day is None:
+            print("--day wants a local day: --day 08-26, or --day 2026-08-26.", file=sys.stderr)
+            return 2
+        if args.days:
+            print(
+                "--day is one day and -d N a run of them: give one or the other.", file=sys.stderr
+            )
+            return 2
 
     root = os.environ.get("RUNNER_RECORDS_DIR") or ""
     if not root:
@@ -1296,6 +1546,8 @@ def main():
             load_cost(),
             args.all,
             args.system,
+            args.by_session or day is not None,
+            day,
         )
     )
     return 0

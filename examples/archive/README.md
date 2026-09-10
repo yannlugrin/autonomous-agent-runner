@@ -31,7 +31,7 @@ act rather than a sync.
 | | |
 | --- | --- |
 | `.github/workflows/check-credentials.yml` | proves the status page's four secrets on demand, without printing one. Delete it if you are not installing the page. |
-| `scripts/session-meta.jq` | one archived session as a row. Read by the status page's renderer; the runner keeps its own copy for `just sessions`. |
+| `scripts/session-meta.jq` | one archived session as a row. Read by the status page's renderer; the runner keeps its own copy for `just read`. |
 | `optional-status-page/` | the page, and everything it needs. It requires a Cloudflare account — see its README. |
 
 ## The placeholders

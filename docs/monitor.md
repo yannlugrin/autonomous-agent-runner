@@ -297,8 +297,8 @@ invoice.
 
 The day is the archive's, which is UTC: a transcript is filed under the UTC day
 of its own first timestamp and the pricing tool dates a session the same way,
-so a day directory holds exactly one day of sessions. `just sessions` is where
-the local day lives, and it says so when the two differ.
+so a day directory holds exactly one day of sessions. `just stats --by-session`
+is where the local day lives.
 
 Sessions are staged as files rather than piped, because a sub-agent is priced
 into the session that asked for the work and the archive says which one that is
@@ -324,15 +324,15 @@ below are the only reason a person runs it by hand.
 | `just records` | what a session end calls. Seals every session that can be sealed and publishes them to the archive's `cache` branch. With nothing to do it costs 40ms and no network |
 | `just records --recheck` | re-derive every stored record and diff it against what is stored, writing nothing. How a suspected fault is answered |
 | `just records --rewrite <id>` | replace one, for a transcript a redact ruling changed after its record sealed |
-| `just records --prove` | run the four commands that will one day read the store, render the same output from the records alone, and diff |
+| `just records --prove` | run the three commands that will one day read the store, render the same output from the records alone, and diff |
 | `just records --no-publish` | write them here and push nothing. For looking at the store without touching the archive |
 | `RUNNER_RECORDS_DIR` | where they live — `~/.cache/<agent>/records/` unless set |
 
-Nothing reads them yet. `just sessions`, `just read`, `just tools` and `just
-cost` still derive everything from the raw transcripts on every call, and each
-becomes a renderer over this store in a later, separate piece of work; `just
-stats` is a third piece again. Until then the store's one obligation is that it
-will be **enough** when that happens, which is what `--prove` is for.
+`just stats` reads them, the listing of sessions included. `just read`, `just
+tools` and `just cost` still derive everything from the raw transcripts on every
+call, and each becomes a renderer over this store in a later, separate piece of
+work. Until then the store's one obligation is that it will be **enough** when
+that happens, which is what `--prove` is for.
 
 ### Why it exists
 
@@ -566,14 +566,14 @@ serves no reader.
 **There is no duration field, deliberately.** `end - start` on a resumed
 transcript reads 8h34m for 3h25m of work — 5h09m of it the gap — and it is the
 number a reader reaches for first, because it looks like the answer. A duration
-is the sum of `to - from` over the runs. `just sessions` and `just read` still
-show the transcript's span, which is what they have always shown; they compute
-it, and it is not stored where something else could take it for a session's
-length.
+is the sum of `to - from` over the runs, and a run's own is the `awake` of
+`just stats --by-session`. `just read` still shows the transcript's span, which
+is what it has always shown; it computes it, and it is not stored where
+something else could take it for a session's length.
 
 `day` and `local_day` are the transcript's for the same reason `elapsed` is not
-stored at all: they are what `just sessions` buckets on and they are not what a
-rollup over runs should bucket on. A run inside a transcript that began the
+stored at all: they date the file, as `just read` heads it, and they are not what
+a rollup over runs should bucket on. A run inside a transcript that began the
 previous day belongs to its own day, not the file's.
 
 **The run is the unit of everything joined on time.** A record holds `runs`,
@@ -885,12 +885,11 @@ than two spellings of one. `output` is what was consumed: a request that fell
 back carries an `iterations` array whose first attempt was really billed and
 which the top-level usage omits, so the iterations are summed.
 `output_reported` is what that top level states, which is the figure
-`session-meta.jq` reads and therefore what `just sessions` and `just read` show
-today.
+`session-meta.jq` reads and therefore what `just read` shows today.
 
 They differ on **2 of 579 sessions** in the archive on 2026-09-06, by 1452 and
 672 tokens — the only two requests that have ever fallen back. Keeping one of
-them would have made either `just cost` or the two listings unreproducible from
+them would have made either `just cost` or `just read`'s header unreproducible from
 the store, and picking which to break is not the store's call.
 
 ### Sub-agents, and the two counts that disagree
@@ -976,22 +975,20 @@ and write a row per turn for a field no command reads.
 
 ### The sufficiency proof
 
-`just records --prove` is the one obligation of the store while no command reads
-it. It runs each command as it stands, has `host/monitor/records-render.py`
+`just records --prove` is the one obligation of the store while `read`, `tools`
+and `cost` do not read it. It runs each command as it stands, has `host/monitor/records-render.py`
 render the same output from the records alone, and diffs the two byte for byte
 over the whole archive:
 
 | what is diffed | what it proves |
 | --- | --- |
-| `archive_rows` in `host/lib/archive.sh` | every field of the table both listings are a pure function of. Proved first, because a difference here names the field where a difference below names a column |
-| `just sessions --all` | the rows, the numbering, and every footnote |
 | `just read <id>` | the header block over a transcript, the sub-agent listing `--subagent K` indexes into, and each sub-agent's own header |
 | `just tools` and `just tools <name>...` | both table shapes, over every day the archive holds |
 | `just cost`, `--by-day`, and by session id | fed into `image/session-cost.py`'s own printing, so what it proves is that the store carries everything that file needs |
 
 The renderer is not a second implementation of the commands kept in step by
-hand: the ordering goes through the same `sort`, the columns through the same
-`column -t`, and the cost report through `session-cost.py` itself. What it
+hand: the columns go through the same `column -t`, and the cost report through
+`session-cost.py` itself. What it
 supplies is only the numbers, which is the question.
 
 It refuses to run rather than report a difference it would have caused itself:
@@ -999,9 +996,8 @@ while the local `sessions` branch and `origin/sessions` differ, while any
 session is without a record, or while a sub-agent sits on the branch without its
 session. Each of those makes the command and the store read different archives.
 
-`just read` is proved by a hex fragment of an id rather than by a listing
-position — a full uuid has dashes in it and that recipe takes hex — and the
-position is the ordering the `sessions` diff already proves.
+`just read` is proved by the first segment of an id: a full uuid has dashes in
+it, and that recipe takes hex.
 
 ## The stats screen
 
@@ -1027,6 +1023,9 @@ arithmetic and the screen.
 | `just stats -d N` | over the last N **whole** days, ending yesterday, with ⌈N/7⌉ rows in the weekly table |
 | `just stats --all` | a row for every day of the window rather than the last seven |
 | `just stats --system` | the machine day by day, in place of the tables about the agent |
+| `just stats --by-session` | one row per session, newest first, in place of the tables about the days. `--all` lists every one |
+| `just stats --day D` | the sessions of one local day, listed — `08-26` or `2026-08-26` |
+| `just stats --system --by-session` | the machine run by run, over the runs the sampler saw |
 | `stats.py --selftest` | the speller, the periods, the shapes. In CI |
 
 ### What every number counts
@@ -1222,6 +1221,25 @@ priced as zero.
 Whatever prints money says what it is: API list rates for the same traffic, not
 money spent, and it does not convert into the subscription's allowance.
 
+### Session by session
+
+**`just stats --by-session` lists the sessions newest first, one row per run**, below
+section one and in place of the tables about the days. Each row carries the first eight
+characters of the session's id, which is what `just read` takes. The newest 20 unless
+`--all`; `-d N` narrows the window and still lists today's; `--day D` is a window of one
+local day, lists all of it, and is refused beside `-d`.
+
+**A resumed transcript is one record and two rows.** `awake` and `commits` are each run's
+own. `msgs`, `ctx+out`, `+N` and `$` are the transcript's, and are printed on its newest
+listed row only: printed on both, a sum down a column counts them twice.
+
+**A probe is not listed**, and neither is a session collected but not sealed yet — the
+minutes between `collect --push` and its record, or what `just status` counts as
+`RECORDS_NOT_SEALED`. `just read <id>` still reaches it, from the archive or the volume.
+
+On a terminal the table goes through `less -FRX`, paged when it is longer than the
+screen; a pipe or a file gets every line whole.
+
 ### The machine
 
 **`just stats --system` shows the machine day by day in place of the tables about
@@ -1242,6 +1260,13 @@ was measured on is a row of dashes, as every day table here draws a quiet day, a
 words the rest of the screen uses, so on a day the sampler missed some runs they read
 lower here than on the default screen; the `% cpu` line above says how many of the
 window's sessions were measured.
+
+**`--system --by-session` is the machine run by run**, each row from that run's own
+summary with nothing joined: `cpu` its mean, `load95` and `io95` its p95, `mem MB` and
+`disk MB` its lowest free, `swap MB` what it swapped out. A run the sampler did not see is
+not a row. There is no `kind` column: every kind runs on the one machine, and with it the
+row passes the screen's 78 columns. The cap, `--all`, `-d N` and `--day` work as on
+`--by-session`.
 
 **Nothing is judged.** No threshold and no marker: what normal is on this machine has not
 been measured, and the operator reads the numbers.
@@ -1266,6 +1291,7 @@ nothing reads it.
 | the journal counted against the archive | it counted a three-day mirror outage as forgetting and the 2026-08-25 compaction as omissions, and cannot tell either from a real gap by counting alone. That corpus belongs to the drift audit, which reads it with an agent |
 | an hour-of-day or weekday histogram | cron decides it; it would report the operator's own crontab back to them |
 | a cost breakdown, or `--by-day` | `just cost` and `just tools` own those |
+| a session's title in `--by-session` | nearly every unattended session is titled "Session start routine"; the id identifies one, and `just read` shows the title |
 
 ### A build that just went live has carried nothing
 

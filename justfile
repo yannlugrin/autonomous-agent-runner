@@ -365,9 +365,9 @@ test-container *ARGS:
 listen $all="no" $wait="no" $live="no" $remote="no" $summary="yes" $n="20":
     @exec host/session/listen.sh
 
-[doc("Read one transcript whole — by its number in `just sessions`, or by its own id")]
+[doc("Read one transcript whole — a session or a subagent, by its own id")]
 [group("session")]
-[arg("id", help="a row of the last 'just sessions' — 1 to 3 digits — or a session or subagent id, hex and four characters or more")]
+[arg("id", help="a session or subagent id, or enough of one: hex, four characters or more — 'just stats --by-session' shows one on every row")]
 [arg("subagent", long, help="read the K-th subagent that session spawned instead; the read lists them")]
 [arg("full", long, value="yes", help="a tool call's whole payload rather than its first line")]
 read $id $subagent="" $full="no":
@@ -409,15 +409,6 @@ publish-status $now="no":
     typed=(); typed_flag --now "$now"
     [ "$RUNNER_IS_DEPLOYED" = yes ] || forward_to_deployed publish-status ${typed[@]+"${typed[@]}"}
     exec host/archive/publish-status.sh ${typed[@]+"${typed[@]}"}
-
-# A failure here is the archive's own and it says so in its own words.
-[doc("What the archive holds, newest first — `just read <number>` opens one")]
-[group("archive")]
-[no-exit-message]
-[arg("all", long, value="yes", help="every session, not the newest screenful")]
-[arg("day", long, help="only sessions that started on that local day — 08-26, or 2026-08-26")]
-sessions $all="no" $day="":
-    @exec host/archive/sessions.sh
 
 [doc("How the mirror is doing — is it running, is it current, was anything rewound")]
 [group("archive")]
@@ -487,7 +478,7 @@ cost $by_day="no" $days="0" *ARGS:
 [group("monitor")]
 [no-exit-message]
 [arg("recheck", long, value="yes", help="re-derive every stored record and diff it against what is stored, writing nothing")]
-[arg("prove", long, value="yes", help="render what sessions, read, tools and cost print today from the records alone, and diff")]
+[arg("prove", long, value="yes", help="render what read, tools and cost print today from the records alone, and diff")]
 [arg("publish", long="no-publish", value="no", help="write the records here and push nothing to the archive")]
 [arg("rewrite", long, help="replace one session's record, for a transcript a redact ruling changed after it sealed")]
 [arg("reseal", long, value="yes", help="write every record --recheck reports as differing, for a field added to the record after most of it was written")]
@@ -496,13 +487,15 @@ records $recheck="no" $prove="no" $publish="yes" $rewrite="" $reseal="no":
 
 # no-exit-message: a store with no records in it is a state and not a defect,
 # and the script names the command that fills it.
-[doc("What the agent has been doing, and whether that is changing — one screen from the sealed records; -d N narrows it to N whole days, --all gives every one a row, --system shows the machine")]
+[doc("What the agent has been doing, and whether that is changing — one screen from the sealed records; -d N narrows it to N whole days, --all gives every one a row, --system shows the machine, --by-session lists the sessions")]
 [group("monitor")]
 [no-exit-message]
 [arg("days", long, short="d", pattern='\d+', help="how many whole days back to report on, ending yesterday; 0 is everything the records hold, with four weeks in the weekly table")]
-[arg("all", long, value="yes", help="a row for every day of the window, not the last seven")]
+[arg("all", long, value="yes", help="a row for every day of the window, not the last seven; with --by-session, every session rather than the newest 20")]
 [arg("system", long, value="yes", help="the machine day by day, from what the session sampler saw, in place of the tables about the agent")]
-stats $days="0" $all="no" $system="no":
+[arg("by_session", long="by-session", value="yes", help="one row per session, newest first, in place of the tables about the days; 'just read <id>' opens one")]
+[arg("day", long, help="the sessions of one local day, listed — 08-26, or 2026-08-26")]
+stats $days="0" $all="no" $system="no" $by_session="no" $day="":
     @exec host/monitor/stats.sh
 
 [doc("Count tool calls per day in the archived session transcripts — one line per tool, or name tools for one line per day")]

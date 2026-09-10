@@ -3,7 +3,8 @@
 #
 # Runs on the host, over the sealed records and nothing else: no transcript is
 # read, no jq filter runs, the volume is not touched. Every declared argument
-# arrives as an environment variable: the value days and the flag all.
+# arrives as an environment variable: the values days and day, and the flags
+# all, system and by_session.
 #
 # The arithmetic and the screen are host/monitor/stats.py. What is here is what
 # has to be: the records and the journal brought up to date, and "no records" as
@@ -77,4 +78,12 @@ fi
 opts=()
 [ "$all" = yes ] && opts+=(--all)
 [ "$system" = yes ] && opts+=(--system)
-python3 host/monitor/stats.py --days "$days" ${opts[@]+"${opts[@]}"}
+[ "$by_session" = yes ] && opts+=(--by-session)
+[ -n "$day" ] && opts+=(--day "$day")
+
+# A listing is paged on a terminal; a pipe or a file gets every line whole.
+if [ -t 1 ] && { [ "$by_session" = yes ] || [ -n "$day" ]; }; then
+    python3 host/monitor/stats.py --days "$days" ${opts[@]+"${opts[@]}"} | less -FRX
+else
+    python3 host/monitor/stats.py --days "$days" ${opts[@]+"${opts[@]}"}
+fi

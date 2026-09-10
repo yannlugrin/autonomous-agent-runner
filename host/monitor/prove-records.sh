@@ -6,10 +6,9 @@
 # when the agent runs on another machine — and writes nothing but a temporary
 # directory. `just records --prove`.
 #
-# THIS IS THE ONE OBLIGATION OF THE STORE. The change that added the records
-# moved no command onto them: `just sessions`, `just read`, `just tools` and
-# `just cost` still read the transcripts, and each becomes a renderer over the
-# store in a later, separate piece of work. What has to be true today is that
+# THIS IS THE ONE OBLIGATION OF THE STORE. `just read`, `just tools` and `just
+# cost` still read the transcripts, and each becomes a renderer over the store in
+# a later, separate piece of work. What has to be true today is that
 # the store will be enough when that happens — and a field missing from a record
 # is not otherwise discovered until that later session is halfway through
 # rewriting a command, by which time the store is published and its shape is
@@ -62,6 +61,11 @@ judge() {
 need_archive
 archive_ref
 
+# The sessions on the branch without their sub-agents: what `read` is proved
+# over, and what the window of `tools` and `cost` is counted from.
+files=$(git -C "$ARCHIVE" ls-tree -r --name-only "$ARCHIVE_REF" -- transcripts \
+    | grep '\.jsonl$' | grep -v -- '--agent-')
+
 local_sha=$(git -C "$ARCHIVE" rev-parse "$ARCHIVE_REF" 2>/dev/null)
 origin_sha=$(git -C "$ARCHIVE" rev-parse refs/remotes/origin/sessions 2>/dev/null)
 if [ "$local_sha" != "$origin_sha" ]; then
@@ -110,32 +114,12 @@ printf 'Proving the store against %s — %s record(s).\n\n' \
     "$ARCHIVE_REF" "$(find "$STORE" -name '*.json' | wc -l)"
 
 
-# --- the table both listings are a pure function of ---
-# host/lib/archive.sh builds one row per session, and `just sessions` and
-# `just read` are both rendered from it. Proved first because a difference here
-# names the field, where a difference in the output below names a column.
-
-printf '%s\n' "the session table (host/lib/archive.sh)"
-archive_rows
-printf '%s\n' "$ARCHIVE_ROWS" > "$work/rows.want"
-render rows > "$work/rows.got"
-judge "archive_rows, every session" "$work/rows.want" "$work/rows.got"
-
-
-# --- just sessions --all ---
-
-printf '\n%s\n' "just sessions --all"
-all=yes day="" host/archive/sessions.sh > "$work/sessions.want" 2>/dev/null
-render sessions --ref "$ARCHIVE_REF" > "$work/sessions.got"
-judge "the listing, its footnotes and its numbering" "$work/sessions.want" "$work/sessions.got"
-
-
 # --- just read <id> ---
 # The header is printed before the transcript is rendered, so `head` closes the
 # pipe on the render and each read costs the header alone. The footer sits after
 # the transcript and is taken in full, from the sessions that have one.
 
-printf '\n%s\n' "just read <id>"
+printf '%s\n' "just read <id>"
 heads=0; foots=0; subs=0; broke=""
 
 reads() { id="$1" subagent="$2" full=no RUNNER_IS_DEPLOYED=yes \
@@ -168,7 +152,7 @@ while IFS= read -r path; do
         else broke="$broke $id/subagent-$k"; fi
         k=$((k + 1))
     done
-done < <(printf '%s\n' "$ARCHIVE_FILES")
+done < <(printf '%s\n' "$files")
 
 if [ -z "$broke" ]; then
     ok "$heads header(s), $foots sub-agent listing(s), $subs sub-agent header(s)"
@@ -182,7 +166,7 @@ fi
 # directories, so the number of them covers all.
 
 printf '\n%s\n' "just tools"
-window=$(printf '%s\n' "$ARCHIVE_FILES" | sed 's|^transcripts/||; s|/[^/]*$||' | sort -u | wc -l)
+window=$(printf '%s\n' "$files" | sed 's|^transcripts/||; s|/[^/]*$||' | sort -u | wc -l)
 
 days="$window" host/monitor/tools.sh > "$work/tools.want" 2>/dev/null
 render tools -d "$window" > "$work/tools.got"

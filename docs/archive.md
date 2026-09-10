@@ -18,7 +18,7 @@ the machine's own judgement.
 
 | handle | what it does |
 | --- | --- |
-| `AGENT_ARCHIVE_REPO` | `owner/name` of the archive. Nothing can derive it — the archive is usually not the agent's own account — and without it `collect`, `read`, `sessions` and `mirror-status` say so rather than guessing |
+| `AGENT_ARCHIVE_REPO` | `owner/name` of the archive. Nothing can derive it — the archive is usually not the agent's own account — and without it `collect`, `read` and `mirror-status` say so rather than guessing |
 | `AGENT_ARCHIVE` | where that clone sits. `archive/` inside this checkout unless set, gitignored, made by `just setup-archive`; a relative value counts from the checkout, not from where `just` ran |
 | `AGENT_MIRROR_WORKFLOW` | the mirror workflow's file name **in the mirror's repository**. `mirror-<agent>.yml` unless set; nothing here renames that file |
 | `AGENT_MIRROR_COOLDOWN` | minutes before a session may ask the mirror to run again. Unset or unreadable means every session asks — a cost knob, where the direction with no undo is a mirror that did not run |
@@ -26,8 +26,7 @@ the machine's own judgement.
 | `just setup-mirror` | once: write the two secrets the mirror's workflow runs on, in its own repository. The agent is told none of it |
 | `just setup-gh` | once per host: the token that host reads the mirror and asks for a run with, and git's helper. On a host that runs the agent it proves the token cannot write the record |
 | `just collect` | read the transcripts out of the volume, put them through the gate, commit what passes. `--push` publishes, `--held` lists what is held back, `--approve <hash> "why"` archives one as it stands, `--redact <hash> "why"` archives it with the credential rewritten out |
-| `just sessions` | what the archive holds, newest first. `--all`, `--day D` |
-| `just read <n>` | one row of that listing, whole |
+| `just read <id>` | one transcript whole, by the id `just stats --by-session` shows |
 | `just mirror-status` | whether the memory's mirror is enabled, current, and whether anything upstream was rewound. It only reads |
 | `just publish-status` | the host's half of the status page, onto the `status` branch. `--now` ignores the ten-minute floor |
 | the `config` branch | this installation's own three files under `image/`, written by `just deploy` once a deploy has succeeded and read back by `just setup --restore`. Nothing is typed at it |
@@ -73,7 +72,7 @@ sources — `read-volume.sh`, `ledger.sh`, `scan.sh`, `rule.sh`, `report.sh`,
 `findings.py`), `archive-layout.py` and `archived.py` (where a transcript
 belongs, and whether the archive already holds it), `gitleaks.toml` (the second
 opinion's config), `status-collect.py` and `publish-status.sh` (the snapshot and
-its branch), `sessions.sh` and `session-meta.jq` (the listing), `mirror.sh` and
+its branch), `session-meta.jq` (the figures over a read), `mirror.sh` and
 `dispatch-mirror.sh` (the mirror's health, and asking it to run), and `setup.sh`
 (the clone and the mirror's credentials). `host/lib/archive.sh` holds what the
 read-only recipes share.
@@ -1258,6 +1257,9 @@ compare, for the same reason: a pattern file of one empty line is not an empty p
 
 ### The subagent legend was a race
 
+`just sessions` went on 2026-09-10; `stats --by-session` decides its legend in Python, where no
+pipe does. The pattern below is not specific to that script.
+
 `just sessions` decided whether to print its `+N marks subagents` line with `printf '%s\n'
 "$shown" | grep -q 'msg  +' && …`, and on 2026-09-06 that printed the legend **once in six runs**
 over the same 580 sessions. `grep -q` exits on the first match — row 61 here — and the `printf`
@@ -1473,6 +1475,10 @@ The three files hold rules and no values.
 
 ## The listing
 
+**Since 2026-09-10 the listing is `just stats --by-session`**, over the sealed records, and `just read`
+takes an id only: `sessions.sh` and `archive_rows` are gone, and what follows is the record of the listing
+they were. `need_archive` and `archive_ref` are still what the read-only recipes share.
+
 `just sessions` prints the archived sessions newest first; `just read` opens one, by its number here or by
 its own id. Both build the table through `archive_rows` in `host/lib/archive.sh`, which is the one place it
 is built: the number a listing shows and the number `read` takes are then the same handle by construction
@@ -1493,6 +1499,9 @@ so the local one is the one that is ahead.
 
 ### A subagent is not a session
 
+Still true in `stats --by-session`: a sub-agent is never a row, and `+N` marks the session that spawned
+them, in a column of its own.
+
 A sub-agent writes a transcript of its own beside its session, as
 `<session-id>--agent-<agent-id>.jsonl`, and it is not a session: listed as one it is a row with no title
 that nothing accounts for, and its output would be counted twice — once as itself, once inside the session
@@ -1507,6 +1516,9 @@ when one is on screen.
 
 ### Newest first, and what a number means
 
+No longer applies: a row carries the first eight characters of its id, which does not move when the next
+collection lands.
+
 Newest first on the local date and clock the row carries: the session you want is nearly always the last one
 that ran. The price is that a number is a handle for the moment you listed and not a name — the next
 collection pushes everything down by one — which is why a read prints the uuid.
@@ -1516,6 +1528,9 @@ has to mean the same thing whether or not 137 was on screen; a row numbered with
 renumber every time the page changed, which is a handle that lies.
 
 ### Where the clock and the path part company
+
+No longer applies: a record carries `local_day`, and `stats --by-session` lists by it with no footnote.
+`--day` still takes both spellings.
 
 The row shows the local day the session started, and the archive files the file under its UTC day and always
 will, so the two part company either side of midnight. The count of rows where they differ is read off the

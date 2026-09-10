@@ -17,7 +17,7 @@ WHERE EVERY FACT COMES FROM, AND WHY IT COMES FROM THERE
                         one that is plainly down, because you believe it.
 
   the sessions          `sessions`, through scripts/session-meta.jq — the
-                        same program `just sessions` reads. Not recomputed
+                        same program `just read` reads. Not recomputed
                         here and not shipped from the host either: the
                         transcripts are already in this repository, and a
                         third implementation of that counting would drift
@@ -135,7 +135,7 @@ def instant(text):
 
 
 def tokens(n):
-    """The same rounding `just sessions` uses, deliberately.
+    """The same rounding `just read` uses, deliberately.
 
     119_500 shown as 119k on one screen and 120k on another is two
     implementations disagreeing about one session, which is the whole risk

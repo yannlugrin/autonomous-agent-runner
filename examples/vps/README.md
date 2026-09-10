@@ -199,7 +199,7 @@ author. Read it here, then set it there:
 **Check:**
 
     ssh -o ForwardAgent=no vps 'ssh -T git@github.com'   # names the archive; exit 1 is its success
-    ssh vps 'cd runner && just sessions'     # answers; an empty archive is an answer
+    ssh vps 'git -C archive ls-remote origin'   # answers; an empty archive is an answer
     ssh vps 'git config --global --get-regexp "^user\."'   # both lines
 
 `-o ForwardAgent=no` on the first, if your own ssh config forwards the agent:
