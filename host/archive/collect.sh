@@ -111,6 +111,28 @@ That name was derived from compose's own project name. If it is wrong,
 list the volumes with \`docker volume ls\` and set AGENT_VOLUME."
 
 
+# --- the temporaries go on disk, not in RAM ---
+# Everything below stages a copy of the transcript corpus twice over: the
+# extraction copies every transcript out of the volume, and the commit checks
+# `sessions` out. On a small host /tmp is a tmpfs — 981 MB of the 1961 the
+# agent's own host has, measured 2026-09-10 — so those two copies do not fit,
+# and the run dies half way through the checkout on `unable to write file`,
+# which reads as a broken archive rather than as a full disk. The cache
+# directory is on real disk and already holds this agent's state.
+#
+# Set here rather than at four `mktemp` sites: `archive.sh` and `scan.sh` are
+# sourced by this script and inherit it, and a second spelling is the one that
+# gets missed. see docs/archive.md#the-staging-copies-are-not-in-ram
+
+export TMPDIR="${RUNNER_CACHE_DIR:?not set — run this through 'just', which derives it}/tmp"
+mkdir -p "$TMPDIR" || die "Could not make $TMPDIR, which is where this run stages its copies."
+
+# A run killed outright — an OOM, a dropped ssh — never reaches the trap below,
+# and on disk that is a slow leak rather than an immediate failure. A day is
+# past any run that is coming back.
+find "$TMPDIR" -maxdepth 1 -mtime +0 -exec rm -rf {} + 2>/dev/null || true
+
+
 # --- what the run leaves behind, and what removes it ---
 
 staging="$(mktemp -d)"

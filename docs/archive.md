@@ -155,6 +155,43 @@ synthetic key, runs the module end to end and prints `just verify`'s own
 the shell with awk; a probe that has to reconstruct its subject is a probe that
 stops proving anything the day the subject moves.
 
+## The staging copies are not in RAM
+
+**Measured 2026-09-10**, on the host the agent had just moved to — 2 GB of RAM,
+`/tmp` a tmpfs of 981 MB, which is systemd's default half:
+
+    error: unable to write file transcripts/2026/09-09/fd749bd7-….jsonl
+    fatal: Could not reset index file to revision 'HEAD'.
+    Could not check out 'sessions' — see the message above.
+
+A collection puts the transcript corpus in a temporary directory **twice**: the
+extraction copies every transcript out of the volume into `$staging`, and the
+commit checks `sessions` out into a throwaway worktree. Both were `mktemp`,
+which means `/tmp`, which on that host means RAM — 487 MB measured for the first
+alone. Two of them do not fit in 981 MB, and what the reader sees is a git
+message about writing files and resetting an index: a broken archive, not a full
+disk. The run before it had died as `No space left on device` from the same
+cause with a stray directory supplying the other half.
+
+`collect.sh` exports `TMPDIR` under `RUNNER_CACHE_DIR` before it stages
+anything, so both copies land on disk. Set once, not at the four `mktemp` sites:
+`archive.sh` and `scan.sh` are sourced by `collect.sh` and inherit it, and the
+second spelling is the one that gets missed. Measured after the change, on the
+same host and the same corpus: **`/tmp` peaks at 1 MB, the cache directory at
+487 MB**, and the collection runs through to the commit.
+
+It also sweeps anything a day old under that directory. The trap removes the
+copies on every ordinary exit, including a signal; a run killed outright — an
+OOM, a dropped ssh — never reaches it, and on disk that is a slow leak where in
+tmpfs it was the next run failing.
+
+**Why not simply skip what is already archived** — 682 of the 683 files, on that
+run. Because "already archived" is decided from the git blob id of the staged
+bytes, so the bytes have to be read; only the *copy out* could be avoided, by
+hashing inside the container and extracting the remainder. That is a change to
+`read-volume.sh` and to `archived.py`'s contract, and it is not what was
+failing.
+
 ## What reaches the archive at all
 
 ### Only the checkout's own sessions
