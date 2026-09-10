@@ -411,7 +411,7 @@ the measurements.
 | `just drift-status` | the mirror ref, the two anchors and how far behind each is, and the last runs. It fetches first |
 | `just cost` | what the archived sessions cost, priced from their own transcripts. `--by-day`, `-d N`, or session ids. API list rates: weight, not an invoice |
 | `just tools` | how many times each tool was called, per day (`-d N`), in the archived transcripts; name tools for one line per day |
-| `just stats` | what the agent has been doing, and whether that is changing — one screen over the sealed records: how many unattended sessions and how long, the last seven days day by day, the weeks side by side, and which build carried what. `-d N` narrows it to the last N whole days, today excluded |
+| `just stats` | what the agent has been doing, and whether that is changing — one screen over the sealed records: how many unattended sessions and how long, the last seven days day by day, the weeks side by side, and which build carried what. `-d N` narrows it to the last N whole days, today excluded; `--system` shows the machine day by day instead |
 | `just records` | one durable record per archived session — what it was, what it spent, what it committed, which runner built it. Every session end seals its own and publishes it to the archive's `cache` branch, so this is machinery rather than something to type; `--recheck`, `--rewrite` and `--prove` are what a person runs |
 
 ### release
@@ -654,6 +654,7 @@ through `vault`, and by shape otherwise. [`docs/vault.md`](docs/vault.md)
         session-env.sh       what a session is told about itself, and the budget verdict
         docker-up.sh         stop early, and say why, when the daemon is not answering
         sampler.sh           sysstat samples while a session runs, when asked for
+        sysstat.py           what the machine was doing over a window, read back from them
         config-files.sh      the per-installation files, derived from their tracked examples
       session/             what a session is, watched or read
         run.sh               one unattended session — what cron calls

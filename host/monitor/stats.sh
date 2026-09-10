@@ -76,4 +76,5 @@ fi
 
 opts=()
 [ "$all" = yes ] && opts+=(--all)
+[ "$system" = yes ] && opts+=(--system)
 python3 host/monitor/stats.py --days "$days" ${opts[@]+"${opts[@]}"}

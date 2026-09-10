@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """What the agent has been doing, and whether that is changing — one screen.
 
-    stats.py [-d N] [--all]   the screen
+    stats.py [-d N] [--all] [--system]   the screen
     stats.py --selftest       prove the arithmetic and stop
 
 Runs on the host, under `just stats`. It reads the sealed records in
@@ -377,7 +377,101 @@ def whole(window, cost):
             ["what this traffic would cost per token — weight, never money spent"],
         )
     )
-    return fact(rows + detail(window))
+    return fact(rows + detail(window) + machine(window))
+
+
+def combine(systems):
+    """Many runs' `system` summaries as one.
+
+    A mean weighted by samples; the worst session's p95, because p95s do not add up; the
+    lowest free; the swap summed, and how many runs swapped at all.
+    see docs/monitor.md#the-machine
+    """
+    samples = sum(s["samples"] for s in systems)
+
+    def present(key):
+        return [s[key] for s in systems if s.get(key) is not None]
+
+    disks = [s["filesystem"]["free_min_mb"] for s in systems if s.get("filesystem")]
+    return {
+        "cpu": sum(s["cpu_busy_mean"] * s["samples"] for s in systems) / samples,
+        "load95": max(present("load1_p95"), default=None),
+        "io95": max(present("iowait_p95"), default=None),
+        "mem": min(present("avail_min_mb"), default=None),
+        "swap": sum(present("swap_out_mb")),
+        "swapped": sum(1 for v in present("swap_out_mb") if v > 0),
+        "disk": min(disks, default=None),
+        "cpus": systems[-1].get("cpus"),
+    }
+
+
+def machine(window):
+    """What the machine was doing over the runs the sampler saw, or nothing when it saw none.
+
+    Every kind of run, chat included: the question is whether the machine is big enough,
+    and a conversation runs on the same one.
+    """
+    sampled = [run["system"] for _record, run in window.runs if run.get("system")]
+    if not sampled:
+        return []
+    c = combine(sampled)
+    items = ["%d of %d sessions measured" % (len(sampled), len(window.runs))]
+    if c["load95"] is not None:
+        items.append("worst load p95 %.1f on %s CPU" % (c["load95"], c["cpus"] or "?"))
+    if c["io95"] is not None:
+        items.append("worst iowait p95 %.0f%%" % c["io95"])
+    if c["mem"] is not None:
+        items.append("%d MB memory free at worst" % c["mem"])
+    items.append("swap out in %d session%s" % (c["swapped"], "" if c["swapped"] == 1 else "s"))
+    if c["disk"] is not None:
+        items.append("%d MB disk free at worst" % c["disk"])
+    return [("%.0f%% cpu" % c["cpu"], wrap(items))]
+
+
+def machine_days(window, cost):
+    """`--system`: the machine day by day, in place of the tables about the agent.
+
+    The days the daily table shows — the complete ones, then today below the break — over
+    every kind of run. A day nothing was sampled on is a row of dashes and not a missing
+    row, for the reason `recent()` gives.
+    """
+    short = window.until < datetime.date.today()
+    by_day = collections.defaultdict(list)
+    for _record, run in window.runs + (window.today if short else []):
+        if run.get("system"):
+            by_day[local_day(run["from"])].append(run)
+
+    def row(day):
+        runs = by_day[day]
+        if not runs:
+            return ["   " + day.strftime("%m-%d"), "0"] + ["—"] * 7
+        c = combine([run["system"] for run in runs])
+        return [
+            "   " + day.strftime("%m-%d"),
+            str(len(runs)),
+            duration(sum(run["to"] - run["from"] for run in runs)),
+            "%.0f%%" % c["cpu"],
+            "—" if c["load95"] is None else "%.2f" % c["load95"],
+            "—" if c["io95"] is None else "%.0f%%" % c["io95"],
+            "—" if c["mem"] is None else str(c["mem"]),
+            "%.0f" % c["swap"],
+            "—" if c["disk"] is None else str(c["disk"]),
+        ]
+
+    days = [window.first_full + datetime.timedelta(days=n) for n in range(window.full)]
+    lines = cost.table(
+        [row(day) for day in days] + [row(datetime.date.today())],
+        ["", "sessions", "awake", "cpu", "load95", "io95", "mem MB", "swap MB", "disk MB"],
+    )
+    return (
+        lines[:-1]
+        + ["", lines[-1] + "   today, up to %s" % time.strftime("%H:%M"), ""]
+        + [
+            "   Over the sessions measured. cpu is the mean over their samples, load95 and",
+            "   io95 the worst session's p95, mem MB and disk MB the lowest free, swap MB",
+            "   what was swapped out.",
+        ]
+    )
 
 
 def detail(window):
@@ -747,12 +841,13 @@ def newest_heading(monitor):
 # --------------------------------------------------------------------------
 
 
-def screen(records, name, monitor, days, cost, every=False):
+def screen(records, name, monitor, days, cost, every=False, system=False):
     """Four titled sections, in the order someone opens this to read them.
 
     What it has done in all, what the last week looked like, whether that is
     changing, and what it ran on. Everything covers the window in the first
     heading; the second section names its own days, and the third its own weeks.
+    `system` puts the machine day by day in place of the last three.
     see docs/monitor.md#the-shape-of-the-screen
     """
     lifetime = Window(records)
@@ -763,6 +858,11 @@ def screen(records, name, monitor, days, cost, every=False):
         % (len(window.runs), window.since, window.until, window.days)
     )
     out += whole(window, cost)
+
+    if system:
+        out += rule("the machine, the last %d full days" % window.full)
+        out += machine_days(window, cost)
+        return "\n".join(out)
 
     out += rule("the last %d full days" % window.full)
     out += recent(window, cost)
@@ -1087,6 +1187,62 @@ def selftest():
         "all of it unattended",
     )
 
+    # The machine: many runs' summaries as one, and a day nothing was sampled on still a row.
+    def sampled(day, samples, cpu, load95, io95, avail, swap, disk, kind="auto"):
+        record = on(day, kind=kind)
+        record["runs"][0]["system"] = {
+            "samples": samples,
+            "cpus": 1,
+            "cpu_busy_mean": cpu,
+            "load1_p95": load95,
+            "iowait_p95": io95,
+            "avail_min_mb": avail,
+            "swap_out_mb": swap,
+            "filesystem": None if disk is None else {"free_min_mb": disk},
+        }
+        return record
+
+    pair = [
+        sampled(yesterday, 100, 20.0, 1.5, 10.0, 1200, 0.0, 7000),
+        sampled(yesterday, 300, 40.0, 3.5, 30.0, 1100, 12.0, None, kind="chat"),
+    ]
+    joined = combine([record["runs"][0]["system"] for record in pair])
+    check("cpu is weighted by samples", round(joined["cpu"], 1), 35.0)
+    check("a p95 is the worst session's", (joined["load95"], joined["io95"]), (3.5, 30.0))
+    check(
+        "free is the lowest, disk where it was read", (joined["mem"], joined["disk"]), (1100, 7000)
+    )
+    check(
+        "swap is summed, and runs that swapped counted",
+        (joined["swap"], joined["swapped"]),
+        (12.0, 1),
+    )
+
+    unsampled = on(yesterday - datetime.timedelta(days=1))
+    told = flat(fact(machine(Window(pair + [unsampled]))))
+    check("the machine line says how many were measured", "2 of 3 sessions measured" in told, True)
+    check("and leads with the cpu", told.startswith("35% cpu"), True)
+    check("no sampled run is no machine line", machine(Window([unsampled])), [])
+
+    table = machine_days(Window(pair + [unsampled]), cost)
+
+    def day_row(day):
+        return [line for line in table if line.startswith("   " + day.strftime("%m-%d"))][0].split()
+
+    check(
+        "a day's row combines its runs",
+        day_row(yesterday)[1:] ,
+        ["2", "2h", "00m", "35%", "3.50", "30%", "1100", "12", "7000"],
+    )  # fmt: skip
+    check(
+        "a day nothing was sampled on is a row of dashes",
+        day_row(yesterday - datetime.timedelta(days=1))[1:4],
+        ["0", "—", "—"],
+    )
+    check(
+        "today has its row below the break", sum(1 for line in table if "today, up to" in line), 1
+    )
+
     # A breakdown breaks between items and never inside one.
     check(
         "a long breakdown wraps whole",
@@ -1110,6 +1266,9 @@ def main():
     )
     parser.add_argument(
         "--all", action="store_true", help="a row for every day of the window, not the last seven"
+    )
+    parser.add_argument(
+        "--system", action="store_true", help="the machine day by day instead of the agent"
     )
     parser.add_argument("--selftest", action="store_true", help="prove the arithmetic and stop")
     args = parser.parse_args()
@@ -1136,6 +1295,7 @@ def main():
             args.days,
             load_cost(),
             args.all,
+            args.system,
         )
     )
     return 0

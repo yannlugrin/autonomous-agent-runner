@@ -54,6 +54,9 @@ def load_module(path, name):
 screen = load_module("host/lib/screen.py", "screen")
 rule, fact, duration, local_day = screen.rule, screen.fact, screen.duration, screen.local_day
 
+# What the machine was doing, from the reader the records use.  see host/lib/sysstat.py
+sysstat = load_module("host/lib/sysstat.py", "sysstat")
+
 # The two weights a finding has. A problem is something that has stopped or
 # will refuse; a watch is something a person should know and nobody has to act
 # on tonight. Words and position, never hue.
@@ -249,13 +252,18 @@ def live_session(started, verdict):
     out, code = ask(
         [os.path.join(CHECKOUT, "host/session/session-stats.py"), "--since", str(started or 0)]
     )
+    where = sysstat.directory()
+    sampled = None
+    if started and where and os.path.isdir(where):
+        sampled = sysstat.summarise(where, started, time.time(), sysstat.docker_root())
+    so_far = [("machine so far", machine(sampled))]
     if out is None or code:
-        return [("so far", ["could not be read — 'just cost' says why"])]
+        return [("so far", ["could not be read — 'just cost' says why"])] + so_far
     lines = [line.strip() for line in out.splitlines() if line.strip()]
     fault = model_fault(lines)
     if fault:
         verdict.problem(fault)
-    return [("so far", lines)] if lines else []
+    return ([("so far", lines)] if lines else []) + so_far
 
 
 def model_fault(lines):
@@ -296,12 +304,37 @@ def last_session(records, now):
                     usd,
                 )
             ],
-        )
+        ),
+        ("machine", machine(record["runs"][-1].get("system"))),
     ]
 
 
 def thousands(n):
     return "%dk" % round(n / 1000) if n >= 1000 else str(n)
+
+
+def machine(system):
+    """A run's `system` summary as lines, or that there is none.
+
+    Numbers only, and nothing here judges them: what normal is on this machine has not
+    been measured yet.  see docs/monitor.md#the-machine-a-run-ran-on
+    """
+    if not system:
+        return ["not measured"]
+    first = ["cpu %.0f%%" % system["cpu_busy_mean"]]
+    if system.get("load1_p95") is not None:
+        first.append("load p95 %.1f on %s CPU" % (system["load1_p95"], system.get("cpus") or "?"))
+    first.append("iowait p95 %.0f%%" % system["iowait_p95"])
+
+    free = []
+    if system.get("avail_min_mb") is not None:
+        free.append("%d MB memory" % system["avail_min_mb"])
+    if system.get("filesystem"):
+        free.append("%d MB disk" % system["filesystem"]["free_min_mb"])
+    second = ["lowest free " + ", ".join(free)] if free else []
+    if system.get("swap_out_mb") is not None:
+        second.append("swap out %.0f MB" % system["swap_out_mb"])
+    return [" · ".join(first)] + ([" · ".join(second)] if second else [])
 
 
 def next_line(facts, verdict, running, now, pressure=("clear", None, None)):
@@ -1451,6 +1484,33 @@ def selftest():
     has("the last session comes out of its record", text, "ended 50m ago · ran 10m · 62 requests")
     has("today is counted in sessions and awake time", text, "2 sessions · 20m awake · $8.48")
     check("a quiet machine is not a fault", v.found, [])
+    has("a run with no summary says it was not measured", text, "not measured")
+
+    # --- the machine ---
+    sampled = {
+        "samples": 361,
+        "cpus": 1,
+        "cpu_busy_mean": 29.84,
+        "load1_p95": 3.92,
+        "iowait_p95": 17.28,
+        "avail_min_mb": 1156,
+        "swap_out_mb": 185.0,
+        "filesystem": {"mount": "/", "size_mb": 18687, "free_start_mb": 7014, "free_min_mb": 7000},
+    }
+    check(
+        "the machine in two lines",
+        machine(sampled),
+        [
+            "cpu 30% · load p95 3.9 on 1 CPU · iowait p95 17%",
+            "lowest free 1156 MB memory, 7000 MB disk · swap out 185 MB",
+        ],
+    )
+    check(
+        "a run before filesystems were sampled leaves the disk out",
+        machine(dict(sampled, filesystem=None))[1],
+        "lowest free 1156 MB memory · swap out 185 MB",
+    )
+    check("no summary is not a row of zeros", machine(None), ["not measured"])
 
     # A wake-up that never happened. The wait elapsed, cron fires every minute,
     # and nothing started — which is what the screen said nothing about while a

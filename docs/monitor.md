@@ -760,6 +760,75 @@ reading that could not be made looks like, and the two must not be one value.
 instants and their minutes. To re-measure it: group every record's runs by UTC
 day and take the smallest positive `next start − this end`.
 
+### The machine a run ran on
+
+**`system`, on every run: what the host was doing over that run's own window.** It
+answers one question — does the agent need more resources — so it covers the run,
+`from` to `to`, and not the collection after it, which is the runner's cost. The
+samples are the ones `host/lib/sampler.sh` has `sadc` write while a session runs
+(`RUNNER_SAMPLE_SECONDS`); `host/lib/sysstat.py` reads them back; `just status` and
+`just stats --system` show them, as numbers nothing judges.
+
+| fields | what they say |
+| --- | --- |
+| `interval`, `samples` | how much of the run was seen: `samples × interval` against `to − from`, so a partial window is not read as a calm one |
+| `cpus`, `mem_mb` | the denominators, from the same file, so a resize does not reinterpret history |
+| `cpu_busy_*` | how much of the CPU was used, `100 − %idle` |
+| `load1_*`, `psi_cpu_*` | whether work queued for the CPU. PSI `some`: on one CPU the load counts disk waits too |
+| `steal_*` | whether the provider took CPU away, which nothing else shows |
+| `iowait_*`, `psi_io_*`, `disks` | whether the disk was the bottleneck. PSI `full`: every runnable task stalled at once |
+| `avail_min_mb`, `swap_in_mb`, `swap_out_mb`, `psi_mem_*` | whether memory ran short. PSI `full` again |
+| `filesystem` | whether the disk is filling: `free_start_mb` across runs is the trend, `free_min_mb` the low point inside one |
+
+**`null` is not measured, never a quiet machine**: the sampler was off, sysstat is not
+installed, or the run is older than 2026-09-10 12:25 local, when sampling began.
+`filesystem` alone is `null` for a day whose file was started before the sampler
+collected filesystems, and when docker did not say where its root is. `sadc` appending to
+a file keeps the activities that file began with — measured 2026-09-10, `-S XDISK`
+appended to a `-S DISK` file adds no `-F` — so the day of the switch has no free space. No sealing condition comes
+with it: the sampler is still running when a session end seals, so the window is whole.
+
+**Mean and p95, never the max.** At 5 s a max is one sample. Over the 742 samples the
+VPS took on 2026-09-10:
+
+| column | mean | p95 | max |
+| --- | --- | --- | --- |
+| %iowait | 4.92 | 35.35 | 83.61 |
+| %util, all devices | — | 11.74 | 95.72 |
+| await ms, all devices | — | 6.11 | 258.58 |
+| pswpout/s | 24.64 | 0.00 | 3603.60 |
+
+**Read by timestamp, never by `sadf -s/-e`.** Those take a time of day: a run across
+midnight is cut in two, and a month later `saDD` is another day under the same name.
+`sadf -U` prints epoch seconds, every file the window's days name is read in both
+clocks, and a sample is kept by its own timestamp.
+
+**Swap is the pages moved, not `kbswpused` end minus start.** A burst swapped back in
+leaves no delta. Over one 30-minute window that afternoon, 185 MB went out and 107 MB
+came back.
+
+**`disks` holds whole devices that did I/O.** With `-S XDISK`, `sda1` is listed beside
+`sda` with the same I/O and would count it twice; `loop*` and `sr*` are dropped too.
+`await` is taken over the samples where the disk had I/O, since an idle interval
+reports 0 ms.
+
+**`filesystem` is the one holding Docker's root dir**, which holds the images and the
+agent's volume: the longest `sadf -F MOUNT` mount point that prefixes
+`docker info -f '{{.DockerRootDir}}'`. Free space ran short on that host before — 2.4 GB
+of stale collection copies with 4.5 GB free, on 2026-09-10.
+
+**A stored summary is never blanked.** The daily files are replaced a month on, so a
+`--recheck` or `--reseal` after that finds none of a run's samples, or, for a run across
+a midnight, half of them. `keep_measured` keeps the stored `system` run by run whenever
+it holds more samples than the re-read, as it keeps `runner_pushed_at`.
+
+Measured 2026-09-10 on sysstat 12.7.7: `sadf` asked for an activity a file does not
+hold exits 0 and prints the others, so one call serves files from before `-S XDISK`;
+`sadf -H` carries the CPU count as `(1 CPU)`; PSI is in `sadc`'s defaults. To look at
+one window by hand, on the host that ran it: `host/lib/sysstat.py <from> <to>`. To
+re-measure a column: `sadf -d -U ~/.cache/<agent>/sysstat/saDD -- <activity> | grep -v
+'^#' | cut -d';' -fN | sort -g`, and read the mean, the line at 95% and the last.
+
 ### Reseal is the exception to written-once
 
 A record is written once, and `publish_records` enforces it: a commit that
@@ -957,6 +1026,7 @@ arithmetic and the screen.
 | `just stats` | the screen, over everything the records hold |
 | `just stats -d N` | over the last N **whole** days, ending yesterday, with ⌈N/7⌉ rows in the weekly table |
 | `just stats --all` | a row for every day of the window rather than the last seven |
+| `just stats --system` | the machine day by day, in place of the tables about the agent |
 | `stats.py --selftest` | the speller, the periods, the shapes. In CI |
 
 ### What every number counts
@@ -1151,6 +1221,30 @@ priced as zero.
 `image/session-cost.py` is the only price table; `stats` restates no rate.
 Whatever prints money says what it is: API list rates for the same traffic, not
 money spent, and it does not convert into the subscription's allowance.
+
+### The machine
+
+**`just stats --system` shows the machine day by day in place of the tables about
+the agent**, and section one carries a `% cpu` line with or without the flag. Both read
+the `system` summary each run carries — "The machine a run ran on", above — and nothing
+else.
+
+**Every kind of run is counted, chat included.** The question is whether the machine is
+big enough, and a conversation runs on the same one.
+
+**A day's row joins its runs.** `cpu` is the mean weighted by samples; `load95` and
+`io95` are the worst session's p95, because percentiles do not add up; `mem MB` and
+`disk MB` are the lowest free; `swap MB` is what was swapped out, summed. A day nothing
+was measured on is a row of dashes, as every day table here draws a quiet day, and
+`-d N` and `--all` work as they do on the default screen.
+
+**The table counts the sessions that were measured.** `sessions` and `awake` keep the
+words the rest of the screen uses, so on a day the sampler missed some runs they read
+lower here than on the default screen; the `% cpu` line above says how many of the
+window's sessions were measured.
+
+**Nothing is judged.** No threshold and no marker: what normal is on this machine has not
+been measured, and the operator reads the numbers.
 
 ### What the screen does not show
 

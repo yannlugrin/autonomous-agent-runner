@@ -21,7 +21,8 @@ sample_start() {
 
     # sadc and not sa1: sa1 writes to /var/log/sysstat, which only root can.
     # Given a directory, sadc writes the daily saDD file and replaces it a month on.
-    "$sadc" -F -L -S DISK "$every" 100000000 "$dir" </dev/null >/dev/null 2>&1 &
+    # XDISK and not DISK: filesystems too, for the free space host/lib/sysstat.py reads back.
+    "$sadc" -F -L -S XDISK "$every" 100000000 "$dir" </dev/null >/dev/null 2>&1 &
     sampler=$!
 }
 

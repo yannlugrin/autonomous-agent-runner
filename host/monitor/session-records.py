@@ -16,9 +16,9 @@ checkout this host last read out of its volume. It writes nothing outside
 RUNNER_RECORDS_DIR.
 
 WHAT A RECORD IS. One archived transcript: when it ran, what it was, what it
-spent, which commits it made, which version of the runner it ran under, and what
-the next wake-up was counting when it ended — assembled once, when every field in
-it is final.
+spent, which commits it made, which version of the runner it ran under, what
+the next wake-up was counting when it ended, and what the machine was doing while
+it ran — assembled once, when every field in it is final.
 
 ONE TRANSCRIPT IS NOT ALWAYS ONE RUN. `just chat --continue` appends to the
 transcript it resumes, so a file can hold two runs with hours between them, and
@@ -172,17 +172,21 @@ def as_minutes(value):
 # equally right.
 
 
-def price_module():
-    path = os.path.join(CHECKOUT, "image", "session-cost.py")
-    spec = importlib.util.spec_from_file_location("session_cost", path)
+def module_at(name, *parts):
+    path = os.path.join(CHECKOUT, *parts)
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        sys.exit("Could not load the price table at %s" % path)
+        sys.exit("Could not load %s" % path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-COST = price_module()
+COST = module_at("session_cost", "image", "session-cost.py")
+
+# What the machine was doing while a run ran, read back from the session sampler's files.
+# see docs/monitor.md#the-machine-a-run-ran-on
+SYSSTAT = module_at("sysstat", "host", "lib", "sysstat.py")
 
 
 # --------------------------------------------------------------------------
@@ -823,7 +827,7 @@ class Snapshots:
 # --------------------------------------------------------------------------
 
 
-def build(archive, session, main, subs, sizes, memory, snapshots):
+def build(archive, session, main, subs, sizes, memory, snapshots, machine=(None, None)):
     chain = chain_of(archive, sizes[main][0])
     blob, size = sizes[main]
 
@@ -929,6 +933,7 @@ def build(archive, session, main, subs, sizes, memory, snapshots):
             run["runner_pushed_at"] = None
             run["asked_wake_after"] = None
             run["wake_after"] = None
+            run["system"] = None
             continue
         run["commits"], run["commit_stat"] = memory.within(run["from"], run["to"])
         run["runner_commit"], run["runner_image"], run["runner_pushed_at"] = snapshots.live_at(
@@ -937,6 +942,8 @@ def build(archive, session, main, subs, sizes, memory, snapshots):
         asked, granted = snapshots.granted_to(session) if index == last_run else (None, None)
         run["asked_wake_after"] = asked
         run["wake_after"] = granted if granted is not None else snapshots.wait_at(run["to"])
+        # The run's own window and not the collection after it: it answers what the agent uses.
+        run["system"] = SYSSTAT.summarise(machine[0], run["from"], run["to"], machine[1])
     return record
 
 
@@ -981,6 +988,11 @@ def keep_measured(record, target):
         was = by_start.get(run.get("from"))
         if was and run.get("runner_pushed_at") is None:
             run["runner_pushed_at"] = was.get("runner_pushed_at")
+        # The sampler's daily files are replaced a month on: a re-read then finds none of a
+        # run's samples, or, across a midnight, half of them.
+        stored, fresh = (was or {}).get("system"), run.get("system")
+        if stored and (fresh is None or stored.get("samples", 0) > fresh.get("samples", 0)):
+            run["system"] = stored
 
 
 def write(root, transcript, record):
@@ -1038,8 +1050,13 @@ def seal(archive, memory_log, root, state_path, only=None, dry_run=False, reseal
     index, sizes = archive_index(archive)
     memory = Memory(memory_log)
     snapshots = Snapshots(archive)
+    where = SYSSTAT.directory()
+    # Docker is asked once, and only where there are samples to report a filesystem from.
+    machine = (where, SYSSTAT.docker_root() if where and os.path.isdir(where) else None)
 
-    wanted = sorted(index) if only is None else [only]
+    # In date order, which the archive's paths are: the sample files a run reads are then the
+    # ones sysstat.py already holds from the run before it.
+    wanted = sorted(index, key=lambda s: index[s][0]) if only is None else [only]
     written, waiting, differs, same = [], [], [], 0
 
     for session in wanted:
@@ -1051,7 +1068,7 @@ def seal(archive, memory_log, root, state_path, only=None, dry_run=False, reseal
         if (dry_run or reseal) and not stored_here:
             waiting.append((session, "no record"))  # nothing to compare against
             continue
-        record = build(archive, session, main, subs, sizes, memory, snapshots)
+        record = build(archive, session, main, subs, sizes, memory, snapshots, machine)
         if stored_here:
             keep_measured(record, target)
         holding = sealed(record, memory, snapshots)
@@ -1200,6 +1217,24 @@ def selftest():
             fresh["runs"][0]["runner_pushed_at"],
             None,
         )
+
+        with open(target, "w") as handle:
+            json.dump({"runs": [{"from": 100, "system": {"samples": 3}}]}, handle)
+        reread = {"runs": [{"from": 100, "system": None}]}
+        keep_measured(reread, target)
+        check(
+            "a replaced sample file does not blank a stored summary",
+            reread["runs"][0]["system"],
+            {"samples": 3},
+        )
+        halved = {"runs": [{"from": 100, "system": {"samples": 1}}]}
+        keep_measured(halved, target)
+        check(
+            "nor does half a window across a midnight", halved["runs"][0]["system"], {"samples": 3}
+        )
+        fuller = {"runs": [{"from": 100, "system": {"samples": 5}}]}
+        keep_measured(fuller, target)
+        check("a fuller re-read is kept", fuller["runs"][0]["system"], {"samples": 5})
 
     # The rate tuple is written `input, 5m write, 1h write, read, output` and
     # the categories are ordered `input, write1h, write5m, read, output`. The

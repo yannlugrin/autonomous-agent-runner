@@ -1715,6 +1715,12 @@ for an answer already on disk. A session that is still running has no record
 yet, so `session-stats.py` reads it, and the MODEL MISMATCH line it can print is
 carried into the verdict rather than left as a line the reader has to recognise.
 
+**The machine is shown and never judged.** Under the last session, its record's
+`system` summary; under a running one, the same summary read live from the sampler's
+files since it started, through `host/lib/sysstat.py`. Nothing from it reaches the
+verdict: what normal is on this machine has not been measured. See
+`docs/monitor.md`, under "The machine a run ran on".
+
 **Today is a line because nothing else says the agent has gone quiet.** Sessions
 and awake time, out of the records, on the two denominators `just stats` uses.
 
