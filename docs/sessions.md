@@ -1606,7 +1606,7 @@ path it has to invent is a path it invents wrong.
 
 ## The test twin
 
-`just test-env` runs the same image with the same environment and the same
+`just test-container` runs the same image with the same environment and the same
 hardening as a real session; the only difference is that the service has no
 volume, so the agent's home is the image's own and goes away with the
 container. That is what makes it honest: a rehearsal against a home that

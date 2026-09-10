@@ -47,7 +47,7 @@ def capture():
     """The twin: no volume, no login, no session lock, and it spends nothing."""
     print("reading the shipped rules from the test twin…", file=sys.stderr)
     r = subprocess.run(
-        ["just", "test-env", "claude", "auto-mode", "defaults"],
+        ["just", "test-container", "claude", "auto-mode", "defaults"],
         cwd=ROOT,
         capture_output=True,
         text=True,
