@@ -72,10 +72,11 @@ unproven=()
 
 archive=$(git -C "$MIRROR" remote get-url origin 2>/dev/null \
     | sed -E 's#\.git$##; s#^git@[^:]+:##; s#^https?://[^/]+/##')
-# Out of the clone rather than off a working tree: this one is bare. The blob is
-# fetched on demand, which is what a blobless clone is for.
+# Off origin/main and not the working tree: the operator edits in that folder, so
+# its files are what is being changed, not what runs. The blob is fetched on
+# demand, which is what a blobless clone is for.
 wf="$workflow on $archive"
-source=$(git -C "$MIRROR" show "main:.github/workflows/$workflow" 2>/dev/null \
+source=$(git -C "$MIRROR" show "origin/main:.github/workflows/$workflow" 2>/dev/null \
     | sed -n 's#^ *SOURCE_URL: *git@github.com:\(.*\)\.git *$#\1#p')
 
 
@@ -84,12 +85,13 @@ source=$(git -C "$MIRROR" show "main:.github/workflows/$workflow" 2>/dev/null \
 # failure says so rather than being swallowed. The namespace is named explicitly
 # because a clone's default refspec does not carry it, and everything below
 # would otherwise report "the mirror has never run" on a healthy one; `main`
-# comes too, because the workflow file is read out of it.
+# comes too, because the workflow file is read out of it — into origin/main, and
+# never onto the local branch, which is checked out and belongs to the operator.
 #   see docs/archive.md#a-ref-not-a-branch
 
 printf 'fetching     : '
 if git -C "$MIRROR" fetch --quiet --prune origin \
-    '+refs/memory/*:refs/memory/*' '+refs/heads/main:refs/heads/main' 2>/dev/null; then
+    '+refs/memory/*:refs/memory/*' '+refs/heads/main:refs/remotes/origin/main' 2>/dev/null; then
     echo 'ok'
 else
     echo 'FAILED — everything below is from local refs and may be stale'

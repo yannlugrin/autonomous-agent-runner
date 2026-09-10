@@ -207,8 +207,8 @@ export AGENT_ARCHIVE := if archive_setting == "" { root / "archive" } else if ar
 
 # The mirror's own clone, beside the archive's and for the same reason: `just
 # mirror-status` reads commit metadata, and reading it from a clone rather than
-# over the API keeps one answer whichever machine asks. Bare and blobless, so it
-# is megabytes and not the whole memory. see docs/monitor.md#the-mirror-is-not-in-the-archive
+# over the API keeps one answer whichever machine asks. A working folder, and
+# blobless, so it is megabytes and not the whole memory. see docs/monitor.md#the-mirror-is-not-in-the-archive
 mirror_setting := env_var_or_default("AGENT_MIRROR", "")
 export AGENT_MIRROR := if mirror_setting == "" { root / "mirror" } else if mirror_setting =~ '^/' { mirror_setting } else { root / mirror_setting }
 

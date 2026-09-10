@@ -4,11 +4,12 @@
 # Sourced by `mirror`, which only reads it. The path is computed once in the
 # justfile and exported, as the archive's is.
 #
-# The clone is **bare and blobless** — `--filter=blob:none` — because nothing
-# here wants a file: the tip, its date, the commit count and the rewind marks
-# are all commit metadata. Measured 2026-09-09: 1.4 MB against 267 MB for the
-# whole memory, fetched in under two seconds, and a `git show main:<path>` still
-# reads the workflow by pulling that one blob on demand.
+# The clone is a working folder, the one the operator edits the mirror in, and
+# **blobless** — `--filter=blob:none` — because nothing here wants a file: the
+# tip, its date, the commit count and the rewind marks are all commit metadata.
+# Measured 2026-09-09: 1.4 MB against 267 MB for the whole memory, fetched in
+# under two seconds, and a `git show origin/main:<path>` still reads the
+# workflow by pulling that one blob on demand.
 # see docs/monitor.md#the-mirror-is-not-in-the-archive
 
 MIRROR="${AGENT_MIRROR:?not set — run this through 'just', which computes it}"
@@ -54,15 +55,10 @@ need_mirror() {
         echo "$MIRROR exists and is not a git repository. Move it, or point AGENT_MIRROR elsewhere." >&2
         exit 1; }
 
-    # A && B || C is what is meant: any step failing is the same refusal. The
-    # filter is set as configuration and not passed to one fetch, so every fetch
+    # `clone --filter` keeps the filter as configuration, so every later fetch
     # honours it — including one typed by hand. Without it this is 9.6 MB where
     # it should be 1.4, measured, and nothing would say so.
-    # shellcheck disable=SC2015
-    git init -q --bare "$MIRROR" \
-        && git -C "$MIRROR" remote add origin "$(mirror_url)" \
-        && git -C "$MIRROR" config remote.origin.promisor true \
-        && git -C "$MIRROR" config remote.origin.partialclonefilter blob:none || {
+    git clone -q --filter=blob:none "$(mirror_url)" "$MIRROR" || {
         echo "Could not make a clone of the mirror at $MIRROR." >&2; exit 1; }
     echo "Made a clone of $repo at $MIRROR." >&2
 }
