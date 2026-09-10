@@ -233,8 +233,8 @@ fi
 
 printf '         installing the base packages\n'
 if slow sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        git jq python3 python3-venv curl ca-certificates gnupg cron util-linux gitleaks; then
-    verdict ok "apt base" "git jq python3 curl cron util-linux gitleaks"
+        git jq python3 python3-venv curl ca-certificates gnupg cron util-linux gitleaks sysstat; then
+    verdict ok "apt base" "git jq python3 curl cron util-linux gitleaks sysstat"
 else
     verdict FAIL "apt base" "apt-get failed — nothing below will hold"
 fi
@@ -267,6 +267,14 @@ if systemctl is-active --quiet cron; then
     verdict ok "cron running" "$(systemctl is-enabled cron 2>/dev/null)"
 else
     verdict FAIL "cron running" "cron is not active — no unattended session would ever start"
+fi
+
+# Nothing here depends on it: it is what 'sar' reads back after a load spike nobody watched.
+sudo systemctl enable --now sysstat >/dev/null 2>&1
+if systemctl is-active --quiet sysstat; then
+    verdict ok "sysstat running" "$(systemctl is-enabled sysstat 2>/dev/null)"
+else
+    verdict LOOK "sysstat running" "not active — no 'sar' history to look back on"
 fi
 
 
