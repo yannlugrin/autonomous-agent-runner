@@ -1170,14 +1170,19 @@ def selftest():
     v = Verdict()
     rows = backup_section(
         block(
-            "verdict: running\nlast_run: %d\nconclusion: success\ndue: %d\nlate: yes\n"
+            "verdict: stopped\nlast_run: %d\nconclusion: success\ndue: %d\nlate: yes\n"
+            "problem: a session ended 30m ago and no mirror run followed it\n"
             % (now - 7200, now - 3600)
         ),
-        0,
+        1,
         v,
         now,
     )
-    check("a session that ended without a run is a problem", len(v.found), 1)
+    check(
+        "a session that ended without a run is one problem, not two",
+        [level for level, _ in v.found],
+        [PROBLEM],
+    )
     has("and it says which way it is late", "\n".join(fact(rows)), "LATE")
 
     v = Verdict()
