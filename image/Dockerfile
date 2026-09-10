@@ -246,8 +246,8 @@ RUN chmod 0755 /usr/local/bin/vault-env
 # `run`, `chat` and the verify probes start `claude-session` instead of
 # `claude`; a `claude` typed by hand in `just shell` is not intercepted — a
 # documented gap, chosen over a PATH shim that would have had to tell a session
-# from `claude login` by parsing arguments. Rendered once at build, because from
-# inside a session a literal `{{NOW}}` is invisible. see docs/sessions.md
+# from `claude login` by parsing arguments. Rendered once at build, so a template
+# that cannot be filled fails the build rather than every session. see docs/sessions.md
 COPY system-prompt-template.md /usr/local/share/agent/system-prompt-template.md
 COPY claude-session.py /usr/local/bin/claude-session
 RUN chmod 0644 /usr/local/share/agent/system-prompt-template.md \

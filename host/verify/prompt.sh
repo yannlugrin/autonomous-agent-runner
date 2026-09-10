@@ -2,9 +2,9 @@
 # What every session is told about its situation, rendered in the twin and
 # read from outside. Sourced by host/verify/verify.sh.
 #
-# A placeholder the renderer cannot fill is invisible from inside a session —
-# the model reads a literal placeholder name and has no way to know what it
-# should have said — so this is proved from outside. Under --entrypoint,
+# A template the renderer cannot fill is a session that never starts, and a
+# session that never started cannot report it — so this is proved from
+# outside. Under --entrypoint,
 # because the twin's entrypoint stops at bootstrap with an empty home and
 # rendering needs neither a credential nor a checkout.
 # see docs/verify.md#the-system-prompt-render

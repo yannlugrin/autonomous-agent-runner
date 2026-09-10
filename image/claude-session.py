@@ -63,10 +63,10 @@ is checkable against a command:
   {{OPERATOR_NAME}}   OPERATOR_NAME — who the agent is and who the operator is,
                       as `just` exports them on the host.
 
-A placeholder that survives is a refusal to start. From inside the session a
-literal `{{NOW}}` is invisible — nothing checks the prompt but the model, and
-the model does not know what it should have said — so the script exits before
-exec'ing claude, with the name of what it could not fill.
+A placeholder that survives is a refusal to start: the script exits before
+exec'ing claude, with the name of what it could not fill. Without it, a literal
+`{{NOW}}` would reach the model as an ordinary line of its prompt, and nothing
+would flag it.
 
 --render prints what a session would be told and starts nothing; it needs no
 credential, and `just verify` uses it to prove no placeholder survives.
@@ -218,8 +218,8 @@ def concurrency():
 def named(name):
     """A value `just` exports on the host, refused rather than left blank.
 
-    A sentence rendered with a hole in it is as invisible from inside the
-    session as an unfilled placeholder, so it stops the same way.
+    A sentence rendered with a hole in it would reach the model unflagged, as
+    an unfilled placeholder would, so it stops the same way.
     """
     value = os.environ.get(name, "").strip()
     if not value:

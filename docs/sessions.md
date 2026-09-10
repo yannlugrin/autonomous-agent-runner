@@ -498,11 +498,12 @@ placeholder that resolved to "focus on X today" would be direction arriving
 outside the trusted channel, in the one layer nobody reviews. Everything the
 renderer fills in is checkable against a command.
 
-A placeholder that survives is a refusal to start. From inside the session a
-literal `{{NOW}}` is invisible — nothing checks the prompt but the model, and
-the model does not know what it should have said. So the script exits before
-exec'ing claude, naming what it could not fill, and `just verify` renders in
-the test twin to prove none survive. `--render` exists for that probe and for
+A placeholder that survives is a refusal to start: the script exits before
+exec'ing claude, naming what it could not fill. Without that, a literal
+`{{NOW}}` would reach the model as an ordinary line of its prompt and nothing
+would flag it. A refusal is a session that never starts, and so cannot report
+itself, which is why `just verify` renders in the test twin to prove none
+survive. `--render` exists for that probe and for
 reading what a session would be told; it starts nothing and needs no
 credential.
 
@@ -533,8 +534,8 @@ consumed — the flag is claude's own and still has to reach it.
 which has to name the agent it is reading and the operator whose corpus quotes
 them. They are read from the environment `just` exports, and a template that
 asks for one the environment does not carry is a refusal to start rather than a
-sentence with a hole in it — the same failure an unfilled placeholder is, and
-as invisible from inside the session.
+sentence with a hole in it — which would reach the model unflagged, as an
+unfilled placeholder would.
 
 Until 2026-09-02 the drift audit had its own copy of this script, in the
 `monitoring` repository. It had already drifted: fewer placeholders, relative

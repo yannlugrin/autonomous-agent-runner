@@ -281,8 +281,8 @@ The other two are proofs that cost nothing: the arithmetic is pure, so it
 needs no credential, no network and no container, and a wrong allowance or a
 wrong price prints in exactly the shape a right one does. `claude-session
 --render` runs for the same reason — a placeholder the script cannot fill
-stops the build here rather than the first session, where a literal `{{NOW}}`
-is invisible. See docs/budget.md and docs/boundary.md.
+stops the build here rather than every session, each of which would refuse to
+start. See docs/budget.md and docs/boundary.md.
 
 `bws` is pinned to a version *and* to the sha256 of the archive that version
 resolves to: a tag can be moved and a release asset replaced, and neither

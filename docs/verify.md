@@ -805,9 +805,9 @@ account happened to spend today.
 
 ## The system prompt render
 
-A placeholder the renderer cannot fill is invisible from inside a session — the
-model reads a literal placeholder name and has no way to know what it should
-have said — so this is proved from **outside**. It runs under `--entrypoint`,
+A template the renderer cannot fill is a session that never starts: the
+renderer refuses before claude is exec'd, so no session is there to report it,
+and this is proved from **outside**. It runs under `--entrypoint`,
 because the twin's entrypoint stops at bootstrap with an empty home and
 rendering needs neither a credential nor a checkout.
 
