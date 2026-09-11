@@ -8,33 +8,35 @@ is in the tree at its next wake-up, so without something between them, "let me
 build it and see" and "I shipped it" are the same act — and a change still
 under review goes live because proving it meant building it.
 
-The sequence is `build`, `verify`, `deploy`, and only the last of the three
-reaches the agent. With what surrounds it:
+`just deploy` builds, proves and puts live in one command, and it is the only
+one that reaches the agent; `build` and `verify` try a change before that. With
+what surrounds it:
 
 | command | what it does |
 | --- | --- |
 | `just setup` | once per clone: create `.venv`, install the pinned tooling and the pre-commit hooks, so the hook and the command cannot run different versions — and make the three per-installation files under `image/` from their committed examples. `--restore` takes them from the archive's `config` branch instead |
 | `just lint` | the pre-commit hooks over the whole tree — `ruff check`, `ruff format --check`, `shellcheck`, `gitleaks`, `check-auto-mode` — at the versions `.pre-commit-config.yaml` pins, then `mypy`. Each says `[ ok ]` or `[FAIL]` itself, and the count at the end is what you read; the exit status is what CI reads |
 | `just pin` | pin the base image to today's digest, as a diff to read. It refuses a dirty file and never commits |
-| `just build` | build `<agent>-agent:candidate` and run the selftests baked into the build. **Nothing scheduled runs that tag.** `--deployed` tags the live one instead, and only the deployed checkout may |
+| `just build` | build `<agent>-agent:candidate` and run the selftests baked into the build. **Nothing scheduled runs that tag** |
 | `just verify --build` | rebuild the candidate, then prove it. The flag is the point: a stale image passes in the same words a correct one does |
-| `just deploy` | go live. `--diff` is the patch between what is live and what would be, `.env` included and masked and the three per-installation files included and not; `--state` reports the same facts as parseable fields. It backs those three up to the archive's `config` branch once it has succeeded |
+| `just deploy` | go live: build the image from the deployed checkout, `just verify` it, and only then make it live. `--skip-verify` goes live unproved, and the question says so. `--diff` is the patch between what is live and what would be, `.env` included and masked and the three per-installation files included and not; `--state` reports the same facts as parseable fields. It backs those three up to the archive's `config` branch once it has succeeded |
 
-**The rule.** `build` tags a candidate; `verify` proves *that* candidate;
-`deploy` resets the deployed checkout — `deployed/`, a git worktree of the
-`deployed` branch, inside the project and gitignored, and the tree cron
-actually runs from — to `HEAD`, and then **builds the live image from that
-checkout**. The code that is live and the image that is live are therefore one
-thing rather than two that have to agree, and that spelling is also the only
-one that covers `.env`, whose values are build arguments and which git does not
-track.
+**The rule.** `build` tags a candidate and `verify` proves it, and neither
+reaches the agent. `deploy` resets the deployed checkout — `deployed/`, a git
+worktree of the `deployed` branch, inside the project and gitignored, and the
+tree cron actually runs from — to `HEAD`, **builds the image from that
+checkout**, runs `just verify` on it, and only then makes that image live:
+tagged here, or shipped and landed where the agent runs on another host. The
+code that is live and the image that is live are therefore one thing rather than
+two that have to agree, the image that goes live is the one that was proved, and
+that spelling is also the only one that covers `.env`, whose values are build
+arguments and which git does not track.
 
 **What you type,** for a change to `image/`: `just lint`, `just verify
---build`, read what it printed, then `just deploy`. Deploy shows what is about
-to go live and asks; it holds the schedule for the duration and puts it back as
-it stood. **Building and verifying need no paused schedule**, because a build
-is not a deploy — the consequence worth stating out loud, since it is the whole
-reason the three commands are three.
+--build` while you work, then `just deploy`. Deploy shows what is about to go
+live and asks; it holds the schedule for the duration and puts it back as it
+stood. **Building and verifying on their own need no paused schedule**, because
+neither is a deploy.
 
 **What it refuses.** A tree that is not clean, full stop — what goes live is
 `HEAD`, so an uncommitted edit here would be in neither the commit nor the
@@ -52,11 +54,11 @@ this checkout has that is not live yet.
 
 ## How it is built
 
-Nothing edited in this checkout reaches the agent until `just deploy`. The
-sequence is `just build`, `just verify`, `just deploy`: `build` tags a
-candidate image, `verify` proves that candidate, and `deploy` resets the
-deployed checkout to `HEAD` and builds the live image *from* that checkout,
-after showing what is about to go live and asking. It lives in
+Nothing edited in this checkout reaches the agent until `just deploy`, which
+resets the deployed checkout to `HEAD`, builds the image *from* that checkout,
+proves it with `just verify` and only then makes it live, after showing what is
+about to go live and asking. `build` tags a candidate image and `verify` proves
+it, without deploying either. It lives in
 `host/release/` — `build.sh`, `deploy.sh`, `undeployed.sh`, `pin.sh` with
 `pin.py`, `setup.sh`, `lint.sh`, `check-auto-mode.py` — with the two image
 tags and the deployed path named once in the `justfile` and the run-time
@@ -94,22 +96,28 @@ one thing rather than two things that have to agree, and it is the only
 spelling that also covers `.env`, whose values are baked in as build
 arguments and which git does not track.
 
-`deploy.sh` runs `( cd "$target" && just build --deployed )` after the reset
-and after the `.env` copy, because both are inputs. Through `just` in that
-checkout and not `docker compose` here: compose cannot derive `AGENT_USER`
+`deploy.sh` runs `( cd "$target" && just build )` after the reset and after
+the `.env` copy, because both are inputs, then `just verify` on that candidate,
+then puts the live tag on the image id the build produced. Through `just` in
+that checkout and not `docker compose` here: compose cannot derive `AGENT_USER`
 from `AGENT_NAME` on its own, and a second derivation spelled in `deploy.sh`
-would be the copy that drifts. `build.sh` refuses `--deployed` anywhere but
-the deployed checkout, since that checkout *is* the build context — run in
-the tree under edit it would build what is being edited and tag it live.
+would be the copy that drifts.
 
-A failure at that point leaves the checkout moved and the image old. That
-half-state is handled rather than prevented: the schedule stays paused and
-nothing starts on the pair until someone has looked.
+That flip is not the retag this section was written against. The image it
+moves was built from the deployed checkout minutes earlier and proved since, and
+its id is pinned at the build, so a `just build` typed in the meantime cannot
+put a different image under the tag.
+
+A failure at that point — the build or the verify — leaves the checkout moved
+and the image old. That half-state is handled rather than prevented: the
+schedule stays paused and nothing starts on the pair until someone has looked.
+`--skip-verify` goes live without the verify, and says so in the question.
 
 ## The candidate follows the live image
 
-Also 2026-08-30. After a successful deploy, `deploy.sh` tags the deployed
-image as the candidate too. `just verify` proves the candidate, and a verify
+Also 2026-08-30. After a successful deploy the candidate and the live tag
+name one image, because the live tag is put on the candidate the deploy built
+and proved. `just verify` proves the candidate, and a verify
 reporting on an image older than the one running is the same class of quiet
 wrong answer the change above is about.
 
@@ -198,8 +206,8 @@ says, at every instant, including while a deploy is failing — a push at the en
 would leave the two disagreeing for the length of a build, a verify and a 1.2 GB
 upload, and disagreeing for good whenever one of those refused. It is also
 before the switch on both paths, which is the point: the local one goes live at
-`build --deployed`, the remote one at `land`, and neither should be the first
-place the commit exists.
+the tag flip, the remote one at `land`, and neither should be the first place
+the commit exists.
 
 **Not fatal**, on the same reasoning as the config backup: a deploy that is
 built, proved and shipped does not stop because a network did. It prints
@@ -236,7 +244,8 @@ The operator's ruling of 2026-08-28: a deploy pauses the schedule so no
 session starts while the checkout and the tag move, and puts it back as it
 stood. A session already running is not stopped — it finishes on the scripts
 it loaded — but it is named in the question, since pausing prevents only the
-next one.
+next one. Where the agent runs on this machine the pause covers the build and
+the verify too: the checkout cron runs from has already moved by then.
 
 The schedule is enabled again only when everything succeeded. Not on failure,
 which was the operator's own question on 2026-08-28: what a failed deploy
@@ -466,8 +475,8 @@ did, and none of the code below is reached.
 
 Set, `just deploy` still does everything it always did here — refuse an unclean
 tree, ask, reset `deployed/` to HEAD, copy `.env` and the three untracked files
-into it, **build from that checkout** — and then, instead of tagging the result
-live, it proves it, sends it and has the far side land it.
+into it, **build from that checkout** and prove it — and then, instead of
+tagging the result live, it sends it and has the far side land it.
 
 **The schedule that is held is the one of the machine being deployed to.**
 Deploying elsewhere, that is the far one, and `land` holds it for its own work;
@@ -491,10 +500,10 @@ instead of catching it: the image and `refs/heads/deployed` are the same commit
 by construction, and that pair is what travels.
 
 `verify` therefore runs inside `deploy`, on the image that will ship rather than
-on a candidate built from the working tree. That is a departure from the
-three-step sequence in `CLAUDE.md`, and it was ruled deliberately: a verify
-before every deploy was already what happened by hand, and this one proves the
-exact artifact instead of a byte-identical sibling. `just verify` typed by hand
+on a candidate built from the working tree: a verify before every deploy was
+already what happened by hand, and this one proves the exact artifact instead of
+a byte-identical sibling. It was ruled for this path first, and on 2026-09-11 for
+the local one too, with `--skip-verify` as the one way past it. `just verify` typed by hand
 keeps its meaning on the candidate you build while working.
 
 ## The tag flip is the deploy

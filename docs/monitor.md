@@ -639,8 +639,8 @@ Two limits, recorded rather than smoothed over: `deploy.deployed` is **absent
 before 2026-08-28**, so earlier sessions get `null`, because nothing missing is
 zero; and the ten-minute publish floor means a deploy between two snapshots is
 seen up to ten minutes late. `image_deployed` is kept beside the commit because
-it is the stronger identity — it would catch a `just build --deployed` that
-moved the image without moving the branch.
+it is the stronger identity — it would catch the live tag moved onto another
+image without the branch moving.
 
 The Claude Code version comes from the transcript's own `version` field and not
 from the snapshot's copy: the transcript's is exact and is what actually ran. It

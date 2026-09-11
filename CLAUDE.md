@@ -159,12 +159,13 @@ folded into unrelated work:
   settings that each, alone, would undo everything. Do not add them.
 - `image/Dockerfile` — non-root, no sudo, `no-new-privileges`.
 
-**4. Nothing ships unverified, and nothing ships by accident.** The
-sequence is `just build`, `just verify`, `just deploy`, and only the last
-reaches the agent: `build` tags the candidate, `verify` proves the
-candidate, `deploy` resets the checkout cron runs from to `HEAD` and
-**builds the image from that checkout** — after showing what is about to go
-live and asking, and it refuses outright on a tree that is not clean.
+**4. Nothing ships unverified, and nothing ships by accident.** `just
+deploy` resets the checkout cron runs from to `HEAD`, **builds the image
+from that checkout**, proves it with `just verify`, and only then makes it
+live — after showing what is about to go live and asking, and it refuses
+outright on a tree that is not clean. `--skip-verify` is the one way past
+the proof, and the question says so. `just build` and `just verify` try a
+change without shipping it; only `deploy` reaches the agent.
 Building from the deployed checkout makes the code that is live and the
 image that is live one thing rather than two that have to agree, and it is
 the only spelling that also covers `.env`, whose values are baked in as

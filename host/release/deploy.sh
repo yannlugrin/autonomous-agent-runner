@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Go live — set the deployed checkout to HEAD, and put the image beside it.
 #
-# Runs on the host. Two declared flags arrive as environment variables: diff,
-# state.
+# Runs on the host. Three declared flags arrive as environment variables: diff,
+# state, skip_verify.
 #
-# One recipe, two halves, decided by RUNNER_DEPLOY_HOST. Empty: the agent runs
-# here, the image is built from the deployed checkout, and this is what it has
-# always been. Set: the agent runs elsewhere, and this half builds, proves,
-# ships and pushes before handing the question and the tag flip to that host —
-# where the same recipe runs the other half. see docs/release.md#build-here-run-there
+# Both paths build the image from the deployed checkout and prove it with `just
+# verify` before anything goes live; `--skip-verify` is the one way past that.
+# RUNNER_DEPLOY_HOST decides the rest. Empty: the agent runs here, and the tag
+# flips here. Set: this half ships and pushes, and `just land` on that host
+# flips its tag. see docs/release.md#build-here-run-there
 #
 # shellcheck disable=SC2154  # the recipe's declared arguments reach this
 # script as exported environment variables, which shellcheck cannot see; a
@@ -307,20 +307,21 @@ else
     fi
 fi
 
+if [ "$skip_verify" = yes ]; then proof="and NOT verified"; else proof="and proved by 'just verify'"; fi
 if deploying_elsewhere; then
     # What changes here, and what changes there. The image live on THIS machine
     # is not touched: the build tags the candidate, and only the far side's tag
     # is flipped. What does move here is $target and the `deployed` branch,
     # because they are the build context and the ref that is pushed.
     echo "Here: $target and $ref move to $head_sha, and the image is"
-    echo "built there as the candidate. The deployed image here is left alone."
+    echo "built there as the candidate $proof. The deployed image here is left alone."
     echo "On $RUNNER_DEPLOY_HOST:$dir: the branch and the proved image cross, that"
     echo "host's schedule is held, its tree moves and its tag flips."
 else
-    # The image is built, not retagged: a retag ships a checkout at HEAD beside
-    # an image built days earlier from different files, and nothing can say so.
-    # see docs/release.md#deploy-builds-and-does-not-retag
-    echo "Image: rebuilt from $target at $head_sha, replacing ${did:-(no deployed tag yet)}."
+    # The image is built, not an old candidate retagged: that ships a checkout at
+    # HEAD beside an image built days earlier from different files, and nothing
+    # can say so. see docs/release.md#deploy-builds-and-does-not-retag
+    echo "Image: rebuilt from $target at $head_sha $proof, replacing ${did:-(no deployed tag yet)}."
 fi
 env_diff
 config_diff
@@ -339,6 +340,9 @@ if ! deploying_elsewhere; then
     [ "$sched" = enabled ] && echo "The schedule is enabled: it is paused for the deploy, and enabled again only if the deploy succeeds."
 fi
 
+# Last before the question, where it cannot scroll past.
+[ "$skip_verify" = yes ] \
+    && echo "WARNING: --skip-verify — this image goes live without 'just verify' proving it."
 printf 'Deploy? [y/N] '
 read -r reply
 case "$reply" in [yY]*) ;; *) echo "Nothing deployed."; exit 75 ;; esac
@@ -399,7 +403,7 @@ fi
 # the host that runs the agent — neither of which is a place the record can be
 # read back from. Here rather than at the end, so the commit reaches origin
 # BEFORE anything starts running it, on both paths: the local one goes live at
-# `build --deployed` just below, the remote one at `land`. Origin then says what
+# the tag flip below, the remote one at `land`. Origin then says what
 # this branch says at every instant, including while a deploy is failing.
 #
 # Under its own name, and not renamed to `deployed` the way the host push is:
@@ -448,34 +452,41 @@ done
 # paused, and nothing starts on the pair until someone has looked.
 # see docs/release.md#deploy-builds-and-does-not-retag
 
-if deploying_elsewhere; then
-    # Onto the candidate, which is what this is: built from $target and about to
-    # be proved. The deployed tag here is NOT moved — the agent does not run on
-    # this machine, and a deploy to another one has no business replacing the
-    # image this one would start. see docs/release.md#the-tag-flip-is-the-deploy
-    ( cd "$target" && just build ) || {
-        echo "The build failed; the checkout moved to $head_sha and nothing was sent." >&2; exit 1; }
+# Onto the candidate, which is what this is: built from $target and about to be
+# proved. The live tag moves only once it has been, and only on the machine the
+# agent runs on. see docs/release.md#the-tag-flip-is-the-deploy
+if deploying_elsewhere; then untouched="nothing was sent"; else untouched="the live image did not move"; fi
+( cd "$target" && just build ) || {
+    echo "The build failed; the checkout moved to $head_sha and $untouched." >&2; exit 1; }
+
+# The build's id, pinned: what goes live is what was proved, even if a `just
+# build` typed while this runs moves the candidate tag.
+built=$(docker images -q --no-trunc "$candidate" | head -1)
+[ -n "$built" ] || { echo "The build left no $candidate; $untouched." >&2; exit 1; }
+
+
+# --- proved ---
+# Verify runs on the image just built from $target, which is the image that goes
+# live — not on a candidate built from the working tree at some earlier moment,
+# so there is no window in which the tree moves between what was proved and what
+# ships. --skip-verify is the one way past it, and the question said so.
+# see docs/release.md#build-here-run-there
+
+if [ "$skip_verify" = yes ]; then
+    echo "VERIFY_SKIPPED — the image built from $target goes live without 'just verify'." >&2
 else
-    ( cd "$target" && just build --deployed ) || {
-        echo "The build failed; the checkout moved to $head_sha and the image did not." >&2; exit 1; }
+    just verify || {
+        echo "Verify failed on the image built from $target; the checkout moved to $head_sha and $untouched." >&2
+        exit 1; }
+    [ "$(docker images -q --no-trunc "$candidate" | head -1)" = "$built" ] || {
+        echo "The candidate tag moved while it was being verified; $untouched." >&2; exit 1; }
 fi
 
 if deploying_elsewhere; then
-    # --- proved, then sent ---
-    # Verify runs on the image just built from $target, which is the image that
-    # will ship — not on a candidate built from the working tree at some earlier
-    # moment. That is the whole gain of building here first: there is no window
-    # in which the tree moves between what was proved and what goes live.
-    # see docs/release.md#build-here-run-there
-    just verify || {
-        echo "Verify failed on the image built from $target; nothing was sent." >&2
-        echo "The checkout here moved to $head_sha and nothing is live anywhere else." >&2
-        exit 1; }
-
     # Renamed for the journey. The tag travels with the image, so sending it
     # under its live name would make it live on arrival, ahead of every check.
     # see docs/release.md#the-tag-flip-is-the-deploy
-    docker tag "$candidate" "$RUNNER_IMAGE_INCOMING" || {
+    docker tag "$built" "$RUNNER_IMAGE_INCOMING" || {
         echo "Could not tag the image for shipping; nothing was sent." >&2; exit 1; }
 
     # The checkout over there: made when it is absent, and never guessed at.
@@ -578,14 +589,12 @@ if deploying_elsewhere; then
     exit 0
 fi
 
-# The candidate follows the live image: `just verify` proves the candidate, and
-# a verify reporting on an image older than the one running is a quiet wrong
-# answer. Fact rather than approximation — the tree was refused unless clean,
-# $target was reset to HEAD and `.env` was copied from here, so this image is
-# byte-for-byte what `just build` in this tree would produce.
-# see docs/release.md#the-candidate-follows-the-live-image
-docker tag "$deployed" "$candidate" || {
-    echo "The image is live but the candidate tag was not moved; 'just build' resets it." >&2; exit 1; }
+# --- the tag flip ---
+# What was built and proved above becomes the live tag, so the candidate and the
+# live image are one image, which is what a `just verify` typed afterwards has to
+# be proving. see docs/release.md#the-candidate-follows-the-live-image
+docker tag "$built" "$deployed" || {
+    echo "The checkout moved to $head_sha and the live tag did not." >&2; exit 1; }
 
 echo "Deployed: $target at $(git -C "$target" rev-parse --short HEAD), image $(image_id "$deployed") — the candidate tag names it too."
 

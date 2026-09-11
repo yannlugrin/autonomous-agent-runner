@@ -35,7 +35,7 @@ which is inside the image and replaced by every rebuild: that is why the
 permission boundary is at `/etc/claude-code/` and the ssh host-key policy at
 `/etc/ssh/ssh_config.d/`.
 
-**What you type.** `just pin`, read the diff and commit it, then `just verify --build`, then `just deploy`.
+**What you type.** `just pin`, read the diff and commit it, then `just deploy`, which builds from it and verifies before anything goes live.
 On a fresh volume, `just shell` **twice**: the first run finds no key,
 generates one, prints the public half and stops at exit 78 with nothing
 started; you add that key to the agent's GitHub account, and the second run

@@ -521,15 +521,15 @@ lint:
 
 [doc("Build the image as the candidate — nothing runs it until `just deploy`")]
 [group("release")]
-[arg("deployed", long, value="yes", help="tag the deployed image instead of the candidate; only the deployed checkout may")]
-build $deployed="no":
+build:
     @exec host/release/build.sh
 
-[doc("Go live — set the deployed checkout to HEAD and build the image from it; --diff patches, --state reports")]
+[doc("Go live — set the deployed checkout to HEAD, build the image from it and verify it; --diff patches, --state reports")]
 [group("release")]
 [arg("diff", long, value="yes", help="the patch between what is live and what would be, and change nothing")]
 [arg("state", long, value="yes", help="what is live as parseable fields, and change nothing")]
-deploy $diff="no" $state="no":
+[arg("skip_verify", long="skip-verify", value="yes", help="make the image live without 'just verify' — the question warns")]
+deploy $diff="no" $state="no" $skip_verify="no":
     @exec host/release/deploy.sh
 
 # private: the far half of a deploy, run over ssh by the machine that builds and

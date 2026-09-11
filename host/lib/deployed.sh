@@ -52,7 +52,7 @@ forward_to_deployed() {
 
     if ! deploying_elsewhere && [ ! -e "$RUNNER_DEPLOYED/justfile" ]; then
         echo "Nothing is deployed yet: there is no checkout at $RUNNER_DEPLOYED, so there is no" >&2
-        echo "agent to reach from here. 'just build', 'just verify', 'just deploy' makes one." >&2
+        echo "agent to reach from here. 'just deploy' makes one, and proves it first." >&2
         echo "To look inside a candidate instead, 'just test-container'; 'just verify' proves it." >&2
         exit 1
     fi

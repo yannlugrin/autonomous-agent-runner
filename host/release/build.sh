@@ -1,32 +1,14 @@
 #!/usr/bin/env bash
 # Build the image as the candidate — nothing runs it until `just deploy`.
 #
-# Runs on the host. One declared flag arrives as an environment variable: live.
-#
-# shellcheck disable=SC2154  # the recipe's declared arguments reach this
-# script as exported environment variables, which shellcheck cannot see; a
-# name that is not among them is caught by `set -u` on the first read.
+# Runs on the host. No arguments. Always the candidate: only `just deploy` moves
+# the live tag, and only onto an image it built and proved.
+# see docs/release.md#deploy-builds-and-does-not-retag
 set -euo pipefail
 # shellcheck source=SCRIPTDIR/../lib/root.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
 
-
-# --- which tag ---
-# `--deployed` tags the live image instead of the candidate, and `just deploy`
-# is its only caller. Refused anywhere but the deployed checkout, because that
-# checkout is the build context: run here it would build the tree under edit and
-# tag it live. see docs/release.md#deploy-builds-and-does-not-retag
-
-if [ "$deployed" = yes ]; then
-    tag="$RUNNER_IMAGE_DEPLOYED"
-else
-    tag="$RUNNER_IMAGE_CANDIDATE"
-fi
-
-if [ "$deployed" = yes ] && [ "$RUNNER_IS_DEPLOYED" != yes ]; then
-    echo "--deployed builds straight onto the live tag and belongs to the deployed checkout; 'just deploy' is what runs it." >&2
-    exit 2
-fi
+tag="$RUNNER_IMAGE_CANDIDATE"
 
 
 # --- not on the machine that only runs ---
@@ -81,7 +63,7 @@ host/lib/docker-up.sh || exit $?
 # and reaches a session in its environment header, so a session can name its own
 # version without comparing anything.
 #
-# The checkout being built and not the project root, since `--deployed` runs in
+# The checkout being built and not the project root, since `deploy` builds in
 # the deployed checkout. Empty on a tree that is not a repository, which reads
 # downstream as "the image does not say".
 # see docs/image.md#what-the-image-was-built-from
@@ -125,8 +107,4 @@ RUNNER_PUSHED_AT="$(TZ=UTC git -C "$RUNNER_CHECKOUT" reflog show \
 
 RUNNER_IMAGE="$tag" docker compose --progress auto build
 
-if [ "$deployed" = yes ]; then
-    echo "Built $tag from $PWD."
-else
-    echo "Built $tag. 'just verify' proves it; 'just deploy' makes it live."
-fi
+echo "Built $tag from $PWD. 'just verify' proves it."

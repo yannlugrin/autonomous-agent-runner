@@ -250,8 +250,8 @@ rendered into, and everything else that decides what the agent may run, is
     just build
 
 Builds `<agent>-agent:candidate`, which nothing scheduled runs, and runs the
-three selftests baked into the build. The three commands and what each one
-moves are in [`docs/release.md`](docs/release.md).
+three selftests baked into the build. What each release command moves is in
+[`docs/release.md`](docs/release.md).
 
     just verify
 
@@ -277,9 +277,11 @@ many probes there are and the copy is the one that goes stale.
     just deploy
 
 Shows what is about to go live and asks. It resets the deployed checkout to
-`HEAD`, then builds `<agent>-agent:deployed` **from that checkout**, so the
-code that is live and the image that is live are one thing rather than two
-that have to agree. It refuses on a tree that is not clean. Nothing you edit
+`HEAD`, builds the image **from that checkout** and proves it with `just
+verify` before making it live, so the code that is live and the image that is
+live are one thing rather than two that have to agree. `--skip-verify` goes
+live unproved, and the question says so. It refuses on a tree that is not
+clean. Nothing you edit
 here reaches the agent until this. [`docs/release.md`](docs/release.md)
 
     just shell                   # first run: the key
@@ -415,14 +417,14 @@ the measurements.
 
 ### release
 
-[`docs/release.md`](docs/release.md) — what each of the three moves, and why deploy builds.
+[`docs/release.md`](docs/release.md) — what each command moves, and why deploy builds and verifies.
 
 | | |
 | --- | --- |
 | `just setup` | create `.venv`, install the pinned tooling and the pre-commit hooks |
 | `just lint` | the pre-commit hooks over the whole tree — ruff, shellcheck, gitleaks, the classifier check — then mypy |
-| `just build` | build the image as the candidate. `--deployed` tags the deployed one, and only the deployed checkout may do that |
-| `just deploy` | go live. `--diff` is the patch between what is live and what would be, `.env` included and masked; `--state` reports the same facts as fields |
+| `just build` | build the image as the candidate |
+| `just deploy` | go live: build from the deployed checkout, verify, then make it live. `--skip-verify` skips the verify and the question says so. `--diff` is the patch between what is live and what would be, `.env` included and masked; `--state` reports the same facts as fields |
 | `just pin` | pin the base image to its current digest and Claude Code to npm's latest, as a diff to read; `--image` or `--claude` for one |
 
 ### schedule
