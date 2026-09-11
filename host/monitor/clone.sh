@@ -29,6 +29,8 @@ AUDIT_CLONE="$MONITOR/mirror"
 # The agent's checkout as this host last read it: one `git log`, replaced whole
 # on every read.
 MEMORY_LOG="$MONITOR/memory.log"
+# Whether the last push carried that checkout to origin, as `just listen` shows it.
+MEMORY_STATE="$MONITOR/memory.state"
 # The session's working directory: the run procedure, the anchors it is given,
 # and the reports it writes. `../mirror` from in there is the clone, which is
 # how the auditor's settings.json spells what it may read.
@@ -160,4 +162,54 @@ sync_memory() {
         return 1
     fi
     mv "$tmp" "$MEMORY_LOG"
+}
+
+
+# --- sync_push_state ---
+# Whether the session's push reached origin, out of the same checkout the same
+# way. Only a successful push moves the checkout's `refs/remotes/origin/*`, so a
+# commit no origin ref holds is one the last push did not carry, and
+# ERROR_ON_PUSH is the hook's own report of why. Neither needs the network, or
+# the credential for origin this host does not hold.
+#   see docs/backup.md#the-host-reads-the-flag-too
+#
+# The counts are printed before anything taken out of the flag: the agent can
+# write that file, and the reader keeps the first value of a key. fsmonitor is
+# off because it names a command, the checkout's config is the agent's, and
+# `status` is the one call here that would run it.
+
+sync_push_state() {
+    local volume="${AGENT_VOLUME:?not set — run this through just}"
+    local home="${AGENT_HOME:?not set — run this through just}"
+    local checkout="${AGENT_REPO_DIR:?not set — run this through just}"
+    local image="${RUNNER_IMAGE:-${RUNNER_IMAGE_DEPLOYED:?not set — run this through just}}"
+    local reader tmp
+
+    reader=$(cat <<'SH'
+cd "$1" || exit 1
+unpushed=$(git rev-list --count --branches --not --remotes=origin) || unpushed=-
+if changes=$(git -c core.fsmonitor=false status --porcelain); then
+    uncommitted=$(printf '%s\n' "$changes" | grep -v ' ERROR_ON_PUSH$' | grep -c .)
+else
+    uncommitted=-
+fi
+printf 'unpushed: %s\nuncommitted: %s\n' "$unpushed" "$uncommitted"
+[ -f ERROR_ON_PUSH ] || exit 0
+sed -n 's/^reason: /push_reason: /p; s/^consecutive: /push_consecutive: /p' ERROR_ON_PUSH
+awk '/^detail:/ { on = 1; next }
+     on && NF && !/^ *---/ { sub(/^ +/, ""); print "push_detail: " $0; exit }' ERROR_ON_PUSH
+SH
+)
+
+    mkdir -p "$MONITOR" || return 1
+    tmp=$(mktemp "$MEMORY_STATE.XXXXXX") || return 1
+    if ! docker run --rm --network none --read-only \
+            -v "$volume:$home:ro" \
+            -e GIT_CONFIG_GLOBAL=/dev/null -e GIT_CONFIG_NOSYSTEM=1 -e GIT_OPTIONAL_LOCKS=0 \
+            --entrypoint sh "$image" -c "$reader" sh "$checkout" >"$tmp"; then
+        rm -f "$tmp"
+        echo "Could not read whether the memory reached origin out of the checkout in $volume." >&2
+        return 1
+    fi
+    mv "$tmp" "$MEMORY_STATE"
 }

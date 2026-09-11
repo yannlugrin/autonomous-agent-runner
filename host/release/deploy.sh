@@ -102,6 +102,40 @@ dropped=""
 [ -n "$dep_sha" ] && dropped=$(git -C "$here" rev-list --count HEAD.."$ref" 2>/dev/null || echo "")
 cid=$(image_id "$candidate"); did=$(image_id "$deployed")
 
+# On the machine that runs the agent the checkout IS the live commit, so a count
+# against its own HEAD is zero whatever origin holds; there, origin is asked. A
+# 404 on a repository gh has just read is a commit origin does not have.
+# see docs/release.md#behind-origin-is-asked-of-origin
+against=""
+behind=""
+compare_error=""
+live_missing=""
+origin_compare() {
+    local branch out
+    against=origin
+    ahead=""
+    dropped=""
+    [ -n "${RUNNER_REPO:-}" ] \
+        || { compare_error="RUNNER_REPO is not set here, and the next 'just deploy' writes it"; return; }
+    command -v gh >/dev/null || { compare_error="gh is not installed here"; return; }
+    branch=$(timeout 20 gh api "repos/$RUNNER_REPO" --jq .default_branch 2>/dev/null)
+    [ -n "$branch" ] \
+        || { compare_error="gh here cannot read $RUNNER_REPO; its token needs Contents: Read-only on it"; return; }
+    against="origin/$branch"
+    if ! out=$(timeout 20 gh api "repos/$RUNNER_REPO/compare/$(git -C "$here" rev-parse "$ref")...$branch" \
+            --jq '"\(.ahead_by) \(.behind_by)",
+                  (.commits | reverse | .[] | .sha[0:7] + " " + (.commit.message | split("\n")[0]))' 2>&1); then
+        case "$out" in
+            *"HTTP 404"*) live_missing=yes ;;
+            *) compare_error="origin did not answer the comparison" ;;
+        esac
+        return
+    fi
+    read -r ahead dropped <<<"${out%%$'\n'*}"
+    behind=$(printf '%s\n' "$out" | tail -n +2)
+}
+[ "${RUNNER_RUNTIME_ONLY:-}" = true ] && [ "$state" = yes ] && [ -n "$dep_sha" ] && origin_compare
+
 if [ "$state" = yes ]; then
     echo "worktree: $wt"
     echo "deployed: ${dep_sha:--}"
@@ -126,10 +160,17 @@ if [ "$state" = yes ]; then
     # `commit:` repeated rather than a `git log` block pasted in: this output is
     # parsed twice, and a subject beginning `word: ` would enter either reader as
     # a field of its own. see docs/release.md#--state-is-parsed-twice
-    [ "${ahead:-0}" -gt 0 ] \
-        && git -C "$here" log --oneline "$ref"..HEAD | sed 's/^/commit: /'
-    [ "${dropped:-0}" -gt 0 ] \
-        && git -C "$here" log --oneline HEAD.."$ref" | sed 's/^/dropped_commit: /'
+    if [ -n "$against" ]; then
+        echo "against: $against"
+        [ -n "$compare_error" ] && echo "compare_error: $compare_error"
+        [ -n "$live_missing" ] && echo "live_missing: $live_missing"
+        [ -n "$behind" ] && printf '%s\n' "$behind" | sed 's/^/commit: /'
+    else
+        [ "${ahead:-0}" -gt 0 ] \
+            && git -C "$here" log --oneline "$ref"..HEAD | sed 's/^/commit: /'
+        [ "${dropped:-0}" -gt 0 ] \
+            && git -C "$here" log --oneline HEAD.."$ref" | sed 's/^/dropped_commit: /'
+    fi
     exit 0
 fi
 
@@ -487,15 +528,19 @@ if deploying_elsewhere; then
     # `.env` and the three untracked files, the copy made into $target just
     # above, one machine further. RUNNER_DEPLOY_* are dropped and
     # RUNNER_RUNTIME_ONLY added: they say where the agent runs and where a
-    # release starts, and both answers are different over there.
+    # release starts, and both answers are different over there. RUNNER_REPO is
+    # added too, because that checkout has no origin of its own to name.
     remote_path=$(host_checkout_path)
     [ -n "$remote_path" ] || {
         echo "Could not resolve $RUNNER_DEPLOY_DIR on $RUNNER_DEPLOY_HOST." >&2; exit 1; }
 
-    { grep -v '^[[:space:]]*RUNNER_\(DEPLOYED\|DEPLOY_HOST\|DEPLOY_DIR\|RUNTIME_ONLY\)=' "$target/.env"
+    { grep -v '^[[:space:]]*RUNNER_\(DEPLOYED\|DEPLOY_HOST\|DEPLOY_DIR\|RUNTIME_ONLY\|REPO\)=' "$target/.env"
       # It runs the agent and is not where a release starts. Rewritten every
       # deploy, so it cannot be lost by editing the file it lives in.
       echo 'RUNNER_RUNTIME_ONLY=true'
+      # The slug `deploy --state` over there compares the live commit against.
+      echo "RUNNER_REPO=$(git -C "$here" remote get-url origin 2>/dev/null \
+          | sed -E 's#\.git$##; s#^git@[^:]+:##; s#^https?://[^/]+/##')"
       # There, the checkout IS the deployed checkout. Absolute, because the
       # justfile decides RUNNER_IS_DEPLOYED by comparing its own directory to
       # this value, and a relative one is resolved from the project root and can

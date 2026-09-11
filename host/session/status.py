@@ -2,6 +2,8 @@
 """Is everything right — one screen.
 
     status.py            the screen, with the live facts on stdin
+    status.py --part ended|settled --began EPOCH --seen EPOCH --findings FILE
+                         one half of what `just listen` shows when a session ends
     status.py --selftest prove the arithmetic and stop
 
 Runs on the host, under `just status`. Everything a shell has to answer arrives
@@ -33,6 +35,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 
 CHECKOUT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -102,10 +105,12 @@ def number(value):
         return None
 
 
-def ask(cmd, timeout=90):
+def ask(cmd, timeout=90, env=None):
     """(stdout, exit status), or (None, None) when the command could not run."""
     try:
-        out = subprocess.run(cmd, cwd=CHECKOUT, capture_output=True, text=True, timeout=timeout)
+        out = subprocess.run(
+            cmd, cwd=CHECKOUT, capture_output=True, text=True, timeout=timeout, env=env
+        )
     except (OSError, subprocess.SubprocessError):
         return None, None
     return out.stdout, out.returncode
@@ -164,7 +169,9 @@ class Verdict:
     def watch(self, text):
         self.found.append((WATCH, text))
 
-    def line(self):
+    def line(self, shown=False):
+        """`shown` for a screen that is part of this one: its silence covers only
+        the rows it printed, and must not read as the whole machine's."""
         problems = [t for level, t in self.found if level == PROBLEM]
         watching = [t for level, t in self.found if level == WATCH]
         if problems:
@@ -173,8 +180,25 @@ class Verdict:
                 said += " Also to watch: " + "; ".join(watching) + "."
             return said
         if watching:
-            return "Nothing is broken. To watch: " + "; ".join(watching) + "."
-        return "Nothing here needs attention."
+            head = "Nothing shown here is broken" if shown else "Nothing is broken"
+            return head + ". To watch: " + "; ".join(watching) + "."
+        return "Nothing shown here needs attention." if shown else "Nothing here needs attention."
+
+    def save(self, path):
+        with open(path, "w") as handle:
+            handle.writelines("%s\t%s\n" % found for found in self.found)
+
+    def load(self, path):
+        """What the half before this one found, so the one line after both
+        judges both."""
+        try:
+            with open(path) as handle:
+                for line in handle:
+                    level, sep, text = line.rstrip("\n").partition("\t")
+                    if sep and level in (PROBLEM, WATCH):
+                        self.found.append((level, text))
+        except OSError:
+            pass
 
 
 # --------------------------------------------------------------------------
@@ -213,19 +237,7 @@ def now_section(facts, records, verdict, now, pressure=("clear", None, None)):
         rows += last_session(records, now)
 
     rows.append(("next", [next_line(facts, verdict, running, now, pressure)]))
-
-    # A stop nobody has been told about yet, which is the state worth seeing
-    # here: it may sit for hours while wake-ups stand down on the same limit
-    # that caused it.  see docs/sessions.md#recovering-a-session-that-was-stopped
-    last = one(facts, "last_run")
-    if last.startswith("stopped"):
-        verdict.watch("the last run was stopped (%s)" % last[len("stopped ") :])
-        rows.append(
-            (
-                "last run",
-                ["stopped (%s) — the next session opens with what it was doing" % last[8:]],
-            )
-        )
+    rows += stopped_rows(facts, verdict)
 
     # A shell or a probe is not a session and holds no lock, but "nothing is
     # running" while you are sitting in a container is a misleading answer.
@@ -235,6 +247,33 @@ def now_section(facts, records, verdict, now, pressure=("clear", None, None)):
 
     rows += today_row(records, now)
     return rows
+
+
+def stopped_rows(facts, verdict):
+    """A stop nobody has been told about yet, which is the state worth seeing:
+    it may sit for hours while wake-ups stand down on the same limit that caused
+    it.  see docs/sessions.md#recovering-a-session-that-was-stopped"""
+    last = one(facts, "last_run")
+    if not last.startswith("stopped"):
+        return []
+    verdict.watch("the last run was stopped (%s)" % last[len("stopped ") :])
+    return [
+        (
+            "last run",
+            ["stopped (%s) — the next session opens with what it was doing" % last[8:]],
+        )
+    ]
+
+
+def read_stats(started):
+    """session-stats.py's lines for the session since `started`, or None when it
+    could not say."""
+    out, code = ask(
+        [os.path.join(CHECKOUT, "host/session/session-stats.py"), "--since", str(started or 0)]
+    )
+    if out is None or code:
+        return None
+    return [line.strip() for line in out.splitlines() if line.strip()]
 
 
 def live_session(started, verdict):
@@ -249,17 +288,14 @@ def live_session(started, verdict):
     it is carried into the verdict rather than left as a line the reader has to
     recognise.  see docs/sessions.md#what-a-session-cost-and-which-model-answered
     """
-    out, code = ask(
-        [os.path.join(CHECKOUT, "host/session/session-stats.py"), "--since", str(started or 0)]
-    )
+    lines = read_stats(started)
     where = sysstat.directory()
     sampled = None
     if started and where and os.path.isdir(where):
         sampled = sysstat.summarise(where, started, time.time(), sysstat.docker_root())
     so_far = [("machine so far", machine(sampled))]
-    if out is None or code:
+    if lines is None:
         return [("so far", ["could not be read — 'just cost' says why"])] + so_far
-    lines = [line.strip() for line in out.splitlines() if line.strip()]
     fault = model_fault(lines)
     if fault:
         verdict.problem(fault)
@@ -378,7 +414,9 @@ def next_line(facts, verdict, running, now, pressure=("clear", None, None)):
         if left is None:
             said = "unknown — the wait could not be read"
         elif left > 0:
-            said = "in %dm — %s" % (left, why)
+            due = number(one(facts, "wake_due"))
+            when = "%s, in %s" % (stamp(due, now), span(left * 60)) if due else "in %dm" % left
+            said = "%s — %s" % (when, why)
         elif pressure[0] == "over":
             # Refused rather than missing: the budget section carries the
             # numbers, and calling this late would be an alarm about a gate
@@ -463,18 +501,22 @@ def today_row(records, now):
 LABELS = {"SESSION": "session", "WEEKLY": "week"}
 
 
-def read_budget(guarded, reading=None):
+def read_budget(guarded, reading=None, fresh_since=None):
     """The gate's own `--env` block, parsed.
 
     Read before the screen is composed, because whether it refuses decides what
     the line above it may claim: a wake-up the budget is holding back has not
-    gone missing.
+    gone missing. `fresh_since` refuses a cached reading taken before it.
     """
     if reading is None:
         cmd = [sys.executable, os.path.join(CHECKOUT, "image/claude-usage.py"), "--env"]
         if not guarded:
             cmd.append("--advisory")
-        out, _code = ask(cmd)
+        env = None
+        minutes = None if fresh_since is None else fresh_cache_minutes(fresh_since, time.time())
+        if minutes is not None:
+            env = dict(os.environ, ACCOUNT_BUDGET_CACHE_MINUTES="%.4f" % minutes)
+        out, _code = ask(cmd, env=env)
         reading = out
     fields = {}
     for line in (reading or "").splitlines():
@@ -920,18 +962,26 @@ def unpushed_rows(archive, verdict):
 # --------------------------------------------------------------------------
 
 
-def deployed_section(fields, records, verdict, now):
-    """What cron runs, since when, and how much has run on it.
+def deployed_section(fields, records, verdict, now, named=False):
+    """What cron runs, since when, how much has run on it, and how far it is
+    behind what it is compared against.
 
     Since when is the reflog of the branch `deploy` resets, and how much is the
     records' own count of the build each run carried — a build that just went
-    live and a build nothing ever ran on read identically without it.
+    live and a build nothing ever ran on read identically without it. `against`
+    is `origin/<branch>` where the machine runs the agent and its checkout is the
+    live commit itself; absent, it is the checkout `deploy` was run from.
+    see docs/release.md#behind-origin-is-asked-of-origin
+
+    `named` heads the first row with the word rather than the commit, for a
+    screen where it sits among rows that are not about the deploy.
     """
     if not fields:
         verdict.watch("what is live could not be read")
         return [("deployed", ["unknown — 'just deploy --state' did not answer"])]
     if one(fields, "worktree") == "absent":
         return [("deployed", ["nothing yet — 'just deploy' creates the checkout on its first run"])]
+    against = one(fields, "against") or "main"
 
     live = one(fields, "deployed")
     at = number(one(fields, "deployed_at"))
@@ -951,26 +1001,224 @@ def deployed_section(fields, records, verdict, now):
     )
     image = one(fields, "image_deployed")
     said.append("no image tagged deployed" if image == "-" else "image %s" % image[:7])
-    rows = [(live or "-", [" · ".join(said)])]
+    if named:
+        rows = [("deployed", [" · ".join([live or "-"] + said)])]
+    else:
+        rows = [(live or "-", [" · ".join(said)])]
 
     ahead = number(one(fields, "ahead"))
-    if ahead is None:
+    if one(fields, "live_missing") == "yes":
+        verdict.problem("the live commit %s is not on %s" % (live or "-", against))
+        rows.append(("", ["THE LIVE COMMIT IS NOT ON %s" % against.upper()]))
+    elif ahead is None and one(fields, "against"):
+        verdict.watch("how far the live build is behind %s could not be read" % against)
+        why = one(fields, "compare_error") or "no reason given"
+        rows.append(("", ["how far behind %s could not be read — %s" % (against, why)]))
+    elif ahead is None:
         rows.append(("", ["no deployed branch"]))
     elif ahead == 0:
-        rows.append(("", ["up to date with main"]))
+        rows.append(("", ["up to date with %s" % against]))
     else:
         # The subjects and not only the count: this is where a person decides
         # whether a deploy is worth doing. Uncapped on purpose — a backlog long
         # enough to scroll is the thing worth seeing.
-        rows.append(("", ["%d commit(s) behind main:" % ahead]))
+        rows.append(("", ["%d commit(s) behind %s" % (ahead, against)]))
         rows += [("", ["  " + subject]) for subject in fields.get("commit", [])]
 
+    # Subjects where the checkout holds them, a count where only origin does.
     dropped = fields.get("dropped_commit", [])
-    if dropped:
-        verdict.problem("%d commit(s) are live and not in main" % len(dropped))
-        rows.append(("", ["LIVE AND NOT IN MAIN — a deploy would drop:"]))
+    count = len(dropped) or number(one(fields, "dropped")) or 0
+    if count:
+        verdict.problem("%d commit(s) are live and not in %s" % (count, against))
+        rows.append(
+            (
+                "",
+                [
+                    "LIVE AND NOT IN %s — a deploy would drop %s"
+                    % (against.upper(), "these:" if dropped else "%d commit(s)" % count)
+                ],
+            )
+        )
         rows += [("", ["  " + subject]) for subject in dropped]
     return rows
+
+
+# --------------------------------------------------------------------------
+# The end of a session
+# --------------------------------------------------------------------------
+# What `just listen` shows when the session it followed ends, in two halves:
+# what is known the moment the container goes, and what the session's
+# bookkeeping leaves once the runner that started it has finished. Printed
+# before that, the second half describes the session before.
+# see docs/sessions.md#what-listen-shows-when-a-session-ends
+
+MEMORY_STATE = "memory.state"
+
+
+def session_end(facts, began, seen):
+    """When the followed session ended: the stamp `run` and `chat` write as its
+    container goes, or failing that the moment `listen` saw it gone."""
+    stamped = number(one(facts, "session_ended"))
+    return stamped if stamped and began and stamped >= began else seen
+
+
+def fresh_cache_minutes(since, now, environ=None):
+    """The budget cache's lifetime for a reading that must postdate `since`, or
+    None to leave it alone.
+
+    Shorter than the time since then, so a reading taken before is a miss and is
+    fetched again; above zero, so the fresh one is stored and the status page
+    published seconds later reuses it instead of asking again. A lifetime set
+    lower is kept, a cache turned off stays off, and a value claude-usage.py
+    refuses is left for it to say so.
+    """
+    usage = load_module("image/claude-usage.py", "claude_usage")
+    try:
+        configured = usage.cache_minutes(os.environ if environ is None else environ)
+    except usage.CannotTell:
+        return None
+    if configured <= 0:
+        return None
+    return min(configured, max(1.0, now - since) / 60)
+
+
+def ended_section(facts, verdict, now, end, stats, pressure=("clear", None, None)):
+    """What the session spent, and when the next one starts.
+
+    Out of the transcript and not the records: the record is sealed by the
+    bookkeeping still running, so the newest one is the session before.
+    """
+    if stats is None:
+        spent = ["what it spent could not be read — 'just cost' says why"]
+    else:
+        spent = stats
+        fault = model_fault(stats)
+        if fault:
+            verdict.problem(fault)
+    running = one(facts, "running") == "yes"
+    rows = [
+        ("last session", ["ended %s" % stamp(end, now)] + spent),
+        ("next", [next_line(facts, verdict, running, now, pressure)]),
+    ]
+    return rows + stopped_rows(facts, verdict)
+
+
+def session_run(records, began):
+    """The followed session's run among the sealed records, or None. Every run
+    of the session before it had ended by the time its container started."""
+    runs = [run for record in records for run in record["runs"] if run["to"] >= began]
+    return max(runs, key=lambda run: run["to"]) if runs else None
+
+
+def printable(text):
+    """Another process's text with its control characters removed: the push
+    report comes out of a file the agent can write, and this is a terminal."""
+    return re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
+
+
+def memory_rows(state, read_at, run, end, verdict):
+    """What the session committed, and whether its push reached origin.
+
+    `state` is what sync_push_state in host/monitor/clone.sh read out of the
+    checkout, at `read_at`. Only a successful push moves the checkout's
+    `refs/remotes/origin/*`, so `unpushed` is the proof. ERROR_ON_PUSH is the
+    hook's own report of why, and its absence proves nothing: a hook killed by
+    its timeout writes none.  see docs/backup.md#the-host-reads-the-flag-too
+    """
+    if not read_at or read_at < end:
+        verdict.watch("whether the memory reached origin was not read after the session ended")
+        if run is None:
+            said = "not sealed yet, and its push not read since it ended — 'just records' does both"
+        else:
+            said = (
+                "%d commit(s) this session · its push not read since it ended — 'just records'"
+                % (len(run["commits"]))
+            )
+        return [("memory", [said])]
+
+    if run is None:
+        said = ["not sealed yet — 'just records' seals it"]
+    else:
+        n = len(run["commits"])
+        said = ["%d commit%s this session" % (n, "" if n == 1 else "s")]
+
+    reason = one(state, "push_reason")
+    unpushed = number(one(state, "unpushed"))
+    if unpushed is None:
+        verdict.watch("whether the memory reached origin could not be read")
+        said.append("what reached origin could not be read")
+    elif unpushed == 0:
+        said.append("all on origin")
+    else:
+        said.append("%d NOT ON ORIGIN" % unpushed)
+        if not reason:
+            verdict.problem(
+                "%d memory commit(s) are not on origin, and the push left no report" % unpushed
+            )
+
+    uncommitted = number(one(state, "uncommitted"))
+    if uncommitted is None:
+        verdict.watch("the agent's working tree could not be read")
+        said.append("working tree unread")
+    elif uncommitted == 0:
+        said.append("working tree clean")
+    else:
+        verdict.watch("%d uncommitted change(s) in the agent's checkout" % uncommitted)
+        said.append("%d uncommitted change(s)" % uncommitted)
+
+    rows = [" · ".join(said)]
+    if reason:
+        verdict.problem("the memory push failed (%s)" % reason)
+        rows.append(
+            "PUSH FAILED: %s, %s in a row" % (reason, one(state, "push_consecutive") or "?")
+        )
+        detail = one(state, "push_detail")
+        if detail:
+            rows.append(detail)
+    return [("memory", rows)]
+
+
+def render_part(
+    part,
+    facts,
+    records,
+    now,
+    began,
+    seen,
+    findings="",
+    budget=None,
+    stats=None,
+    deploy=None,
+    held=None,
+    pending=None,
+    archive="",
+    memory_state=None,
+    memory_read_at=None,
+):
+    """One half. The first leaves what it found in `findings` for the second,
+    whose last line judges both."""
+    verdict = Verdict()
+    end = session_end(facts, began, seen)
+    if part == "ended":
+        guarded = one(facts, "budget_guard") == "on"
+        spent = read_budget(guarded, budget, fresh_since=end)
+        sections = [
+            ("session", ended_section(facts, verdict, now, end, stats, budget_pressure(spent))),
+            ("budget", budget_section(spent, guarded, verdict, now)),
+        ]
+        if findings:
+            verdict.save(findings)
+        return "\n".join(compose(facts, records, sections))
+
+    if findings:
+        verdict.load(findings)
+    rows = (
+        memory_rows(memory_state or {}, memory_read_at, session_run(records, began), end, verdict)
+        + gate_section(held or {}, records, verdict, now, pending)
+        + unpushed_rows(archive, verdict)
+        + deployed_section(deploy or {}, records, verdict, now, named=True)
+    )
+    return "\n".join(compose(facts, records, [("after it", rows)]) + ["", verdict.line(shown=True)])
 
 
 # --------------------------------------------------------------------------
@@ -1025,6 +1273,20 @@ def render(
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--selftest", action="store_true", help="prove the arithmetic and stop")
+    parser.add_argument(
+        "--part",
+        choices=("ended", "settled"),
+        help="one half of what `just listen` shows when a session ends",
+    )
+    parser.add_argument(
+        "--began", type=int, default=0, metavar="EPOCH", help="when its container started"
+    )
+    parser.add_argument(
+        "--seen", type=int, default=0, metavar="EPOCH", help="when `listen` saw it gone"
+    )
+    parser.add_argument(
+        "--findings", default="", metavar="FILE", help="what the first half found, for the second"
+    )
     args = parser.parse_args()
     if args.selftest:
         return selftest()
@@ -1038,11 +1300,55 @@ def main():
     if root and os.path.isdir(root):
         records = screen.load(root)
 
+    if args.part == "ended":
+        print(
+            render_part(
+                "ended",
+                facts,
+                records,
+                time.time(),
+                args.began,
+                args.seen,
+                findings=args.findings,
+                stats=read_stats(args.began),
+            )
+        )
+        return 0
+
     held = {}
     cache = os.environ.get("RUNNER_REVIEW_HELD") or ""
     if cache and os.path.exists(cache):
         with open(cache) as handle:
             held = block(handle.read().replace("=", ": "))
+
+    deploy_out, deploy_code = ask(["just", "deploy", "--state"], timeout=60)
+    deploy = block(deploy_out) if deploy_out is not None and not deploy_code else {}
+
+    if args.part == "settled":
+        state, state_at = {}, None
+        monitor = os.environ.get("RUNNER_MONITOR") or ""
+        path = os.path.join(monitor, MEMORY_STATE)
+        if monitor and os.path.exists(path):
+            with open(path, errors="replace") as handle:
+                state = block(printable(handle.read()))
+            state_at = int(os.path.getmtime(path))
+        print(
+            render_part(
+                "settled",
+                facts,
+                records,
+                time.time(),
+                args.began,
+                args.seen,
+                findings=args.findings,
+                deploy=deploy,
+                held=held,
+                archive=os.environ.get("AGENT_ARCHIVE") or "",
+                memory_state=state,
+                memory_read_at=state_at,
+            )
+        )
+        return 0
 
     credentials = {}
     store = os.environ.get("RUNNER_CREDENTIALS") or ""
@@ -1053,7 +1359,6 @@ def main():
     mirror_out, mirror_code = ask(
         [os.path.join(CHECKOUT, "host/archive/mirror.sh"), "--state", one(facts, "session_ended")]
     )
-    deploy_out, deploy_code = ask(["just", "deploy", "--state"], timeout=60)
 
     print(
         render(
@@ -1061,7 +1366,7 @@ def main():
             records,
             time.time(),
             mirror=(block(mirror_out) if mirror_out is not None else None, mirror_code),
-            deploy=block(deploy_out) if deploy_out is not None and not deploy_code else {},
+            deploy=deploy,
             held=held,
             archive=os.environ.get("AGENT_ARCHIVE") or "",
             credentials=credentials,
@@ -1632,6 +1937,268 @@ def selftest():
     has("and the next one waits for it", text, "when this one ends, +30m unless it asks otherwise")
     has("the bounds it may ask inside are said", text, "(it may ask for 15–180m)")
     hasnt("docker's own uptime is not repeated", text, "Up 16 minutes")
+
+    # --- the end of a session ---
+    waiting = block(
+        "running: no\nidle: 1\nscheduling: enabled\ndaemon: running\nwake_left: 18\n"
+        "wake_due: %d\nwake_why: the last session asked to be woken in 30m\n"
+        "wake_default: 30\nwake_min: 15\nwake_max: 180\nwake_armed: yes\nlast_run: clean\n"
+        % (now + 18 * 60)
+    )
+    has(
+        "the wait carries its clock time",
+        next_line(waiting, Verdict(), False, now),
+        "20:44 today, in 18m — the last session asked",
+    )
+
+    check("a reading must postdate the end", fresh_cache_minutes(now - 30, now, {}), 0.5)
+    check(
+        "long after the end, the configured lifetime", fresh_cache_minutes(now - 3600, now, {}), 5.0
+    )
+    check(
+        "a cache turned off stays off",
+        fresh_cache_minutes(now - 30, now, {"ACCOUNT_BUDGET_CACHE_MINUTES": "0"}),
+        None,
+    )
+    check(
+        "a lifetime claude-usage refuses is left for it to say so",
+        fresh_cache_minutes(now - 30, now, {"ACCOUNT_BUDGET_CACHE_MINUTES": "soon"}),
+        None,
+    )
+    check(
+        "an end still ahead refuses every reading", fresh_cache_minutes(now + 10, now, {}), 1 / 60
+    )
+
+    check(
+        "the host's own stamp is the end",
+        session_end(block("session_ended: %d\n" % (now - 40)), now - 900, now - 30),
+        now - 40,
+    )
+    check(
+        "a stamp from before the session began is not its end",
+        session_end(block("session_ended: %d\n" % (now - 1000)), now - 900, now - 30),
+        now - 30,
+    )
+
+    stats = [
+        "122 requests · 87k output, 39k thinking",
+        "234k end context · 52m17s elapsed",
+        "claude-opus-5 answered · opus[1m] requested",
+    ]
+    v = Verdict()
+    text = "\n".join(fact(ended_section(waiting, v, now, now - 60, stats)))
+    has("the end is said as an instant", text, "ended 20:25 today")
+    has("what it spent is the transcript's", text, "122 requests")
+    has("and the next start follows it", text, "20:44 today, in 18m")
+    check("a quiet end is not a fault", v.found, [])
+
+    v = Verdict()
+    ended_section(
+        waiting, v, now, now - 60, ["MODEL MISMATCH — sonnet answered, opus was asked for."]
+    )
+    check("a model mismatch reaches the verdict", v.found, [(PROBLEM, "model mismatch")])
+
+    v = Verdict()
+    has(
+        "a summary that could not be read says so",
+        "\n".join(fact(ended_section(waiting, v, now, now - 60, None))),
+        "could not be read",
+    )
+
+    check(
+        "the session's run is the one still going when it began",
+        (session_run(records, now - 3500) or {}).get("runner_commit"),
+        "5a7f69a",
+    )
+    check("a session not sealed has no run", session_run(records, now - 60), None)
+
+    ran = {"commits": ["a", "b", "c"]}
+    v = Verdict()
+    rows = memory_rows(block("unpushed: 0\nuncommitted: 0\n"), now, ran, now - 60, v)
+    has(
+        "a pushed, clean session is said plainly",
+        "\n".join(fact(rows)),
+        "3 commits this session · all on origin · working tree clean",
+    )
+    check("and is not a finding", v.found, [])
+
+    v = Verdict()
+    rows = memory_rows(
+        block(
+            "unpushed: 2\nuncommitted: 0\npush_reason: push-failed: HEAD\npush_consecutive: 2\n"
+            "push_detail: git@github.com: Permission denied (publickey).\n"
+        ),
+        now,
+        ran,
+        now - 60,
+        v,
+    )
+    text = "\n".join(fact(rows))
+    has("a failed push names its reason", text, "PUSH FAILED: push-failed: HEAD, 2 in a row")
+    has("and git's own words", text, "Permission denied (publickey)")
+    check(
+        "and is one problem, not one per symptom",
+        v.found,
+        [(PROBLEM, "the memory push failed (push-failed: HEAD)")],
+    )
+
+    v = Verdict()
+    memory_rows(block("unpushed: 2\nuncommitted: 0\n"), now, ran, now - 60, v)
+    check(
+        "commits not on origin with no report are a problem",
+        [level for level, _ in v.found],
+        [PROBLEM],
+    )
+
+    v = Verdict()
+    memory_rows(block("unpushed: 0\nuncommitted: 4\n"), now, ran, now - 60, v)
+    check(
+        "uncommitted work is a watch",
+        v.found,
+        [(WATCH, "4 uncommitted change(s) in the agent's checkout")],
+    )
+
+    v = Verdict()
+    memory_rows(block("unpushed: -\nuncommitted: -\n"), now, ran, now - 60, v)
+    check(
+        "a checkout that could not be read is not a clean one",
+        [level for level, _ in v.found],
+        [WATCH, WATCH],
+    )
+
+    v = Verdict()
+    text = "\n".join(
+        fact(memory_rows(block("unpushed: 0\nuncommitted: 0\n"), now - 120, None, now - 60, v))
+    )
+    has("a record not sealed says so", text, "not sealed yet")
+    has("a reading from before the end is not this session's", text, "not read since")
+    check("and is worth watching", [level for level, _ in v.found], [WATCH])
+
+    check(
+        "the reader's own count comes before anything the flag carries",
+        one(block("unpushed: 0\npush_detail: x\nunpushed: 9\n"), "unpushed"),
+        "0",
+    )
+    check("control characters do not reach the terminal", printable("a\x1b[2Jb\n"), "a[2Jb\n")
+
+    v = Verdict()
+    check("a part says what it covers", v.line(shown=True), "Nothing shown here needs attention.")
+    v.watch("x")
+    check("and so does its watch", v.line(shown=True), "Nothing shown here is broken. To watch: x.")
+
+    v = Verdict()
+    text = "\n".join(
+        fact(
+            deployed_section(
+                block(
+                    "worktree: present\ndeployed: 1b8aaef\nagainst: origin/main\nahead: 3\n"
+                    "dropped: 0\ncommit: 49f160a newest\ncommit: 3e4129b oldest\n"
+                ),
+                records,
+                v,
+                now,
+            )
+        )
+    )
+    has("behind origin says which origin", text, "3 commit(s) behind origin/main")
+    has("with the subjects origin gave", text, "49f160a newest")
+    check("and is not a fault", v.found, [])
+
+    v = Verdict()
+    text = "\n".join(
+        fact(
+            deployed_section(
+                block(
+                    "worktree: present\ndeployed: 1b8aaef\nagainst: origin\nahead: -\n"
+                    "dropped: -\ncompare_error: gh here cannot read it\n"
+                ),
+                records,
+                v,
+                now,
+            )
+        )
+    )
+    has(
+        "an origin that did not answer is not up to date",
+        text,
+        "how far behind origin could not be read — gh here cannot read it",
+    )
+    check("and is worth watching", [level for level, _ in v.found], [WATCH])
+
+    v = Verdict()
+    deployed_section(
+        block(
+            "worktree: present\ndeployed: 1b8aaef\nagainst: origin/main\nahead: -\n"
+            "dropped: -\nlive_missing: yes\n"
+        ),
+        records,
+        v,
+        now,
+    )
+    check(
+        "a live commit origin lacks is one problem",
+        v.found,
+        [(PROBLEM, "the live commit 1b8aaef is not on origin/main")],
+    )
+
+    v = Verdict()
+    text = "\n".join(
+        fact(
+            deployed_section(
+                block(
+                    "worktree: present\ndeployed: 1b8aaef\nagainst: origin/main\nahead: 0\n"
+                    "dropped: 2\n"
+                ),
+                records,
+                v,
+                now,
+            )
+        )
+    )
+    has("a count with no subjects still says what a deploy drops", text, "would drop 2 commit(s)")
+    check("and is a problem", [level for level, _ in v.found], [PROBLEM])
+
+    handle, carried = tempfile.mkstemp()
+    os.close(handle)
+    try:
+        text = render_part(
+            "ended",
+            waiting,
+            records,
+            now,
+            now - 900,
+            now - 60,
+            findings=carried,
+            budget=over,
+            stats=stats,
+        )
+        has("the first half is the session", text, "── SESSION")
+        has("and the budget", text, "── BUDGET")
+        text = render_part(
+            "settled",
+            waiting,
+            records,
+            now,
+            now - 900,
+            now - 60,
+            findings=carried,
+            deploy=block(
+                "worktree: present\ndeployed: 17abcfd\nagainst: origin/main\nahead: 0\ndropped: 0\n"
+            ),
+            held=block("count: 0\n"),
+            pending=0,
+            memory_state=block("unpushed: 0\nuncommitted: 0\n"),
+            memory_read_at=now,
+        )
+        has("the second half is what the bookkeeping left", text, "── AFTER IT")
+        has("its deploy row is named", text, "deployed      17abcfd · ")
+        has(
+            "and its last line judges both halves",
+            text.splitlines()[-1],
+            "NEEDS ATTENTION: over budget",
+        )
+    finally:
+        os.unlink(carried)
 
     if failures:
         for failure in failures:

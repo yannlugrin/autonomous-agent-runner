@@ -282,11 +282,10 @@ has gone wrong, and in that case the checkout is the honest answer.
 
 It prints one phrase — "2 commit(s) not deployed, and 3 uncommitted
 change(s)" — or nothing, exiting 1, so each caller decides for itself whether
-that silence deserves a sentence. Two callers wrap it: the forwarder in
-`host/lib/deployed.sh`, before it sends a live command to the deployed
-checkout, and `just listen --live` between one session
-and the next. One spelling, because the one that drifts is the one nobody was
-looking at when it did.
+that silence deserves a sentence. The forwarder in `host/lib/deployed.sh` wraps
+it, before it sends a live command to the deployed checkout. Between two
+sessions `just listen --live` shows how far the live build is behind origin
+instead — see "Behind origin is asked of origin".
 
 ## What the image was built from
 
@@ -639,6 +638,30 @@ needs and what they already do: none of them needed changing.
 
 `just schedule --relocate` writes the crontab line from the same value, so cron
 there names the checkout rather than a worktree under it.
+
+## Behind origin is asked of origin
+
+`deploy --state` says how far the live commit is behind, and the answer is only
+as good as what it is counted against. Where the agent runs on this machine,
+that is the checkout `deploy` was run from. Where it runs on a host of its own,
+the checkout there is the live commit itself — `land` leaves its HEAD detached
+at it — so the same count is zero by construction, whatever has been pushed
+since. Measured on 2026-09-11: the status snapshot read `head` and `deployed`
+both `1b8aaef` with `ahead: 0`, and `just status` said "up to date with main",
+while origin's `main` was three commits past it.
+
+So on a runtime host origin is asked:
+`gh api repos/<RUNNER_REPO>/compare/<live>...<default branch>` gives the count
+behind, the count live and not on it, and the subjects. `deploy` writes
+`RUNNER_REPO` into the `.env` it sends, because that checkout was made by
+`git init` and has no origin to name. The token there is the mirror's, which
+needs *Contents: Read-only* on this repository too — see
+`examples/vps/README.md`, step 7.
+
+It fails into words and never into a zero. No `RUNNER_REPO`, no `gh`, a token
+that cannot read the repository, or no answer: "how far behind origin could not
+be read", and why. A 404 on a repository gh has just read is a live commit
+origin does not have, which is a problem of its own.
 
 ## The runtime host originates nothing
 

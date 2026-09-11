@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Is everything right — the live facts, and then the screen.
 #
-# Runs on the host. No arguments.
+# Runs on the host. No arguments from `just status`; `just listen` passes
+# `--part` and what goes with it, and they reach status.py untouched.
 #
 # This half answers only what a shell owns: whether a container is up, what the
 # schedule says, when the next wake-up may start, how the last run ended. Every
@@ -92,4 +93,4 @@ facts() {
     fi
 }
 
-facts | host/session/status.py
+facts | host/session/status.py "$@"

@@ -401,9 +401,8 @@ and Enter means go on. Not a gate: with no terminal to ask on it says so and
 continues, because a scripted `just listen` must not hang on a question. The
 deployed checkout itself never gets there, so cron is never asked.
 
-The phrase comes from `host/release/undeployed.sh`, which `just listen --live`
-also prints between sessions: one spelling of what is not live, wrapped in the
-question in one place and in a note in the other.
+The phrase comes from `host/release/undeployed.sh`, one spelling of what is not
+live, wrapped in the question in one place and in a note in the other.
 
 ## The checkout is not always the project root
 
@@ -1135,11 +1134,53 @@ loses the end of what you asked to watch.
 one and the beginning of the wait for the next for the other — nobody watching
 a run of sessions wants to type the command again between them. Anything but a
 session that ended leaves: a compose that would not start, or a `q`, is not a
-thing to sit through twice. In the gap it prints what is still not live, then
-moves the floor to the next session and never the one just watched, whose
+thing to sit through twice. Before waiting again it moves the floor to the next
+session and never the one just watched, whose
 transcript is newer than the floor that pass used: a loop that kept the old
 floor would follow that same file again and wait for an end that has already
 happened.
+
+## What `listen` shows when a session ends
+
+When a followed session ends, `--wait` and `--live` show two halves of `just
+status`'s screen, and `--no-summary` leaves both out:
+
+| half | what it holds | printed |
+| --- | --- | --- |
+| session, budget | what the session spent and which model answered, when the next one starts, the budget | as the container goes |
+| after it | whether the memory reached origin, the transcripts held for review, the records, the archive, how far the live build is behind origin | once the session's bookkeeping has finished |
+
+The last line judges only those rows — "Nothing shown here needs attention", or
+what does. The credentials and the mirror are `just status`'s.
+
+**Two halves, because the bookkeeping runs after the container.** `run` and
+`chat` collect, publish, seal and dispatch once the session has exited, and
+`listen` sees the end two to seven seconds after it. Printed then, the held
+count and the records describe the session before. Measured on 2026-09-11 over
+a week of `origin/cache`: an unattended session's record landed a median 33
+seconds after its end, 100 at p90.
+
+**The wait is the runner's pid, not the lock.** A session's container is named
+after the process that started it, and that process does the bookkeeping, so
+`listen` waits for it to go. The lock would say the same, but there is no way to
+test a flock without taking it. The command line is checked too, so that a pid
+reused by something else cannot hold the screen, and the wait gives up after ten
+minutes and says so.
+
+**What the session spent comes out of its transcript**, through
+`session-stats.py`: its record is sealed by that bookkeeping, and until then the
+newest record is the session before.
+
+**The budget is read after the session ended.** A reading is cached for five
+minutes, so one taken in the session's last minutes would otherwise be shown as
+its end. The first half sets the cache's lifetime to the time since the end:
+an older reading is a miss and is fetched again, and the fresh one is still
+stored, so the status page published seconds later reuses it and the endpoint
+is asked no more often than it was.
+
+**The memory row is the push, not the mirror** — see `docs/backup.md`, under
+"The host reads the flag too". **The deploy row is counted against origin** —
+see `docs/release.md`, under "Behind origin is asked of origin".
 
 ## The viewer `run --listen` starts
 
@@ -1356,7 +1397,8 @@ view; they fall through to `empty`.
 ## What a session cost, and which model answered
 
 `host/session/session-stats.py` prints three lines at the end of `just run` and
-`just chat`, in `just status`, and into the status page. The clauses that have
+`just chat`, in `just status`, when `just listen` sees a session end, and into
+the status page. The clauses that have
 nothing to say disappear, the rest do not move. The third line changes shape:
 it starts with `MODEL MISMATCH` or `MODEL UNPINNED` when it has something to
 say, because it is the line an unattended log is grepped for — the same grep
@@ -1756,3 +1798,7 @@ block the agent writes grants nothing, and a line saying so every time is a line
 that spends attention on a mechanism that no longer decides anything. The script
 is still there to run by hand. See `docs/boundary.md`, under
 "check-agent-settings, and why an invariant".
+
+**`just listen` shows two halves of this screen** when a session it follows
+ends, through `--part`. Which rows, and why two, are under "What `listen` shows
+when a session ends".

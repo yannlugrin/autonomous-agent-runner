@@ -85,11 +85,12 @@ Make a fine-grained personal access token, at
 https://github.com/settings/personal-access-tokens/new
 
     Resource owner      ${REPO%%/*}
-    Repository access   Only select repositories -> $REPO
+    Repository access   Only select repositories -> $REPO${RUNNER_REPO:+, $RUNNER_REPO}
     Permissions         Contents: Read-only
                         Actions:  Read and write
 
-Contents lets this host fetch the record. Actions lets it ask for a refresh.
+Contents lets this host fetch the record${RUNNER_REPO:+, and read how far the live build is behind
+$RUNNER_REPO}. Actions lets it ask for a refresh.
 Neither writes a ref, which is the point: this machine may ask the record to
 update itself and may never touch it.
 
@@ -149,6 +150,16 @@ Fix the token: Contents must be Read-only."
     fi
 else
     echo "  write      : not checked — this is where the record's own setup is run from"
+fi
+
+# Only where `deploy` wrote RUNNER_REPO, which is the host whose `deploy --state`
+# asks origin how far the live build is behind.  see docs/release.md#behind-origin-is-asked-of-origin
+if [ -n "${RUNNER_REPO:-}" ]; then
+    if gh api "repos/$RUNNER_REPO" --jq .full_name >/dev/null 2>&1; then
+        echo "  runner     : readable — 'just status' can say how far the live build is behind"
+    else
+        echo "  runner     : NOT readable — add $RUNNER_REPO to the token, Contents: Read-only" >&2
+    fi
 fi
 
 workflow="${AGENT_MIRROR_WORKFLOW:-mirror-$AGENT_USER.yml}"

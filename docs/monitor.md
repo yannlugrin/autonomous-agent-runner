@@ -406,6 +406,9 @@ that would change those lines are overridden on the command line. A commit whose
 push failed is in the log, and so is one on a branch never pushed: **a record
 can name a sha origin never had.**
 
+`sync_push_state` beside it reads the same checkout the same way for what the
+last push carried. See `docs/backup.md`, under "The host reads the flag too".
+
 That also keeps the sealing rule exact. **The condition is that the read
 happened after the session ended**, taken from the log's mtime: once a session's
 container has exited, its checkout holds everything it committed, whether or not

@@ -216,12 +216,13 @@ Make a **second** fine-grained PAT — not the one the mirror's workflow pushes
 with:
 
     Resource owner      your account
-    Repository access   Only select repositories -> the mirror's
+    Repository access   Only select repositories -> the mirror's, and this runner's
     Permissions         Contents: Read-only
                         Actions:  Read and write
 
 `Actions: Write` is what dispatches a run. `Contents: Read` is what fetches the
-clone `mirror-status` reads. Neither writes a ref: this host can ask the record
+clone `mirror-status` reads, and on this runner's repository what lets
+`just status` and `just listen` say how far the live build is behind origin. Neither writes a ref: this host can ask the record
 to update itself and cannot touch it, which is the whole reason the mirror is
 not in the archive.
 

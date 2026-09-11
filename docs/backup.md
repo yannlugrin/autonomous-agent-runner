@@ -15,7 +15,7 @@ There is nothing to set. It is a hook, and these are its parts:
 | `image/push-on-exit.sh` | the hook itself, baked into the image and registered as `SessionEnd` in managed settings. It lives here rather than in the agent's own repository because a hook the agent could blank would stop backing up its memory with **no symptom at all** |
 | `image/bash-guard.py` | what it asks, before it sends anything, about what the push would carry |
 | `<NAME>_REPO_DIR` | which repository is backed up. Named, never derived from the script's own location |
-| `ERROR_ON_PUSH` | a file at the top of the agent's repository. Its only report — written when a push fails, read by the next session at its start |
+| `ERROR_ON_PUSH` | a file at the top of the agent's repository. Its only report — written when a push fails, read by the next session at its start, and shown by `just listen` when the session ends |
 
 **The rule.** At every session end the hook asks the guard what the push would
 carry, and pushes only on a clear answer. **`ask` counts as no**, and so does a
@@ -27,8 +27,8 @@ success. It never exits non-zero: a backup that fails must not look like a
 broken session.
 
 **What you see: nothing, when it works.** When it does not, the failure is in
-`ERROR_ON_PUSH` in the agent's repository, and the next session reads it at
-start. One failure is a hiccup the next session repairs; the count is of
+`ERROR_ON_PUSH` in the agent's repository, `just listen` shows it as the
+session's bookkeeping ends, and the next session reads it at start. One failure is a hiccup the next session repairs; the count is of
 *consecutive* failures, and at three the session escalates to you rather than
 retrying forever. On this side, `just verify` has a probe that the backup still
 asks the guard — a backup that quietly stopped asking would simply succeed.
@@ -77,6 +77,32 @@ handled.
 `record_failure` counts *consecutive* failures. One is a hiccup the next
 session repairs; three is an expired credential or a dead remote, and the
 session that reads it escalates to the operator rather than retrying forever.
+
+## The host reads the flag too
+
+The next session reads `ERROR_ON_PUSH` when it starts, which can be hours away.
+`just listen` shows it when a followed session's bookkeeping ends, because that
+is when a person is looking.
+
+A flag that is absent proves nothing: a hook killed by its 60-second timeout
+writes none, and neither does a session whose `SessionEnd` never fired. So the
+host also counts the commits on the checkout's branches that no
+`refs/remotes/origin/*` holds. Only a successful push moves those refs, so zero
+means the last push carried everything — without the network, and without a
+credential for the agent's repository, which the host running the agent does
+not hold. It counts uncommitted changes as well, since a push carries commits
+only.
+
+`sync_push_state` in `host/monitor/clone.sh` reads all three out of the volume
+the way `sync_memory` reads the commits — read-only mount, no network, the
+entrypoint replaced — into `monitor/memory.state`, on every `just records`. The
+counts are written before anything taken from the flag, which the agent can
+write, and `status.py` strips control characters from the file before a
+terminal sees it. `fsmonitor` is off for that `git status`: it names a command,
+and the checkout's config is the agent's.
+
+A flag is a problem, and so are commits not on origin with no flag. Uncommitted
+changes are a watch.
 
 ## The push is the one the guard never saw
 

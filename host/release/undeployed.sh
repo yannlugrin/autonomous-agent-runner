@@ -4,9 +4,8 @@
 # there is neither, so each caller decides whether that silence deserves a
 # sentence.
 #
-# Runs on the host. Two callers wrap it in sentences of their own: the forwarder
-# in host/lib/deployed.sh and `just listen --live`. One spelling, because the
-# one that drifts is the one nobody was looking at when it did.
+# Runs on the host. Its caller, the forwarder in host/lib/deployed.sh, wraps it
+# in a sentence of its own.
 # see docs/release.md#what-not-deployed-is-counted-against
 set -uo pipefail
 

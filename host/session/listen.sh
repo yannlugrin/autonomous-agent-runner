@@ -57,6 +57,21 @@ follow=false
 seen=false
 began=0
 since=0
+runner=""
+gone=0
+
+# The pid of the `run` or `chat` that started the session, out of its
+# container's name, which ends in it. That process goes on with the session's
+# bookkeeping after the container has gone.
+# see docs/sessions.md#naming-a-sessions-container
+session_runner() {
+    local name
+    name=$(session_container)
+    name=${name%%$'\t'*}
+    name=${name##*-}
+    case "$name" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s\n' "$name"
+}
 
 if [ -n "$(session_container)" ]; then
     follow=true
@@ -65,6 +80,7 @@ if [ -n "$(session_container)" ]; then
     # container is up for a few seconds before Claude Code writes a first line,
     # and the container's start is the floor that tells them apart.
     began=$(session_started || echo 0)
+    runner=$(session_runner || echo "")
     since=$began
 elif [ "$wait" = yes ] || [ "$live" = yes ]; then
     follow=true
@@ -152,6 +168,58 @@ colours=(-L host/session --arg dim "$dim" --arg bold "$bold" --arg off "$off"
 # check that would normalise it never runs. Ahead of both branches on purpose —
 # interrupting a long render is the same act as interrupting a follow.
 trap 'echo; exit 0' INT
+
+
+# --- when a followed session ends ---
+# Two halves of `just status`'s screen and the wait between them. The first is
+# what is known as the container goes: what the session spent, when the next
+# one starts, and the budget as it stands after it. The second is what the
+# session's bookkeeping leaves — the push, the transcripts, the records, what is
+# live — and printed while that bookkeeping still runs, it would describe the
+# session before. The runner is asked by pid and not by the lock, because
+# testing a flock takes it; its command line is checked so that a reused pid
+# cannot hold the screen.
+# see docs/sessions.md#what-listen-shows-when-a-session-ends
+
+findings=""
+
+bookkeeping_running() {
+    [ -n "$runner" ] && tr '\0' ' ' <"/proc/$runner/cmdline" 2>/dev/null \
+        | grep -Eq 'session/(run|chat)\.sh'
+}
+
+after_session() {
+    local deadline key=""
+    if [ -z "$findings" ]; then
+        findings=$(mktemp) || return 0
+        trap 'rm -f "$findings"' EXIT
+    fi
+    : >"$findings"
+
+    # --began, so a session that wrote no transcript says so rather than
+    # summarising the one before.
+    host/session/status.sh --part ended --began "$began" --seen "$gone" --findings "$findings" || true
+
+    if bookkeeping_running; then
+        echo
+        echo "Waiting for the session's bookkeeping to finish: collect, records."
+        deadline=$((SECONDS + 600))
+        while bookkeeping_running; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+                echo "It has not finished in 10m; what follows may describe the session before."
+                break
+            fi
+            if [ -t 0 ]; then
+                IFS= read -rsn1 -t 1 key
+                [ "$key" = q ] && exit 0
+            else
+                sleep 1
+            fi
+        done
+    fi
+
+    host/session/status.sh --part settled --began "$began" --seen "$gone" --findings "$findings" || true
+}
 
 
 # --- following ---
@@ -248,8 +316,10 @@ if [ "$follow" = true ]; then
                 if [ "$seen" = false ]; then
                     seen=true
                     began=$(session_started || echo 0)
+                    runner=$(session_runner || echo "")
                 fi
             elif [ "$seen" = true ]; then
+                gone=$(date +%s)
                 # The same two seconds `run --listen` waits before it stops its
                 # own viewer, and for the same reason: the closing message is
                 # written immediately before the session exits, so stopping as
@@ -267,12 +337,7 @@ if [ "$follow" = true ]; then
         if [ "$ended" = true ]; then
             echo
             echo "The session ended."
-            if [ "$summary" = yes ]; then
-                echo
-                # --since the container started, so a session that wrote no
-                # transcript says so rather than summarising the one before.
-                host/session/session-stats.py --since "$began" || true
-            fi
+            [ "$summary" = yes ] && after_session
         fi
 
         # Where --live parts from --wait: the end of a session is a shell prompt
@@ -281,18 +346,6 @@ if [ "$follow" = true ]; then
         # `q`, is not a thing to sit through twice.
         if [ "$live" != yes ] || [ "$ended" != true ]; then exit $status; fi
 
-        # What is still not live, in the gap where a person decides whether to
-        # go and deploy it. The tree that would be deployed is not the one this
-        # script is running in — `just listen` forwarded here — so it is asked
-        # about by path.
-        echo
-        echo
-        pending=$(host/release/undeployed.sh "$RUNNER_ROOT" || true)
-        if [ -n "$pending" ]; then
-            printf 'The runner tree has %s.\n' "$pending"
-        else
-            echo "The runner tree is clean and fully deployed."
-        fi
         echo
 
         # The next session and never the one just watched, whose transcript is
@@ -301,6 +354,7 @@ if [ "$follow" = true ]; then
         # happened.
         seen=false
         began=0
+        runner=""
         ticks=0
         since=$(( $(date +%s) + 1 ))
     done

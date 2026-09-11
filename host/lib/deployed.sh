@@ -77,8 +77,7 @@ forward_to_deployed() {
     # scripted `just listen` must not hang on a question. The deployed checkout
     # itself never gets here, so cron is never asked.
     #
-    # The phrase comes from undeployed.sh, which `just listen --live` also
-    # prints between sessions: one spelling of what is not live.
+    # The phrase comes from undeployed.sh, one spelling of what is not live.
     if [ "$heads_up" != none ]; then
         what=$(host/release/undeployed.sh . || true)
         if [ -n "$what" ]; then

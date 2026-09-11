@@ -360,7 +360,7 @@ test-container *ARGS:
 [arg("wait", long, value="yes", help="wait for a session when none is running, then give the prompt back")]
 [arg("live", long, value="yes", help="as --wait, and wait again for the next one; never closes")]
 [arg("remote", long, value="yes", help="serve the live view on the tailnet, for any device on it — implies --live, and ends with this window")]
-[arg("summary", long="no-summary", value="no", help="leave out what the session cost when it ends")]
+[arg("summary", long="no-summary", value="no", help="leave out the summary shown when a session ends")]
 [arg("n", pattern='\d+', help="how many messages of a finished session to show")]
 listen $all="no" $wait="no" $live="no" $remote="no" $summary="yes" $n="20":
     @exec host/session/listen.sh

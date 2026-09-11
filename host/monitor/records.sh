@@ -251,6 +251,11 @@ fi
 
 # --- the ordinary run ---
 
+# Whether the memory reached origin, on every run and not only when something is
+# waiting to be sealed: a transcript held back for review leaves nothing pending,
+# and its session pushed all the same.
+sync_push_state || say "note: could not read whether the memory reached origin."
+
 pending=$(records --pending) || exit $?
 case "$pending" in ''|*[!0-9]*) die "Could not read the archive — see the message above." ;; esac
 
