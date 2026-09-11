@@ -1009,9 +1009,9 @@ host's clone of its repository. Neither is required; the screen renders without
 either and says which line did not run. There is nothing in `.env` to set.
 
 The records are sealed on the machine that runs the agent. When that is another
-machine (`RUNNER_DEPLOY_HOST` set), `stats.sh` fetches the archive's `cache`
-branch and reads its `records/` instead of the local store, which nothing there
-writes.
+machine (`RUNNER_DEPLOY_HOST` set), `host/lib/store.sh` fetches the archive's
+`cache` branch and reads its `records/` instead of the local store, which nothing
+there writes.
 
 `host/monitor/stats.sh` is the front, because the store may not exist yet and
 that is a state with a command that fixes it; `host/monitor/stats.py` is the
