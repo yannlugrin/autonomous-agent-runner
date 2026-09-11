@@ -132,6 +132,14 @@ families; a setup-token served none. The key's presence in that binary is
 verified; its effect is what the `just verify` probe on a real session's tool
 list checks.
 
+**Served before the key was set, and never called.** From the first archived
+session, 2026-08-22T21:06Z, to 2026-08-25T10:04Z, 93 sessions were served 56
+`mcp__claude_ai_*` tools from eight families — Dropbox, Drive and Calendar with
+their write and delete verbs, Booking.com and Uber among them — and no
+`tool_use` names one. Counted 2026-09-11 over the archive, on the `addedNames`
+of `deferred_tools_delta` rows. A substring scan over-counts: a session that
+only prints the prefix carries it too.
+
 
 ## Where a session may work
 
