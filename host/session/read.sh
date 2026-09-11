@@ -57,11 +57,10 @@ src=archive
 ref=sessions
 listing=""
 
-# The archive here, read as `cost` and `tools` read it: fetched first when the
-# agent runs on another machine, since nothing here writes the local branch. The
-# proof reads every session through this script and hands over the ref it fetched.
+# The archive here: fetched first when the agent runs on another machine, since
+# nothing here writes the local branch.
 if git -C "$ARCHIVE" rev-parse --git-dir >/dev/null 2>&1; then
-    [ -n "${ARCHIVE_REF:-}" ] || archive_ref
+    archive_ref
     ref=$ARCHIVE_REF
     listing=$(git -C "$ARCHIVE" ls-tree -r "$ref" --name-only -- transcripts 2>/dev/null || true)
 fi

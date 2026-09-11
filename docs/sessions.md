@@ -1281,7 +1281,7 @@ hit is not a subagent, that is plainly the thing asked for; ask for a subagent
 by its own id and the rule never fires.
 
 The archive first, the volume second. The archive is read here, fetched first
-when the agent runs on another machine, as `cost` and `tools` read it; only an
+when the agent runs on another machine; only an
 id it does not hold goes to the deployed checkout, which reads the volume where
 the agent runs. That is a session not collected yet — most often the one that
 just finished, whose id `just listen` prints. The archive holds every

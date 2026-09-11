@@ -1282,7 +1282,7 @@ says which way it went.
 
 It grows in with the data rather than being wrong from the start: while the whole input fits in
 one write there is no window to lose. A `case` on the variable starts no process and cannot lose.
-It was found by `just records --prove`, which diffs a command against a renderer over the session
+It was found by `just records --prove`, which diffed a command against a renderer over the session
 records and had no reason to be intermittent.
 
 

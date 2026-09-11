@@ -166,10 +166,9 @@ def as_minutes(value):
 # The price table, loaded from the image
 # --------------------------------------------------------------------------
 # Imported by path because the file has a dash in its name and cannot be
-# imported by module name. `host/monitor/cost.sh` reaches the same file by
-# running it; this one needs its functions, and a second copy of the rates
-# drifts the day they change while both go on printing numbers that look
-# equally right.
+# imported by module name, as host/monitor/cost.py and stats.py import it: a
+# second copy of the rates drifts the day they change while both go on printing
+# numbers that look equally right.
 
 
 def module_at(name, *parts):

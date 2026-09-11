@@ -17,9 +17,9 @@ There is nothing in `.env` to set. These are the handles:
 | `just drift-accept` | move the baseline to the last audited commit. It asks first, and refuses where there is nobody to ask |
 | `just drift-diff` | the same cumulative range as a plain `git diff`, with no agent in between. `[PATH...]` narrows it |
 | `just drift-status` | what the audit stands on: the mirror ref, the two anchors and how far behind each is, and the last runs. It fetches first |
-| `just cost` | what the archived sessions cost, priced from their own transcripts. `--by-day`, `-d N`, or session ids. API list rates: weight, not an invoice |
-| `just tools` | how many times each tool was called, per day, in the archived transcripts. Name tools to get one line per day instead; `-d N` for the window |
-| `just records` | one durable record per archived session — what it was, what it spent, what it committed, which runner built it — sealed once and published to the archive's `cache` branch. Nothing reads them yet |
+| `just cost` | what the archived sessions cost, priced from their sealed records. `--by-day`, `-d N`, or session ids. API list rates: weight, not an invoice |
+| `just tools` | how many times each tool was called, per day, in the archived sessions' records. Name tools to get one line per day instead; `-d N` for the window |
+| `just records` | one durable record per archived session — what it was, what it spent, what it committed, which runner built it — sealed once and published to the archive's `cache` branch. `just stats`, `just tools` and `just cost` read them |
 | `RUNNER_MONITOR` | where all of that lives. `monitor/` inside this checkout unless set, gitignored, created on the first run; a relative value counts from the checkout, not from where `just` ran |
 
 **The audit is a Claude session, and it runs on the host, on your own login.**
@@ -266,14 +266,13 @@ copy that used to do this had to go.
 
 ## What the archive cost
 
-`just cost` prices the archive's `sessions` branch: one line per session over
-the last day, `--by-day` for one line per day over the last ten, `-d N` to
-widen either, or session ids to price those wherever they sit.
+`just cost` prices the sealed records: one line per session over the last day,
+`--by-day` for one line per day over the last ten, `-d N` to widen either, or
+session ids to price those wherever they sit.
 
 ## just tools
 
-`just tools` counts tool calls in the same transcripts, from each call's own
-timestamp in UTC: one line per tool and one column per day, heaviest tool
+`just tools` counts tool calls in the same records, on each call's own UTC day: one line per tool and one column per day, heaviest tool
 first, over the last five days that carry a call. Name tools, `just tools Bash
 Edit`, and the table transposes to one line per day and one column per named
 tool over the last ten; `-d N` sets the window in either shape, and a named
@@ -283,11 +282,11 @@ window because a session filed under one day can hold calls stamped the next.
 It came from the monitoring repository this directory replaced, where it was
 the one recipe the folding of 2026-09-02 missed; brought over 2026-09-04.
 
-It calls `image/session-cost.py` and carries no rates of its own. That is the
-whole of the overlap rule with `just status`, which prices the one session that
-just ran out of the volume: two questions, two commands, one price table. A
-second copy of the table drifts the day rates change, and both copies go on
-printing numbers that look equally right.
+`just cost` prices through `image/session-cost.py` and carries no rates of its
+own. That is the whole of the overlap rule with `just status`, which prices the
+one session that just ran out of the volume: two questions, two commands, one
+price table. A second copy of the table drifts the day rates change, and both
+copies go on printing numbers that look equally right.
 
 The figure is what the same traffic would have cost at published per-token API
 rates. Nothing here was invoiced — this account is a subscription, which is not
@@ -300,10 +299,9 @@ of its own first timestamp and the pricing tool dates a session the same way,
 so a day directory holds exactly one day of sessions. `just stats --by-session`
 is where the local day lives.
 
-Sessions are staged as files rather than piped, because a sub-agent is priced
-into the session that asked for the work and the archive says which one that is
-in the filename — `<session>--agent-<id>.jsonl`. A stream of concatenated
-transcripts loses exactly that.
+A sub-agent is priced into the session that asked for the work, and its usage
+is its own in that session's record, under `subagents`: `who spent it` splits
+the two.
 
 
 ## One record per session
@@ -324,15 +322,11 @@ below are the only reason a person runs it by hand.
 | `just records` | what a session end calls. Seals every session that can be sealed and publishes them to the archive's `cache` branch. With nothing to do it costs 40ms and no network |
 | `just records --recheck` | re-derive every stored record and diff it against what is stored, writing nothing. How a suspected fault is answered |
 | `just records --rewrite <id>` | replace one, for a transcript a redact ruling changed after its record sealed |
-| `just records --prove` | run the three commands that will one day read the store, render the same output from the records alone, and diff |
 | `just records --no-publish` | write them here and push nothing. For looking at the store without touching the archive |
 | `RUNNER_RECORDS_DIR` | where they live — `~/.cache/<agent>/records/` unless set |
 
-`just stats` reads them. `just read`, `just
-tools` and `just cost` still derive everything from the raw transcripts on every
-call, and each becomes a renderer over this store in a later, separate piece of
-work. Until then the store's one obligation is that it will be **enough** when
-that happens, which is what `--prove` is for.
+`just stats`, `just tools` and `just cost` read them — see
+[the commands that read the store](#the-commands-that-read-the-store).
 
 ### Why it exists
 
@@ -918,16 +912,15 @@ sub-agent's is a separate measurement rather than a share of one.
 
 **A sub-agent can be on the branch while its session is not.** It is collected
 when it finishes and the conversation that spawned it runs on: one on 2026-09-03
-sat there for sixteen hours. `just cost` and `just tools` read every file in a
-day's directory and so count it as a session of its own; the store has no record
-for it, because it is not a session, until its session lands.
+sat there for sixteen hours. The store has no record for it, because it is not a
+session, until its session lands — so `just cost` and `just tools` count it once
+that session has ended, and not before.
 
 ### Tool calls are bucketed by the call's own UTC day
 
-`host/monitor/tools.sh` counts a tool call on the day it happened, and a session
-running past midnight lands on both sides. A flat `{name: count}` per session
-would put every call on the session's start day and `just tools` could then never
-be a renderer over these records without changing what it reports. Measured on
+`just tools` counts a tool call on the day it happened, and a session running past
+midnight lands on both sides. A flat `{name: count}` per session would put every
+call on the session's start day and change what it reports. Measured on
 2026-09-06: **9 of 579 sessions have tool calls on more than one UTC day** — so
 nearly every session is a single bucket, and this costs one nesting level and
 nothing else.
@@ -973,31 +966,21 @@ reader of the transcript could see. That route was not taken: it would put a
 monitoring field into `image/managed-settings.json`, which is a boundary file,
 and write a row per turn for a field no command reads.
 
-### The sufficiency proof
+### The commands that read the store
 
-`just records --prove` is the one obligation of the store while `read`, `tools`
-and `cost` do not read it. It runs each command as it stands, has `host/monitor/records-render.py`
-render the same output from the records alone, and diffs the two byte for byte
-over the whole archive:
+`just stats`, `just tools` and `just cost` read the records and no transcript,
+wherever `host/lib/store.sh` finds them. `just read` does not: it shows one
+transcript whole, so it reads that transcript anyway, and its header comes from
+the same bytes through `host/archive/session-meta.jq`.
 
-| what is diffed | what it proves |
-| --- | --- |
-| `just read <id>` | the header block over a transcript, the sub-agent listing `--subagent K` indexes into, and each sub-agent's own header |
-| `just tools` and `just tools <name>...` | both table shapes, over every day the archive holds |
-| `just cost`, `--by-day`, and by session id | fed into `image/session-cost.py`'s own printing, so what it proves is that the store carries everything that file needs |
-
-The renderer is not a second implementation of the commands kept in step by
-hand: the columns go through the same `column -t`, and the cost report through
-`session-cost.py` itself. What it
-supplies is only the numbers, which is the question.
-
-It refuses to run rather than report a difference it would have caused itself:
-while the local `sessions` branch and `origin/sessions` differ, while any
-session is without a record, or while a sub-agent sits on the branch without its
-session. Each of those makes the command and the store read different archives.
-
-`just read` is proved by the first segment of an id: a full uuid has dashes in
-it, and that recipe takes hex.
+`tools` and `cost` moved onto the store once it was shown to carry everything
+they print. Measured 2026-09-11 over 684 records: each command, run against its
+own output from the transcripts across every window shape, session ids and
+refusals, printed the same bytes, save the line naming where it read from. The
+proof that had diffed them, `just records --prove`, went with nothing left to
+compare. `just records --recheck` stays: it rebuilds every record from the
+transcripts and diffs it against the stored one, which is the guarantee on the
+data itself.
 
 ## The stats screen
 
@@ -1011,7 +994,7 @@ either and says which line did not run. There is nothing in `.env` to set.
 The records are sealed on the machine that runs the agent. When that is another
 machine (`RUNNER_DEPLOY_HOST` set), `host/lib/store.sh` fetches the archive's
 `cache` branch and reads its `records/` instead of the local store, which nothing
-there writes.
+there writes — for `stats`, `tools` and `cost` alike.
 
 `host/monitor/stats.sh` is the front, because the store may not exist yet and
 that is a state with a command that fixes it; `host/monitor/stats.py` is the

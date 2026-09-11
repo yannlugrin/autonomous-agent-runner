@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Count tool calls per day in the archived session transcripts.
+# Count tool calls per day in the archived sessions, from their sealed records.
 #
-# Runs on the host, reads the archive's `sessions` ref and nothing else. With no
-# tool named: one line per tool, one column per day, the last 5 days that carry
-# a call. Name tools and the table transposes: one line per day, one column per
-# named tool, the last 10 days. `--days N` sets the window in either shape.
+# Runs on the host and reads the records and nothing else. With no tool named:
+# one line per tool, one column per day, the last 5 days that carry a call. Name
+# tools and the table transposes: one line per day, one column per named tool,
+# the last 10 days. `--days N` sets the window in either shape.
 #
 # Days are the last ones that carry a tool call, counted in UTC from the call's
 # own timestamp, so a session running past midnight lands on both sides; one
@@ -13,7 +13,7 @@
 set -uo pipefail
 # shellcheck source=SCRIPTDIR/../lib/root.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
-. host/lib/archive.sh
+. host/lib/store.sh
 . host/lib/tty.sh
 
 days="${days:?not set — run this through 'just', which declares the flags}"
@@ -22,26 +22,21 @@ if [ "$days" = 0 ]; then
     if [ ${#names[@]} -eq 0 ]; then days=5; else days=10; fi
 fi
 
-need_archive
-archive_ref
+need_store
 
 
-mapfile -t dirs < <(git -C "$ARCHIVE" ls-tree -r --name-only "$ARCHIVE_REF" -- transcripts \
-    | sed 's|^transcripts/||; s|/[^/]*$||' | sort -u | tail -n "$((days + 1))")
-[ ${#dirs[@]} -gt 0 ] || { echo "No transcripts under transcripts/ on $ARCHIVE_REF." >&2; exit 1; }
+mapfile -t dirs < <(cd "$RUNNER_RECORDS_DIR" && find . -name '*.json' \
+    | sed 's|^\./||; s|/[^/]*$||' | sort -u | tail -n "$((days + 1))")
+[ ${#dirs[@]} -gt 0 ] || { echo "No sealed records under $RUNNER_RECORDS_DIR." >&2; exit 1; }
 
-raw=$(mktemp) || exit 1
-trap 'rm -f "$raw"' EXIT
-for d in "${dirs[@]}"; do
-    git -C "$ARCHIVE" ls-tree -r --name-only "$ARCHIVE_REF" -- "transcripts/$d/"
-done | while read -r path; do
-    git -C "$ARCHIVE" show "$ARCHIVE_REF:$path"
-done | jq -r 'select(.type=="assistant") | .timestamp as $t
-              | .message.content[]? | select(.type=="tool_use")
-              | "\(.name)\t\($t[0:10])"' \
-  | sort | uniq -c | sed 's/^ *//; s/ /\t/' > "$raw"
+# count, tool, day — over each record's own calls and its sub-agents', which are calls all the same.
+# shellcheck disable=SC2016  # $day is jq's, not the shell's
+raw=$(for d in "${dirs[@]}"; do printf '%s\n' "$RUNNER_RECORDS_DIR/$d"/*.json; done \
+    | xargs -d '\n' -r jq -r '(., .subagents[]) | .tools | to_entries[] | .key as $day
+                             | .value | to_entries[] | "\(.key)\t\($day)\t\(.value)"' \
+    | awk -F'\t' '{ n[$1 FS $2] += $3 } END { for (k in n) print n[k] FS k }')
 
-keep=$(cut -f3 "$raw" | sort -u | tail -n "$days" | paste -sd,)
+keep=$(cut -f3 <<< "$raw" | sort -u | tail -n "$days" | paste -sd,)
 [ -n "$keep" ] || { echo "No tool calls in the last $days day(s) the archive holds."; exit 0; }
 nd=$(( $(tr -cd , <<< "$keep" | wc -c) + 1 ))
 
@@ -58,7 +53,7 @@ if [ ${#names[@]} -eq 0 ]; then
             END { for (k in t) {
                       printf "%s", k
                       for (i = 1; i <= nd; i++) printf "\t%d", c[k SUBSEP D[i]] + 0
-                      printf "\t%d\n", t[k] } }' "$raw" \
+                      printf "\t%d\n", t[k] } }' <<< "$raw" \
         | { IFS= read -r header; printf '%s\n' "$header"
             sort -t$'\t' -k$((nd + 2)),$((nd + 2)) -rn; }
         awk -F'\t' -v keep="$keep" '
@@ -67,7 +62,7 @@ if [ ${#names[@]} -eq 0 ]; then
             ($3 in K) { col[$3] += $1; all += $1 }
             END { printf "total"
                   for (i = 1; i <= nd; i++) printf "\t%d", col[D[i]] + 0
-                  printf "\t%d\n", all }' "$raw"
+                  printf "\t%d\n", all }' <<< "$raw"
     } | column -t -s$'\t' | zebra
 else
     # Days down the side, the named tools across the top, in the order given.
@@ -89,11 +84,12 @@ else
                   printf "\t%d\n", row }
               printf "total"
               for (j = 1; j <= nt; j++) printf "\t%d", col[T[j]] + 0
-              printf "\t%d\n", all + 0 }' "$raw" \
+              printf "\t%d\n", all + 0 }' <<< "$raw" \
     | column -t -s$'\t' | zebra
 
+    # awk and not `grep -q`: a grep that quits on its first match kills the writer under pipefail.
     for n in "${names[@]}"; do
-        cut -f2 "$raw" | grep -qxF -- "$n" \
+        awk -F'\t' -v n="$n" '$2 == n { found = 1 } END { exit !found }' <<< "$raw" \
             || echo "note: no call to '$n' anywhere in the days read" >&2
     done
 fi

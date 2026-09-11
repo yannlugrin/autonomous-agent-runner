@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 # Where the archive checkout is, and the sentence for "it is not there".
 #
-# Sourced by the recipes that read the archive and never write it — `read`,
-# `cost`, `tools`, `records --prove` and `stats` — so they agree on one
+# Sourced by the recipes that read the archive and never write it — `read`, and
+# `stats`, `tools` and `cost` through host/lib/store.sh — so they agree on one
 # spelling of the missing-clone message. With the agent on another machine they
 # fetch it first. The path itself is computed once in the justfile and exported.
 #

@@ -463,26 +463,25 @@ drift-status:
 # recipe that mixes them. `just` passes every declared parameter as a
 # positional argument too, ahead of them, so the two are shifted off and what
 # reaches the script is ids.
-[doc("What the archived sessions cost — one line each, or --by-day; -d N widens the window")]
+[doc("What the archived sessions cost — one line each, or --by-day; -d N widens the window; session ids price only those")]
 [group("monitor")]
 [no-exit-message]
 [arg("by_day", long="by-day", value="yes", help="one line per day instead of one per session")]
 [arg("days", long, short="d", pattern='\d+', help="how many of the archive's days to price; 0 is the default window — one day, ten with --by-day")]
-[arg("ARGS", help="[SESSION-ID...] price those sessions wherever they sit in the archive, matched on the start of the id; no window applies")]
-cost $by_day="no" $days="0" *ARGS:
+[arg("id", help="session ids, or the start of them: price those sessions wherever they sit in the archive; no window applies")]
+cost $by_day="no" $days="0" *id:
     @shift 2 && exec host/monitor/cost.sh "$@"
 
 # no-exit-message: an archive with nothing pushed, or a mirror that has never
 # run, is a state and not a defect, and the script says so in its own words.
-[doc("One durable record per archived session — every session end seals its own; --recheck audits them, --prove diffs the present commands against them")]
+[doc("One durable record per archived session — every session end seals its own; --recheck audits them")]
 [group("monitor")]
 [no-exit-message]
 [arg("recheck", long, value="yes", help="re-derive every stored record and diff it against what is stored, writing nothing")]
-[arg("prove", long, value="yes", help="render what read, tools and cost print today from the records alone, and diff")]
 [arg("publish", long="no-publish", value="no", help="write the records here and push nothing to the archive")]
 [arg("rewrite", long, help="replace one session's record, for a transcript a redact ruling changed after it sealed")]
 [arg("reseal", long, value="yes", help="write every record --recheck reports as differing, for a field added to the record after most of it was written")]
-records $recheck="no" $prove="no" $publish="yes" $rewrite="" $reseal="no":
+records $recheck="no" $publish="yes" $rewrite="" $reseal="no":
     @exec host/monitor/records.sh
 
 # no-exit-message: a store with no records in it is a state and not a defect,
@@ -498,7 +497,7 @@ records $recheck="no" $prove="no" $publish="yes" $rewrite="" $reseal="no":
 stats $days="0" $all="no" $system="no" $by_session="no" $day="":
     @exec host/monitor/stats.sh
 
-[doc("Count tool calls per day in the archived session transcripts — one line per tool, or name tools for one line per day")]
+[doc("Count tool calls per day in the archived sessions' records — one line per tool, or name tools for one line per day")]
 [group("monitor")]
 [no-exit-message]
 [arg("days", long, short="d", pattern='\d+', help="how many of the archive's days to count; 0 is the default window — five days, ten when tools are named")]

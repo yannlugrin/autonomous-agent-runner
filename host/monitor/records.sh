@@ -2,7 +2,7 @@
 # Seal one durable record per archived session, and publish them.
 #
 # Runs on the host. Every declared argument arrives as an environment variable:
-# the flags recheck, reseal, prove and publish, and the value rewrite.
+# the flags recheck, reseal and publish, and the value rewrite.
 #
 # What a record holds and when it may be written is host/monitor/session-records.py;
 # this is the half that has to be here. The two sources are read here — the
@@ -194,15 +194,6 @@ If it is checked out elsewhere, remove that worktree."
         return 1
     fi
 }
-
-
-# --- the proof ---
-# Its own script, and the one obligation of the store until the commands are
-# normalised onto it.  see docs/monitor.md#the-sufficiency-proof
-
-if [ "$prove" = yes ]; then
-    exec host/monitor/prove-records.sh
-fi
 
 
 # --- what has to be there ---

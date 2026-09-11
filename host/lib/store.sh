@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # Where the sealed records are read from, and the sentence for "there are none".
 #
-# Sourced by `stats`, which reads the records. A session end seals
+# Sourced by the recipes that read the records — `stats`, `tools` and `cost`. A session end seals
 # its record on the machine that runs the agent and publishes it to the archive's `cache` branch;
 # when that is another machine the store here is never written, so the branch is read instead.
 # see docs/monitor.md#one-record-per-session
