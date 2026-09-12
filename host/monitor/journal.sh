@@ -18,12 +18,7 @@ set -uo pipefail
 # shellcheck source=SCRIPTDIR/../lib/journal.sh
 . host/lib/journal.sh
 
-# Two independent round trips, side by side. need_store stays in this shell: it exports the
-# records' path and sets the trap that removes a fetched copy.
-fetch_journal &
-journal_fetch=$!
-need_store
-wait "$journal_fetch"
+need_store_and_journal
 
 if ! git -C "$JOURNAL_CLONE" rev-parse --verify --quiet source/main >/dev/null 2>&1; then
     echo "Nothing has been fetched into $JOURNAL_CLONE — AGENT_REPO in .env names the repository." >&2

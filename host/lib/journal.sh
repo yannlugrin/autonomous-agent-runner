@@ -25,3 +25,16 @@ fetch_journal() {
     git -C "$JOURNAL_CLONE" fetch --quiet --prune origin 2>/dev/null \
         || echo "note: could not fetch $AGENT_REPO — its journal is read as last fetched." >&2
 }
+
+
+# --- need_store_and_journal ---
+# need_store, from store.sh, which the caller sources, and fetch_journal side by side: two
+# independent round trips. need_store stays in this shell, because it exports the records' path
+# and sets the trap that removes a fetched copy.
+
+need_store_and_journal() {
+    fetch_journal &
+    local fetching=$!
+    need_store
+    wait "$fetching"
+}

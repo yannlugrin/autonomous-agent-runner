@@ -22,10 +22,8 @@ set -uo pipefail
 # shellcheck source=SCRIPTDIR/../lib/journal.sh
 . host/lib/journal.sh
 
-need_store
-
 # stats.py checks its count against the newest heading in the agent's own journal.
-fetch_journal
+need_store_and_journal
 
 
 opts=()
