@@ -125,12 +125,11 @@ set dotenv-load := true
 export RUNNER_LOCK := env_var_or_default("RUNNER_LOCK", "/tmp" / agent_user + "-session.lock")
 
 # One directory per agent, plain names inside it — two agents sharing a cache
-# would invalidate each other's scan on every run. The root is a default for
+# would read and overwrite each other's stamps. The root is a default for
 # the names below, not a prefix they are forced through, which is what lets a
 # test recipe point one file elsewhere without moving the rest.
 # see docs/configuration.md#one-cache-directory-plain-names-inside-it
 runner_cache := env_var_or_default("RUNNER_CACHE_DIR", cache_dir() / agent_user)
-# The scan cache `collect` keys on a fingerprint of this volume's secrets.
 export RUNNER_CACHE_DIR := runner_cache
 
 export RUNNER_LAST_SESSION_ENDED_AT := env_var_or_default("RUNNER_LAST_SESSION_ENDED_AT", runner_cache / "last-session")
@@ -387,9 +386,9 @@ credentials $quiet="no":
 
 # --------------------------------------------------------------- archive ---
 
-[doc("Archive transcripts to the private archive repo — add --push to publish")]
+[doc("Archive transcripts to the private archive repo — add --push to publish; --scan-archive rescans what it holds")]
 [group("archive")]
-[arg("ARGS", help="[--push] [--held] [--approve <what> <why>]... [--redact <what> <why>]...")]
+[arg("ARGS", help="[--push] [--held] [--approve <what> <why>]... [--redact <what> <why>]... | --scan-archive")]
 collect *ARGS:
     @exec host/archive/collect.sh "$@"
 

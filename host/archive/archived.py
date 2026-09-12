@@ -23,8 +23,8 @@ Two ways a file can be settled, and the second is not a special case:
     ruling keyed on the sha256 of exactly these bytes, whose archive path is
     present, settles the file instead: the ruling is keyed on the volume's copy
     and that copy never changes again, so the rewrite already archived is the
-    rewrite this run would produce — under the same gate, which is what the
-    caller's fingerprint guarantees.
+    rewrite this run would produce — and whatever a later gate would make of
+    it, that copy is already on origin.
 
 A path that is not in the listing, or is there under a different object, or
 has no ruling, is simply not printed — an unreadable or absent archive, an

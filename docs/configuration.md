@@ -223,7 +223,7 @@ The cache files were six siblings spelled `<agent>-last-chat`,
 belongs to every other tool on the machine as well: the agent's name repeated
 in each was doing, six times and by convention, the work one directory does
 once. They are one directory per agent now — two agents sharing a cache would
-invalidate each other's scan on every run, so the grouping gives up nothing
+read and overwrite each other's stamps, so the grouping gives up nothing
 that the spelling bought. The root is a *default* for the names below it, not a
 prefix they are forced through, which is what lets a test recipe point one file
 elsewhere without moving the rest.

@@ -392,7 +392,7 @@ the measurements.
 
 | | |
 | --- | --- |
-| `just collect` | archive transcripts to the private archive. `--push` publishes, `--held` lists what is held back, `--approve H "why"` archives one as it stands, `--redact H "why"` archives it with the credential rewritten out |
+| `just collect` | archive transcripts to the private archive. `--push` publishes, `--held` lists what is held back, `--approve H "why"` archives one as it stands, `--redact H "why"` archives it with the credential rewritten out, `--scan-archive` runs the gate over what the archive already holds, here, and only reports |
 | `just publish-status` | put the host's half of the status page where a dashboard can read it. `--now` ignores the ten-minute floor |
 | `just credentials` | read when the agent's Claude and GitHub credentials expire, now — `just status` shows the last reading rather than taking a new one, because taking one costs a container start |
 | `just mirror-status` | how the mirror of the agent's memory is doing: the ref, any preserved rewrites, whether the workflow is still enabled, whether it is behind. It only reads |

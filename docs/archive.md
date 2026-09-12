@@ -25,7 +25,7 @@ the machine's own judgement.
 | `just setup-archive` | once: clone the archive, on your own `gh` credential |
 | `just setup-mirror` | once: write the three secrets the mirror's workflow runs on, in its own repository, and the status page's token that reads the mirror, on the archive. The agent is told none of it |
 | `just setup-gh` | once per host: the token that host reads the mirror and asks for a run with, and git's helper. On a host that runs the agent it proves the token cannot write the record |
-| `just collect` | read the transcripts out of the volume, put them through the gate, commit what passes. `--push` publishes, `--held` lists what is held back, `--approve <hash> "why"` archives one as it stands, `--redact <hash> "why"` archives it with the credential rewritten out |
+| `just collect` | read the transcripts out of the volume, put them through the gate, commit what passes. `--push` publishes, `--held` lists what is held back, `--approve <hash> "why"` archives one as it stands, `--redact <hash> "why"` archives it with the credential rewritten out. `--scan-archive` runs the gate as it stands over what the archive already holds, on the machine it is typed on, and only reports: anything it finds is already on origin and is a credential to rotate |
 | `just read <id>` | one transcript whole, by the id `just stats --by-session` shows |
 | `just mirror-status` | whether the memory's mirror is enabled, current, and whether anything upstream was rewound. It only reads |
 | `just publish-status` | the host's half of the status page, onto the `status` branch. `--now` ignores the ten-minute floor |
@@ -101,12 +101,17 @@ cleanup — sourcing six stages in the order they run:
   * `ledger.sh` — where `sessions` is for reading, and what has already been
     ruled on. The writing half is in `archive.sh`, because an entry goes into
     the same commit as the transcript it rules on.
-  * `scan.sh` — the pattern floor, `detect()`, gitleaks, the fingerprint and
-    the skip, and the list of what the gate objects to.
+  * `scan.sh` — the pattern floor, `detect()`, gitleaks, the skip, and the
+    list of what the gate objects to.
   * `rule.sh` — what `--approve` and `--redact` resolve to, the `--held` count,
     the redaction and its proof.
   * `report.sh` — the held-back report, one per file, and what the run read.
   * `archive.sh` — the worktree, the placing, the ledger, the commit, the push.
+
+`--scan-archive` swaps the first stage and the last two: `read-archive.sh`
+stages what origin's `sessions` holds in place of the volume, and
+`report-archive.sh` reports what matched in place of the ruling, the report and
+the commit.
 
 **Sourced and not run.** The stages share one shell's variables because they
 are one collection: the volume's secrets are read once and kept in the process,
@@ -128,11 +133,13 @@ sequence before and after — a `just collect` holding a transcript, `--held`,
 `just status`, an `--approve`, a second fixture and a `--redact`, the branch log
 and the ledger. Every line of every report was identical except three:
 
-  * The **fingerprint** now hashes every file in `host/archive/`, found rather
+  * The **fingerprint** hashed every file in `host/archive/`, found rather
     than listed, instead of naming four files. A hand list stops covering the
     file added beside it, silently, and after a split into eleven files that is
-    no longer a small risk. The cost is one full re-read after an edit to a file
-    in that directory that is not part of the gate.
+    no longer a small risk. The cost was one full re-read after an edit to a
+    file in that directory that is not part of the gate — the cost that had the
+    fingerprint removed on 2026-09-12, under "What is on origin is not read
+    again".
   * The **redaction marker** reads `[redacted: … — collect.sh]`, not
     `collect-transcripts.sh`. It is what a reader of the archive is told
     rewrote the file, and it must name something that exists.
@@ -305,10 +312,9 @@ floor from the copy baked into the image. An absent file adds nothing, which is
 what a fresh installation has, and the generic half still runs. See
 docs/configuration.md#the-three-files-that-are-yours.
 
-That file is hashed into the gate fingerprint beside `host/archive/` itself. A
-shape added today has to make the next run read every transcript again, and a
-rule of the gate living outside the directory the fingerprint walks is exactly
-the kind of thing that silently stops being covered.
+A shape added there applies to every collection from then on. It meets the
+transcripts already archived through `just collect --scan-archive` — see "What
+is on origin is not read again".
 
 ### The 1f916 secret shape
 
@@ -1076,7 +1082,8 @@ The three that could not settle that way were exactly the redacted ones — the 
 holds the rewritten copy and the volume the original, so their bytes can never match.
 Those settle on their ledger entry instead: a `redact` ruling keyed on the sha256 of
 exactly these bytes, whose archive path is present, means the rewrite already there is
-the rewrite this run would produce, under a gate the fingerprint says has not moved.
+the rewrite this run would produce — and whatever a later gate would make of it, that copy is
+already on origin.
 Without that they were re-read, re-redacted and re-proved on every collection for ever —
 and the run said so, three lines about rewriting transcripts above a line saying nothing
 had changed. Both true, and together a description of the machinery rather than of what
@@ -1099,15 +1106,46 @@ Listing and removal are two steps, never one: `archived.py` removing files as it
 would leave a half-pruned staging directory behind if it died partway, and those files would
 be neither read nor archived. Printing first means a failure prunes nothing.
 
-### What this would otherwise give up
+### What is on origin is not read again
 
 A rule added today fires on transcripts collected months ago, and that is not
 hypothetical: `1f916_sk_` went in on 2026-08-26 because one secret was caught in one
-transcript and missed in another. Skipping the archived ones for ever would mean the new
-rule never meets them. So the skip is allowed only while the gate is the same gate — and
-when it is not, the next run reads everything again, once.
+transcript and missed in another. Until 2026-09-12 the skip therefore held only while a
+fingerprint of the gate was unchanged, and any change made the next collection read every
+transcript again.
+
+That read could hold nothing back. Everything it reread was already on origin, so a match
+was a credential to rotate, found at the end of a session and inside the session lock. And
+its cost grew with the retention, not with the session: measured on 2026-09-12 on the agent's
+one-vCPU host, a deploy that touched `setup-gh.sh` made the next collection read 727
+transcripts in 9m45s, against 20 to 33 seconds for every other collection that day. At 90 days
+of retention it would take about half an hour, as long as the default wait between two
+sessions.
+
+So a collection reads only what is not on `sessions` yet, whatever the gate has become, and
+`just collect --scan-archive` is how a new rule meets the rest. It runs where it is typed —
+never forwarded to the host that runs the agent, and outside any lock — fetches origin's
+`sessions`, and puts every transcript on it through the gate as it stands. A transcript the
+ledger approved matches again by design, and is counted rather than reported. Anything else
+is listed with what matched and the `just read` that opens it, and the exit status is 1:
+nothing can take a pushed copy back, and `--redact` rewrites only what reaches the archive
+from then on, so what it names is a credential to rotate.
+
+The verbatim layer compares against the vault rather than the volume: read through the
+image's own `vault`, in a throwaway container that mounts no volume, with a read-only root
+and its cache in RAM, and the values kept in the process the way the volume's are. The public
+half of each private key is derived there and sent as the `public` section, because the
+winnow under "Public halves are not secrets" needs it: without it, measured on 2026-09-12, two
+archived transcripts were named for `github-ssh-key` when all they held was its public key.
+A secret that lives only in the volume is not compared —
+an ssh key never stored in the vault, or an interactive login's credentials file — and a vault
+that cannot be read is said, never taken for an empty one. The floor, this installation's
+shapes and gitleaks run as they do in a collection.
 
 ### What "the same gate" is made of
+
+The fingerprint this section and the next describe was removed on 2026-09-12 — see above.
+They stay as the record of what it was measured to need, for the day one comes back.
 
 Every file in `host/archive/` — the six stages, the six Python programs, `archived.py`,
 `archive-layout.py` and the gitleaks config — found rather than listed, because a list of
@@ -1317,7 +1355,8 @@ The read never finished either, so the fingerprint was not written and the next 
 until a session-end collection, which has no timeout, got through. Killing the process group with
 SIGTERM so the trap runs was rejected: it keeps a five-minute scan in every publish for a number the
 cache already holds. The snapshot carries the instant as `counted_at`, for the reason the screen
-says how old its count is.
+says how old its count is. Since 2026-09-12 a gate change no longer makes a count read the archived
+transcripts again.
 
 The cache is behind in one case: a gate change can change what is held without a session ending, and
 the count shows it at the next collection or `--held`.

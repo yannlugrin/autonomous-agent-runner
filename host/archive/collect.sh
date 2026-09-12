@@ -24,6 +24,7 @@
 #
 # Usage:  ./collect.sh [--push] [--held]
 #         ./collect.sh [--approve <hash> <why>]... [--redact <hash> <why>]...
+#         ./collect.sh --scan-archive
 
 set -uo pipefail
 
@@ -32,7 +33,14 @@ set -uo pipefail
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
 . host/lib/deployed.sh
 
-if [ "$RUNNER_IS_DEPLOYED" = no ]; then
+# `--scan-archive` reads the archive clone and nothing of the volume, so it runs
+# where it is typed rather than where the agent runs.
+SCAN_ARCHIVE=false
+for arg in "$@"; do
+    if [ "$arg" = --scan-archive ]; then SCAN_ARCHIVE=true; fi
+done
+
+if [ "$RUNNER_IS_DEPLOYED" = no ] && [ "$SCAN_ARCHIVE" = false ]; then
     forward_to_deployed collect "$@"
 fi
 
@@ -68,6 +76,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --push)  PUSH=true ;;
         --held) HELD=true ;;
+        --scan-archive) ;;
         # --approve says "this is nothing, archive it as it stands";
         # --redact is for a transcript that carries a real credential and is
         # still worth keeping.  see docs/archive.md#the-third-ending
@@ -77,10 +86,15 @@ while [ $# -gt 0 ]; do
             RULINGS="${RULINGS:+$RULINGS
 }$(printf '%s\t%s\t%s' "${1#--}" "$2" "$3")"
             shift 2 ;;
-        *) echo "Usage: collect.sh [--push] [--held] [--approve <what> <why>]... [--redact <what> <why>]..." >&2; exit 2 ;;
+        *) echo "Usage: collect.sh [--push] [--held] [--approve <what> <why>]... [--redact <what> <why>]... | --scan-archive" >&2; exit 2 ;;
     esac
     shift
 done
+
+if [ "$SCAN_ARCHIVE" = true ] && { [ "$PUSH" = true ] || [ "$HELD" = true ] || [ -n "$RULINGS" ]; }; then
+    echo "--scan-archive only reads the archive, and takes no other flag." >&2
+    exit 2
+fi
 
 die() { printf '\n%s\n\n' "$*" >&2; exit 1; }
 
@@ -103,12 +117,14 @@ keeping them apart is what lets the memory repository stay publishable."
 # Before the volume probe, not after: a stopped daemon makes that probe fail,
 # and its message says the volume does not exist — which reads as the agent's
 # world having been lost rather than a service being off.
-host/lib/docker-up.sh
+if [ "$SCAN_ARCHIVE" = false ]; then
+    host/lib/docker-up.sh
 
-docker volume inspect "$VOLUME" >/dev/null 2>&1 || die \
-    "No docker volume named '$VOLUME'.
+    docker volume inspect "$VOLUME" >/dev/null 2>&1 || die \
+        "No docker volume named '$VOLUME'.
 That name was derived from compose's own project name. If it is wrong,
 list the volumes with \`docker volume ls\` and set AGENT_VOLUME."
+fi
 
 
 # --- the temporaries go on disk, not in RAM ---
@@ -158,9 +174,9 @@ trap cleanup EXIT
 
 # --- what the review gate is holding, for readers that cannot pay for this ---
 # `just status` and the status snapshot read the count here rather than asking
-# `--held`, which starts a container and scans the volume — all of it after a
-# gate change, for longer than a publish can wait. A session ending changes the
-# count, and that is when this runs; a gate change shows only at the next run.
+# `--held`, which starts a container and scans what the archive does not hold
+# yet. A session ending changes the count, and that is when this runs; a gate
+# change shows only at the next run.
 # Both endings write it: the collection below, and the `--held` count in
 # rule.sh, which is what refreshes it by hand.
 #
@@ -182,6 +198,20 @@ held_cache() {
 # --- the stages, in order ---
 # Each one is a file named for what it does, and each reads what the one above
 # it left in this shell.
+
+# `--scan-archive` swaps the first and the last: what origin's `sessions` holds
+# in place of the volume, and a report of what matched in place of the ruling
+# and the commit. It ends the run.  see docs/archive.md#what-is-on-origin-is-not-read-again
+if [ "$SCAN_ARCHIVE" = true ]; then
+    # shellcheck source=SCRIPTDIR/ledger.sh
+    . host/archive/ledger.sh          # what has already been ruled on
+    # shellcheck source=SCRIPTDIR/read-archive.sh
+    . host/archive/read-archive.sh    # the transcripts origin's `sessions` holds
+    # shellcheck source=SCRIPTDIR/scan.sh
+    . host/archive/scan.sh            # the gate, with nothing skipped
+    # shellcheck source=SCRIPTDIR/report-archive.sh
+    . host/archive/report-archive.sh  # what matched, as credentials to rotate
+fi
 
 # shellcheck source=SCRIPTDIR/read-volume.sh
 . host/archive/read-volume.sh    # the transcripts, the secrets, where each belongs

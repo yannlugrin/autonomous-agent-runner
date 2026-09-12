@@ -126,51 +126,18 @@ fi
 
 
 # --- what has already been through this gate ---
-# A transcript already on `sessions` byte for byte has been through the gate
-# and reached origin with it, so reading it again cannot hold anything back —
-# only cost, and that cost is most of what a run spends. A
+# A transcript already on `sessions` byte for byte has reached origin, so
+# reading it again cannot hold anything back — only cost, and that cost grows
+# with the volume's retention rather than with the session that just ended. A
 # redacted transcript settles on its ledger entry instead, its bytes never
 # matching.
 # see docs/archive.md#it-agrees-with-gits-own-object-id
 #
-# The skip holds only while the gate is the same gate: a rule added today fires
-# on transcripts collected months ago, and when the gate moves the next run
-# reads everything again, once.
+# That holds whatever the gate has become since. A rule added later meets the
+# archived transcripts through `just collect --scan-archive`, which reads the
+# archive itself and can only report: what is there is already published.
+# see docs/archive.md#what-is-on-origin-is-not-read-again
 #
-# "The same gate" is every file in host/archive/, found rather than listed,
-# since a list stops covering the file added beside it; image/config/secret-shapes.txt,
-# which is a rule of the gate that lives outside that directory, and where a
-# shape added today has to make the next run read everything again; the gitleaks
-# binary, hashed rather than asked for its version, since a distribution build
-# answers `gitleaks version` with "version is set by build process"; and the
-# secrets the volume holds, since the layer comparing against those is the only
-# one covering a shape nobody has written down.
-# see docs/archive.md#what-the-same-gate-is-made-of
-#
-# Host-side under XDG_CACHE_HOME and not on `sessions`: the gitleaks binary is
-# a fact about this machine, and a pushed branch would carry it to one where it
-# is false. A missing, unreadable or stale fingerprint reads everything, which
-# is the direction a mistake here has to fall. Per agent, like the lock, since
-# it hashes this volume's secrets.
-
-CACHE_DIR="${RUNNER_CACHE_DIR:?not set — run this through 'just', which derives it from the agent name}"
-FINGERPRINT_AT="$CACHE_DIR/gate-fingerprint"
-
-fingerprint=$({
-    # C collation: a shell's locale sorts these apart from cron's, and the gate reads as changed.
-    # see docs/archive.md#the-order-is-the-locales
-    find host/archive -maxdepth 1 -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
-    sha256sum image/config/secret-shapes.txt || echo "no shapes of this installation's own"
-    if [ "$GITLEAKS" = true ]; then
-        sha256sum "$(command -v gitleaks)"; gitleaks version
-    else
-        echo "gitleaks absent"
-    fi
-    # Hashed, never printed: this is the one input that is the secrets
-    # themselves, and the fingerprint is written to a file.
-    printf '%s' "$volume_secrets" | sha256sum
-} 2>/dev/null | sha256sum | cut -d' ' -f1)
-
 # A ruling does not force a full read. The skip removes transcripts already in
 # the archive byte for byte, and a transcript waiting to be ruled on is by
 # definition not in it — it was held back — so the one file a ruling can name
@@ -179,13 +146,9 @@ fingerprint=$({
 # actually held, and one naming a settled transcript says so.
 # see docs/archive.md#a-ruling-does-not-force-a-full-read
 
-full_scan_why=""
-if [ "$(cat "$FINGERPRINT_AT" 2>/dev/null)" != "$fingerprint" ]; then
-    full_scan_why="the gate has changed since the last run"
-fi
-
 pruned=0
-if [ -z "$full_scan_why" ]; then
+# Not when the archive is what is being read: every file in it is already archived.
+if [ "$SCAN_ARCHIVE" = false ]; then
     # Listed and removed in two steps, never in one: archived.py removing files
     # as it walked would leave a half-pruned staging directory if it died
     # partway, and those files would be neither read nor archived.
@@ -227,8 +190,6 @@ if [ "$left" -eq 0 ]; then
 elif [ "$pruned" -gt 0 ]; then
     printf '%s of them are already archived as this run would archive them — reading %s.\n' \
         "$pruned" "$left"
-elif [ -n "$full_scan_why" ]; then
-    printf 'Reading every transcript: %s.\n' "$full_scan_why"
 fi
 if [ "$left" -gt 0 ]; then
     echo "Scanning for credentials ..."
@@ -236,15 +197,6 @@ fi
 
 report=$(mktemp)
 note_flagged "$(detect "$staging" "$report")"
-
-# Recorded only by a run that read EVERY transcript, and only once it has got
-# past `detect` without dying: the file claims "everything now in the archive
-# has been through this gate". A cache directory that cannot be written costs
-# one full read a run and nothing else, so it is not an error.
-if [ "$pruned" -eq 0 ]; then
-    mkdir -p "$CACHE_DIR" 2>/dev/null &&
-        printf '%s\n' "$fingerprint" > "$FINGERPRINT_AT" 2>/dev/null || true
-fi
 
 
 # --- what is flagged ---
