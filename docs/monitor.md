@@ -19,7 +19,8 @@ There is nothing in `.env` to set. These are the handles:
 | `just drift-status` | what the audit stands on: the mirror ref, the two anchors and how far behind each is, and the last runs. It fetches first |
 | `just cost` | what the archived sessions cost, priced from their sealed records. `--by-day`, `-d N`, or session ids. API list rates: weight, not an invoice |
 | `just tools` | how many times each tool was called, per day, in the archived sessions' records. Name tools to get one line per day instead; `-d N` for the window |
-| `just records` | one durable record per archived session — what it was, what it spent, what it committed, which runner built it — sealed once and published to the archive's `cache` branch. `just stats`, `just tools` and `just cost` read them |
+| `just records` | one durable record per archived session — what it was, what it spent, what it committed, which runner built it — sealed once and published to the archive's `cache` branch. `just stats`, `just tools`, `just cost` and `just journal` read them |
+| `just journal` | the agent's journal one entry at a time, newest first, with the session that wrote each one under its heading: `→` older, `←` newer, `q` quits. A day or a session id opens there |
 | `RUNNER_MONITOR` | where all of that lives. `monitor/` inside this checkout unless set, gitignored, created on the first run; a relative value counts from the checkout, not from where `just` ran |
 
 **The audit is a Claude session, and it runs on the host, on your own login.**
@@ -971,7 +972,7 @@ and write a row per turn for a field no command reads.
 
 ### The commands that read the store
 
-`just stats`, `just tools` and `just cost` read the records and no transcript,
+`just stats`, `just tools`, `just cost` and `just journal` read the records and no transcript,
 wherever `host/lib/store.sh` finds them. `just read` does not: it shows one
 transcript whole, so it reads that transcript anyway, and its header comes from
 the same bytes through `host/archive/session-meta.jq`.
@@ -1291,6 +1292,59 @@ it live.
 `deploy.deployed` appears in the status snapshots only from 2026-08-28, because
 before that a build *was* a deploy. The clause saying so goes once those runs
 age out of the window.
+
+## The journal, entry by entry
+
+`just journal` shows the agent's `JOURNAL.md` one entry at a time, newest first. Under each
+heading is the session that wrote it — when it ran, unattended or a conversation, how long, how
+many commits — and the `just read` line that opens its transcript. `→` opens the older entry, `←`
+the newer, and `q` quits. Inside an entry everything `less` does works, and past its last line is
+`(END)`, not the next entry. `just journal 2026-09-03` opens that day's newest entry, and
+`just journal <id>` the entry a session wrote. Piped, it prints every entry whole and plain, or the
+one asked for. There is nothing in `.env` to set.
+
+It reads the clone `just stats` fetches from the agent's repository, so an entry is there once its
+session has pushed, and the records wherever `host/lib/store.sh` finds them.
+
+### Which session wrote an entry
+
+The one that made most of the entry's lines: `git blame` on `source/main`, with each line's commit
+looked up in the records' `runs[].commits`. Measured 2026-09-12 on 688 entries against the records
+on `origin/cache`: every entry attributed, and the heading's date is the session's day for all 688.
+The rules that look simpler each fail without a symptom:
+
+| rule | what it did |
+| --- | --- |
+| the commit that added the heading | put 518 entries on one commit: on 2026-08-31 a session rewrote every older heading |
+| the entry's oldest line | put 6 entries on another session, each through a single line out of 34 to 105 that blame matched to an older entry, 3 of them on an earlier day |
+| the `(Nth session)` in the heading | a label the agent maintains, wrong by 34 for eleven hours on 2026-09-01 — see "The count spelled out" |
+
+A folded entry belongs to the session that folded it: the 2026-08-25 compaction session holds two
+entries, its own and the fold of sessions 102 to 115, and each says which of the two it is.
+
+An entry no record holds says so, and names `just records`: a session whose record is not sealed
+yet, most often.
+
+There is no count of the sessions between two entries that wrote none. Over the 688 entries it
+fired twice, and one of the two was that fold reading as fourteen silent sessions — the fault "the
+journal counted against the archive" was struck for, under "What the screen does not show".
+
+### One `less` per entry
+
+`less` over the whole file jumps from heading to heading with a search and stops nowhere, which is
+why this exists. Each entry is written to a file of its own and opened in a `less` of its own.
+`host/monitor/journal.lesskey` binds the arrows to `quit` with a status — `quit r` exits 114 and
+`quit l` exits 108 — and the loop in `host/monitor/journal.sh` opens the neighbour; `q` exits 0 and
+ends it. Each arrow is bound in both encodings a terminal may send, `\e[C` and `\eOC`. Binding an
+arrow to `forw-search` with the pattern as its extra string does not work: the prompt opens and is
+never submitted.
+
+`LESS` is emptied for it, because a `-F` there would close every entry shorter than the screen as
+it opened.
+
+Measured with less 668 on 2026-09-12, in a pty and in Windows Terminal on WSL. After a `less`
+upgrade, run `less --lesskey-src=host/monitor/journal.lesskey README.md; echo $?`, press `→`, and it
+prints 114.
 
 ## The audit clone is reconciled, not assumed
 

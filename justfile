@@ -496,6 +496,15 @@ records $recheck="no" $publish="yes" $rewrite="" $reseal="no":
 stats $days="0" $all="no" $system="no" $by_session="no" $day="":
     @exec host/monitor/stats.sh
 
+# no-exit-message: a clone nothing was fetched into, or an entry that is not
+# there, is a state and not a defect, and the script says so in its own words.
+[doc("The agent's journal one entry at a time, with the session that wrote it — → older, ← newer, q quits; a day or a session id opens there")]
+[group("monitor")]
+[no-exit-message]
+[arg("at", help="where to open: a day, 2026-09-03, for its newest entry, or a session id, or enough of one, for the entry that session wrote")]
+journal $at="":
+    @exec host/monitor/journal.sh
+
 [doc("Count tool calls per day in the archived sessions' records — one line per tool, or name tools for one line per day")]
 [group("monitor")]
 [no-exit-message]

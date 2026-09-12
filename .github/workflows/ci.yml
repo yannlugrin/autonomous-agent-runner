@@ -44,6 +44,9 @@ jobs:
       # it starts failing on a pull request.
       # `grep -rl selftest --include='*.py' host/` is the list; image/'s are
       # RUN steps in image/Dockerfile and run in docker-build.
+      - name: journal selftest
+        run: python3 host/monitor/journal.py --selftest
+
       - name: needles selftest
         run: python3 host/archive/needles.py --selftest
 

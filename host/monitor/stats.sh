@@ -19,28 +19,13 @@ set -uo pipefail
 . "$(dirname -- "${BASH_SOURCE[0]}")/../lib/root.sh"
 # shellcheck source=SCRIPTDIR/../lib/store.sh
 . host/lib/store.sh
+# shellcheck source=SCRIPTDIR/../lib/journal.sh
+. host/lib/journal.sh
 
 need_store
 
-
-# --- the agent's journal, as it stands now ---
-# stats.py checks its count against the newest heading in the agent's own
-# repository, read from a bare clone fetched here. Not the archive's mirror: a
-# workflow advances it on GitHub's best-effort schedule, and the check would
-# report that lag as a wrong heading.  see docs/monitor.md#the-count-spelled-out
-
-journal="${RUNNER_MONITOR:?not set — run this through 'just', which computes it}/memory"
-
-if [ -n "${AGENT_REPO:-}" ]; then
-    if [ ! -d "$journal" ]; then
-        git init -q --bare "$journal" \
-            && git -C "$journal" remote add origin "$AGENT_REPO" \
-            && git -C "$journal" config remote.origin.fetch '+refs/heads/*:refs/remotes/source/*'
-    fi
-
-    git -C "$journal" fetch --quiet --prune origin 2>/dev/null \
-        || echo "note: could not fetch $AGENT_REPO — its journal is read as last fetched." >&2
-fi
+# stats.py checks its count against the newest heading in the agent's own journal.
+fetch_journal
 
 
 opts=()

@@ -1,0 +1,7 @@
+# The arrows leave less with a status host/monitor/journal.sh reads: 114 for →, 108 for ←.
+# Each arrow is bound in both encodings a terminal may send.  see docs/monitor.md#one-less-per-entry
+#command
+\e[C quit r
+\eOC quit r
+\e[D quit l
+\eOD quit l
